@@ -1,0 +1,1869 @@
+多源新闻聚合系统产品设计方案
+1. 产品概述
+1.1 产品定位
+多源新闻聚合系统是一个高度可扩展的平台，旨在从30+不同来源实时收集、处理和聚合新闻数据，包括社交媒体热搜、新闻网站、技术社区等。系统通过智能分析和处理，为用户提供个性化、多维度的新闻阅读体验。
+1.2 核心价值
+·  全面的信息获取：整合多个新闻源，提供一站式信息获取体验
+·  智能的内容分析：通过NLP技术对新闻进行分类、聚类和情感分析
+·  个性化的内容推荐：基于用户兴趣和行为提供定制化内容
+·  高度的可扩展性：支持轻松添加新的数据源和功能模块
+·  友好的API接口：提供标准化的API，便于第三方集成和扩展
+1.3 目标用户
+·  需要全面了解热点信息的普通用户
+·  需要多维度信息分析的专业人士（如媒体工作者、研究人员）
+·  需要集成新闻数据的第三方应用开发者
+·  需要进行舆情监测的企业和机构
+2. 系统架构
+2.1 整体架构
+
+                    ┌─────────────────────┐
+                    │  前端应用层 (React)   │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────┐
+│                     API网关层                         │
+│  (认证、限流、日志、缓存、路由、文档、监控)              │
+└──────────┬───────────────────────────┬───────────────┘
+            │                          │
+            ▼                          ▼
+┌──────────────────────┐    ┌──────────────────────────┐
+│     核心服务层        │    │       扩展服务层          │
+│ (FastAPI微服务集群)   │    │  (可插拔的功能模块)       │
+└──────────┬───────────┘    └───────────┬──────────────┘
+            │                           │
+            ▼                           ▼
+┌──────────────────────────────────────────────────────┐
+│                    消息队列层 (Celery)                │
+└──────────┬───────────────────────────┬───────────────┘
+            │                          │
+            ▼                          ▼
+┌──────────────────────┐    ┌──────────────────────────┐
+│     数据存储层        │    │       缓存层             │
+│ (PostgreSQL, MongoDB) │    │      (Redis)            │
+└──────────────────────┘    └──────────────────────────┘
+            │                          │
+            └──────────────┬───────────┘
+                           ▼
+┌──────────────────────────────────────────────────────┐
+│                    数据采集层                         │
+│           (30+ 新闻源适配器, 爬虫调度系统)             │
+└──────────────────────────────────────────────────────┘
+            │                          │
+            ▼                          ▼
+┌──────────────────────┐    ┌──────────────────────────┐
+│     数据处理层        │    │       分析层             │
+│ (清洗、标准化、去重)   │    │ (NLP、聚类、情感分析)     │
+└──────────────────────┘    └──────────────────────────┘
+            │                          │
+            └──────────────┬───────────┘
+                           ▼
+┌──────────────────────────────────────────────────────┐
+│                    监控与运维层                       │
+│           (Prometheus, Grafana, Sentry)              │
+└──────────────────────────────────────────────────────┘
+2.2 技术栈选择
+·  前端：React, Ant Design, Redux, TypeScript
+·  后端：FastAPI, Pydantic, SQLAlchemy, Alembic
+·  数据库：PostgreSQL (结构化数据), MongoDB (非结构化数据)
+·  缓存：Redis
+·  消息队列：Celery, RabbitMQ
+·  数据处理：NLTK, spaCy, scikit-learn, Transformers
+·  监控：Prometheus, Grafana, Sentry
+·  容器化：Docker, Kubernetes
+·  CI/CD：GitHub Actions, ArgoCD
+2.3 微服务划分
+·  API网关服务：处理认证、路由、限流等
+·  用户服务：用户管理、认证和授权
+·  新闻源服务：新闻源管理和元数据
+·  新闻内容服务：新闻内容的CRUD操作
+5. 数据采集服务：负责从各个源获取数据
+·  数据处理服务：数据清洗、标准化和去重
+
+·  分析服务：NLP分析、聚类和情感
+目录
+多源新闻聚合系统产品设计方案	1
+·  需要全面了解热点信息的普通用户	1
+·  新闻源服务：新闻源管理和元数据	3
+5. 数据采集服务：负责从各个源获取数据	3
+1. 自动内容提取：	39
+1. 多级缓存策略：	39
+·  使用HTTP标准方法和状态码	40
+3. API文档与测试：	40
+1. 一致性：所有API遵循一致的命名和结构规范	40
+·  授权服务器重定向回客户端，带有授权码	44
+4. 客户端使用授权码获取访问令牌	44
+# monitoring/prometheus/prometheus.yml	50
+2. 内容创作工具：	51
+3. 生态系统扩展：	51
+
+
+分析
+·  推荐服务：个性化内容推荐
+·  搜索服务：全文搜索和过滤
+·  通知服务：推送和订阅
+·  统计服务：数据统计和报表
+3. 数据模型设计
+3.1 核心数据模型
+3.1.1 新闻源模型 (Source)
+
+class Source(Base):
+    __tablename__ = "sources"
+    
+    id = Column(String(50), primary_key=True)  # 例如: "baidu", "zhihu"
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    url = Column(String(512), nullable=True)
+    type = Column(Enum(SourceType), nullable=False)  # API, WEB, RSS, MIXED
+    active = Column(Boolean, default=True)
+    update_interval = Column(Interval, default=datetime.timedelta(minutes=10))
+    cache_ttl = Column(Interval, default=datetime.timedelta(minutes=5))
+    last_updated = Column(DateTime, nullable=True)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    country = Column(String(50), nullable=True)  # 国家/地区
+    language = Column(String(20), nullable=True)  # 语言
+    config = Column(JSON, nullable=True)  # 源特定配置（如请求头、解析规则等）
+    priority = Column(Integer, default=0)  # 优先级，越高越优先处理
+    error_count = Column(Integer, default=0)  # 错误计数
+    last_error = Column(Text, nullable=True)  # 最后一次错误信息
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    # 关系
+    news = relationship("News", back_populates="source")
+    category = relationship("Category", back_populates="sources")
+    aliases = relationship("SourceAlias", back_populates="source")
+3.1.2 新闻模型 (News)
+
+class News(Base):
+    __tablename__ = "news"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    url = Column(String(512), nullable=False)
+    mobile_url = Column(String(512), nullable=True)
+    original_id = Column(String(255), nullable=False)  # 源站ID
+    source_id = Column(String(50), ForeignKey("sources.id"), nullable=False)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    content = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
+    image_url = Column(String(512), nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    is_top = Column(Boolean, default=False)
+    view_count = Column(Integer, default=0)
+    sentiment_score = Column(Float, nullable=True)
+    cluster_id = Column(String(50), nullable=True)  # 聚类ID
+    extra = Column(JSON, nullable=True)  # 额外信息，如图标、热度等
+    
+    # 关系
+    source = relationship("Source", back_populates="news")
+    category = relationship("Category", back_populates="news")
+    tags = relationship("Tag", secondary=news_tag, back_populates="news_items")
+    
+    __table_args__ = (
+        # 同一来源的同一原始ID只能有一条记录
+        UniqueConstraint('source_id', 'original_id', name='uix_source_original'),
+    )
+3.1.3 分类模型 (Category)
+
+class Category(Base):
+    __tablename__ = "categories"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), nullable=False, unique=True)
+    description = Column(String(255), nullable=True)
+    slug = Column(String(50), nullable=False, unique=True)
+    parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    icon = Column(String(255), nullable=True)
+    order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    # 关系
+    news = relationship("News", back_populates="category")
+    sources = relationship("Source", back_populates="category")
+    children = relationship("Category", backref=backref("parent", remote_side=[id]))
+3.1.4 标签模型 (Tag)
+
+class Tag(Base):
+    __tablename__ = "tags"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), nullable=False, unique=True)
+    slug = Column(String(50), nullable=False, unique=True)
+    description = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    # 关系
+    news_items = relationship("News", secondary=news_tag, back_populates="tags")
+3.1.5 用户模型 (User)
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    external_id = Column(String(100), unique=True, index=True, nullable=True)  # 外部ID，如GitHub ID
+    email = Column(String(100), unique=True, index=True, nullable=True)
+    name = Column(String(100), nullable=True)
+    avatar_url = Column(String(512), nullable=True)
+    auth_provider = Column(String(20), nullable=True)  # "github", "google", etc.
+    is_active = Column(Boolean, default=True)
+    is_superuser = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_login = Column(DateTime, default=datetime.datetime.utcnow)
+    preferences = Column(JSON, nullable=True)  # 用户偏好设置
+    
+    # 关系
+    favorites = relationship("Favorite", back_populates="user")
+    reading_history = relationship("ReadingHistory", back_populates="user")
+    subscriptions = relationship("Subscription", back_populates="user")
+3.2 扩展数据模型
+3.2.1 新闻聚类模型 (NewsCluster)
+
+class NewsCluster(Base):
+    __tablename__ = "news_clusters"
+    
+    id = Column(String(50), primary_key=True)
+    title = Column(String(255), nullable=False)
+    summary = Column(Text, nullable=True)
+    keywords = Column(ARRAY(String), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    news_count = Column(Integer, default=0)
+    
+    # 关系
+    news_items = relationship("News", primaryjoin="News.cluster_id == NewsCluster.id")
+3.2.2 热门话题模型 (TrendingTopic)
+
+class TrendingTopic(Base):
+    __tablename__ = "trending_topics"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    weight = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    
+    # 关系
+    category = relationship("Category")
+3.2.3 用户收藏模型 (Favorite)
+
+class Favorite(Base):
+    __tablename__ = "favorites"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    news_id = Column(Integer, ForeignKey("news.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # 关系
+    user = relationship("User", back_populates="favorites")
+    news = relationship("News")
+    
+    __table_args__ = (
+        # 同一用户不能重复收藏同一新闻
+        UniqueConstraint('user_id', 'news_id', name='uix_user_news_favorite'),
+    )
+3.2.4 阅读历史模型 (ReadingHistory)
+
+class ReadingHistory(Base):
+    __tablename__ = "reading_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    news_id = Column(Integer, ForeignKey("news.id"), nullable=False)
+    read_at = Column(DateTime, default=datetime.datetime.utcnow)
+    read_duration = Column(Integer, nullable=True)  # 阅读时长（秒）
+    
+    # 关系
+    user = relationship("User", back_populates="reading_history")
+    news = relationship("News")
+3.2.5 订阅模型 (Subscription)
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    type = Column(String(20), nullable=False)  # "source", "category", "tag", "keyword"
+    target_id = Column(String(50), nullable=False)  # 订阅目标ID
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    # 关系
+    user = relationship("User", back_populates="subscriptions")
+    
+    __table_args__ = (
+        # 同一用户不能重复订阅同一目标
+        UniqueConstraint('user_id', 'type', 'target_id', name='uix_user_subscription'),
+    )
+4. 核心功能模块
+4.1 新闻源管理模块
+4.1.1 新闻源适配器基类
+
+class NewsSource(ABC):
+    """新闻源基类"""
+    
+    def __init__(
+        self, 
+        source_id: str, 
+        name: str, 
+        update_interval: int = 600,
+        cache_ttl: int = 300,
+        category: Optional[str] = None,
+        country: Optional[str] = None,
+        language: Optional[str] = None
+    ):
+        self.source_id = source_id
+        self.name = name
+        self.update_interval = update_interval
+        self.cache_ttl = cache_ttl
+        self.category = category
+        self.country = country
+        self.language = language
+        self.redis = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    
+    @abstractmethod
+    async def fetch(self) -> List[NewsItemModel]:
+        """获取新闻数据"""
+        pass
+    
+    async def process(self) -> List[NewsItemModel]:
+        """处理新闻数据流程"""
+        # 检查缓存
+        cached_news = self.get_cached_news()
+        if cached_news:
+            return [NewsItemModel(**item) for item in cached_news]
+        
+        # 获取新数据
+        news_items = await self.fetch()
+        
+        # 更新缓存
+        self.cache_news(news_items)
+        self.update_last_fetch_time()
+        
+        return news_items
+4.1.2 API新闻源适配器
+
+class APISource(NewsSource):
+    """API新闻源"""
+    
+    def __init__(
+        self,
+        source_id: str,
+        name: str,
+        api_url: str,
+        update_interval: int = 600,
+        cache_ttl: int = 300,
+        category: Optional[str] = None,
+        country: Optional[str] = None,
+        language: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        response_path: Optional[str] = None,
+        item_path: Optional[str] = None,
+        mapping: Optional[Dict[str, str]] = None
+    ):
+        super().__init__(source_id, name, update_interval, cache_ttl, category, country, language)
+        self.api_url = api_url
+        self.headers = headers or {}
+        self.params = params or {}
+        self.response_path = response_path
+        self.item_path = item_path
+        self.mapping = mapping or {}
+    
+    async def fetch(self) -> List[NewsItemModel]:
+        """从API获取新闻数据"""
+        from utils.http_client import http_client
+        
+        response = await http_client.fetch(
+            url=self.api_url,
+            headers=self.headers,
+            params=self.params,
+            response_type="json"
+        )
+        
+        # 提取响应数据
+        data = response
+        if self.response_path:
+            for key in self.response_path.split('.'):
+                data = data.get(key, {})
+        
+        # 提取项目列表
+        items = data
+        if self.item_path:
+            for key in self.item_path.split('.'):
+                items = items.get(key, [])
+        
+        # 映射字段
+        news_items = []
+        for item in items:
+            news_item = {}
+            for target_field, source_field in self.mapping.items():
+                if '.' in source_field:
+                    # 处理嵌套字段
+                    value = item
+                    for key in source_field.split('.'):
+                        value = value.get(key, {})
+                    news_item[target_field] = value
+                else:
+                    news_item[target_field] = item.get(source_field)
+            
+            # 确保必要字段存在
+            if 'id' in news_item and 'title' in news_item and 'url' in news_item:
+                news_items.append(NewsItemModel(**news_item))
+        
+        return news_items
+4.1.3 Web新闻源适配器
+
+class WebSource(NewsSource):
+    """Web新闻源（HTML解析）"""
+    
+    def __init__(
+        self,
+        source_id: str,
+        name: str,
+        url: str,
+        update_interval: int = 600,
+        cache_ttl: int = 300,
+        category: Optional[str] = None,
+        country: Optional[str] = None,
+        language: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        selector: Optional[str] = None,
+        item_selector: Optional[str] = None,
+        mapping: Optional[Dict[str, str]] = None
+    ):
+        super().__init__(source_id, name, update_interval, cache_ttl, category, country, language)
+        self.url = url
+        self.headers = headers or {}
+        self.selector = selector
+        self.item_selector = item_selector
+        self.mapping = mapping or {}
+    
+    async def fetch(self) -> List[NewsItemModel]:
+        """从网页获取新闻数据"""
+        from utils.http_client import http_client
+        
+        html = await http_client.fetch(
+            url=self.url,
+            headers=self.headers,
+            response_type="text"
+        )
+        
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # 选择容器元素
+        container = soup
+        if self.selector:
+            container = soup.select_one(self.selector)
+            if not container:
+                return []
+        
+        # 选择项目元素
+        items = container.select(self.item_selector) if self.item_selector else [container]
+        
+        # 映射字段
+        news_items = []
+        for item in items:
+            news_item = {}
+            for target_field, selector in self.mapping.items():
+                if selector.startswith('@'):
+                    # 属性选择器，如 @href
+                    attr = selector[1:]
+                    element = item
+                    news_item[target_field] = element.get(attr, '')
+                else:
+                    # 元素选择器
+                    element = item.select_one(selector)
+                    news_item[target_field] = element.text.strip() if element else ''
+            
+            # 确保必要字段存在
+            if 'id' in news_item and 'title' in news_item and 'url' in news_item:
+                news_items.append(NewsItemModel(**news_item))
+        
+        return news_items
+4.1.4 RSS新闻源适配器
+
+class RSSSource(NewsSource):
+    """RSS新闻源"""
+    
+    def __init__(
+        self,
+        source_id: str,
+        name: str,
+        rss_url: str,
+        update_interval: int = 600,
+        cache_ttl: int = 300,
+        category: Optional[str] = None,
+        country: Optional[str] = None,
+        language: Optional[str] = None
+    ):
+        super().__init__(source_id, name, update_interval, cache_ttl, category, country, language)
+        self.rss_url = rss_url
+    
+    async def fetch(self) -> List[NewsItemModel]:
+        """从RSS获取新闻数据"""
+        from utils.http_client import http_client
+        import feedparser
+        
+        response = await http_client.fetch(
+            url=self.rss_url,
+            response_type="text"
+        )
+        
+        feed = feedparser.parse(response)
+        
+        news_items = []
+        for entry in feed.entries:
+            news_item = NewsItemModel(
+                id=entry.get('id', entry.link),
+                title=entry.title,
+                url=entry.link,
+                content=entry.get('summary', ''),
+                published_at=datetime.datetime(*entry.published_parsed[:6]) if hasattr(entry, 'published_parsed') else None,
+                extra={
+                    'author': entry.get('author', ''),
+                    'tags': [tag.term for tag in entry.get('tags', [])]
+                }
+            )
+            news_items.append(news_item)
+        
+        return news_items
+4.2 数据采集模块
+4.2.1 新闻采集任务
+
+@shared_task(bind=True, max_retries=3)
+def fetch_news_from_source(self, source_id: str):
+    """从指定新闻源获取新闻"""
+    from sources.registry import SourceRegistry
+    
+    logger.info(f"Fetching news from source: {source_id}")
+    
+    try:
+        # 获取新闻源
+        source = SourceRegistry.get(source_id)
+        if not source:
+            logger.error(f"Source not found: {source_id}")
+            return {"status": "error", "message": f"Source not found: {source_id}"}
+        
+        # 获取新闻数据
+        loop = asyncio.get_event_loop()
+        news_items = loop.run_until_complete(source.process())
+        
+        # 保存到数据库
+        db = SessionLocal()
+        try:
+            for news_item in news_items:
+                # 检查是否已存在
+                existing_news = get_news_by_original_id(db, source_id, news_item.id)
+                if existing_news:
+                    continue
+                
+                # 创建新闻
+                news_data = {
+                    "title": news_item.title,
+                    "url": news_item.url,
+                    "mobile_url": news_item.mobile_url,
+                    "original_id": news_item.id,
+                    "source_id": source_id,
+                    "content": news_item.content,
+                    "summary": news_item.summary,
+                    "image_url": news_item.image_url,
+                    "published_at": news_item.published_at,
+                    "extra": news_item.extra
+                }
+                
+                news = create_news(db, news_data)
+                
+                # 触发后续处理
+                from .data_processor import process_news_content
+                process_news_content.delay(news.id)
+            
+            # 更新源的最后更新时间
+            update_source_last_updated(db, source_id)
+            
+            return {"status": "success", "source_id": source_id, "processed": len(news_items)}
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error fetching news from {source_id}: {e}")
+        # 增加错误计数
+        db = SessionLocal()
+        try:
+            increment_source_error_count(db, source_id, str(e))
+        finally:
+            db.close()
+        
+        # 重试
+        raise self.retry(exc=e, countdown=60)
+4.2.2 采集调度器
+
+@shared_task
+def schedule_news_fetching():
+    """调度新闻采集任务"""
+    from sources.registry import SourceRegistry
+    from app.crud.source import get_active_sources
+    
+    db = SessionLocal()
+    try:
+        # 获取所有活跃的新闻源
+        sources = get_active_sources(db)
+        
+        for source in sources:
+            # 检查是否需要更新
+            if source.last_updated:
+                now = datetime.datetime.utcnow()
+                time_since_update = now - source.last_updated
+                if time_since_update.total_seconds() < source.update_interval.total_seconds():
+                    # 未到更新时间
+                    continue
+            
+            # 触发采集任务
+            fetch_news_from_source.delay(source.id)
+        
+        return {"status": "success", "scheduled": len(sources)}
+    finally:
+        db.close()
+4.3 数据处理模块
+4.3.1 内容处理
+
+@shared_task
+def process_news_content(news_id: int):
+    """处理新闻内容"""
+    db = SessionLocal()
+    try:
+        # 获取新闻
+        news = get_news_by_id(db, news_id)
+        if not news:
+            logger.error(f"News not found: {news_id}")
+            return {"status": "error", "message": f"News not found: {news_id}"}
+        
+        # 如果没有内容，尝试获取
+        if not news.content and news.url:
+            try:
+                from utils.http_client import http_client
+                html = await http_client.fetch(news.url, response_type="text")
+                
+                # 使用适当的提取器提取内容
+                from utils.content_extractor import extract_content
+                content = extract_content(html, news.url)
+                
+                # 更新新闻内容
+                news = update_news(db, news_id, {"content": content})
+            except Exception as e:
+                logger.error(f
+继续
+
+@shared_task
+def process_news_content(news_id: int):
+    """处理新闻内容"""
+    db = SessionLocal()
+    try:
+        # 获取新闻
+        news = get_news_by_id(db, news_id)
+        if not news:
+            logger.error(f"News not found: {news_id}")
+            return {"status": "error", "message": f"News not found: {news_id}"}
+        
+        # 如果没有内容，尝试获取
+        if not news.content and news.url:
+            try:
+                from utils.http_client import http_client
+                html = await http_client.fetch(news.url, response_type="text")
+                
+                # 使用适当的提取器提取内容
+                from utils.content_extractor import extract_content
+                content = extract_content(html, news.url)
+                
+                # 更新新闻内容
+                news = update_news(db, news_id, {"content": content})
+            except Exception as e:
+                logger.error(f"Error fetching content for news {news_id}: {e}")
+        
+        # 如果没有摘要，生成摘要
+        if not news.summary and (news.content or news.title):
+            try:
+                from utils.summarizer import generate_summary
+                text = news.content or news.title
+                summary = generate_summary(text, max_length=200)
+                
+                # 更新新闻摘要
+                news = update_news(db, news_id, {"summary": summary})
+            except Exception as e:
+                logger.error(f"Error generating summary for news {news_id}: {e}")
+        
+        # 提取关键词和实体
+        try:
+            from utils.nlp_processor import extract_keywords, extract_entities
+            text = news.content or news.title
+            
+            keywords = extract_keywords(text, top_n=10)
+            entities = extract_entities(text)
+            
+            # 更新新闻额外信息
+            extra = news.extra or {}
+            extra.update({
+                "keywords": keywords,
+                "entities": entities
+            })
+            
+            news = update_news(db, news_id, {"extra": extra})
+        except Exception as e:
+            logger.error(f"Error extracting keywords/entities for news {news_id}: {e}")
+        
+        # 分析情感
+        try:
+            from utils.sentiment_analyzer import analyze_sentiment
+            text = news.content or news.title
+            
+            sentiment_score = analyze_sentiment(text)
+            
+            # 更新新闻情感分数
+            news = update_news(db, news_id, {"sentiment_score": sentiment_score})
+        except Exception as e:
+            logger.error(f"Error analyzing sentiment for news {news_id}: {e}")
+        
+        # 触发分类任务
+        categorize_news.delay(news_id)
+        
+        return {"status": "success", "news_id": news_id}
+    finally:
+        db.close()
+4.3.2 新闻分类
+
+@shared_task
+def categorize_news(news_id: int):
+    """对新闻进行分类"""
+    db = SessionLocal()
+    try:
+        # 获取新闻
+        news = get_news_by_id(db, news_id)
+        if not news:
+            logger.error(f"News not found: {news_id}")
+            return {"status": "error", "message": f"News not found: {news_id}"}
+        
+        # 如果已有分类且不是来自源的默认分类，则跳过
+        if news.category_id and news.category_id != news.source.category_id:
+            return {"status": "skipped", "news_id": news_id, "reason": "already_categorized"}
+        
+        # 准备文本
+        text = f"{news.title} {news.summary or ''}"
+        
+        # 使用分类器预测分类
+        from utils.news_classifier import classify_news
+        category_slug = classify_news(text)
+        
+        # 获取分类ID
+        from app.crud.category import get_category_by_slug
+        category = get_category_by_slug(db, category_slug)
+        
+        if category:
+            # 更新新闻分类
+            news = update_news(db, news_id, {"category_id": category.id})
+        
+        # 提取标签
+        from utils.tag_extractor import extract_tags
+        tags = extract_tags(text)
+        
+        # 关联标签
+        from app.crud.tag import get_or_create_tags, associate_tags_with_news
+        tag_objs = get_or_create_tags(db, tags)
+        associate_tags_with_news(db, news_id, [tag.id for tag in tag_objs])
+        
+        return {"status": "success", "news_id": news_id, "category": category_slug if category else None}
+    finally:
+        db.close()
+4.3.3 新闻聚类
+
+@shared_task
+def cluster_news(hours: int = 24, min_cluster_size: int = 3):
+    """对新闻进行聚类"""
+    db = SessionLocal()
+    try:
+        # 获取最近的新闻
+        from datetime import datetime, timedelta
+        from app.crud.news import get_recent_news
+        
+        start_time = datetime.utcnow() - timedelta(hours=hours)
+        news_items = get_recent_news(db, start_time)
+        
+        if not news_items:
+            logger.info(f"No news found for clustering in the last {hours} hours")
+            return {"status": "skipped", "reason": "no_news"}
+        
+        # 准备文本和ID映射
+        texts = []
+        news_ids = []
+        for news in news_items:
+            text = f"{news.title} {news.summary or ''}"
+            texts.append(text)
+            news_ids.append(news.id)
+        
+        # 执行聚类
+        from utils.news_clusterer import cluster_texts
+        clusters = cluster_texts(texts, min_cluster_size=min_cluster_size)
+        
+        # 处理聚类结果
+        from app.crud.cluster import get_or_create_cluster, update_cluster_news_count
+        
+        for cluster_id, indices in clusters.items():
+            # 获取该聚类的新闻
+            cluster_news = [news_items[i] for i in indices]
+            
+            # 生成聚类标题和摘要
+            from utils.summarizer import generate_cluster_title, generate_cluster_summary
+            title = generate_cluster_title([news.title for news in cluster_news])
+            summary = generate_cluster_summary([news.summary or news.title for news in cluster_news])
+            
+            # 提取关键词
+            from utils.nlp_processor import extract_keywords
+            all_text = " ".join([news.title + " " + (news.summary or "") for news in cluster_news])
+            keywords = extract_keywords(all_text, top_n=10)
+            
+            # 创建或更新聚类
+            cluster = get_or_create_cluster(db, {
+                "id": cluster_id,
+                "title": title,
+                "summary": summary,
+                "keywords": keywords
+            })
+            
+            # 更新新闻的聚类ID
+            for news in cluster_news:
+                update_news(db, news.id, {"cluster_id": cluster_id})
+            
+            # 更新聚类的新闻数量
+            update_cluster_news_count(db, cluster_id)
+        
+        return {"status": "success", "clusters": len(clusters)}
+    finally:
+        db.close()
+4.4 API接口设计
+4.4.1 新闻API
+
+# backend/app/api/v1/endpoints/news.py
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from datetime import datetime
+from app.api.deps import get_db, get_current_user
+from app.schemas.news import News, NewsCreate, NewsUpdate, NewsInDB
+from app.crud.news import (
+    get_news, get_news_by_id, create_news, update_news, delete_news,
+    get_news_by_source, get_news_by_category, get_trending_news,
+    get_related_news, search_news
+)
+from app.models.user import User
+router = APIRouter()
+@router.get("/", response_model=List[News])
+def read_news(
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 100,
+    source_id: Optional[str] = None,
+    category_id: Optional[int] = None,
+    tag_id: Optional[int] = None,
+    cluster_id: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    sort_by: str = "published_at",
+    sort_order: str = "desc",
+    current_user: Optional[User] = Depends(get_current_user)
+):
+    """
+    获取新闻列表，支持多种过滤和排序选项
+    """
+    if source_id:
+        news = get_news_by_source(db, source_id, skip, limit, sort_by, sort_order)
+    elif category_id:
+        news = get_news_by_category(db, category_id, skip, limit, sort_by, sort_order)
+    else:
+        news = get_news(
+            db, skip, limit, 
+            tag_id=tag_id, 
+            cluster_id=cluster_id,
+            start_date=start_date,
+            end_date=end_date,
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+    
+    # 如果用户已登录，记录阅读历史
+    if current_user:
+        from app.crud.reading_history import create_reading_history
+        for item in news:
+            create_reading_history(db, {"user_id": current_user.id, "news_id": item.id})
+    
+    return news
+@router.get("/trending", response_model=List[News])
+def read_trending_news(
+    db: Session = Depends(get_db),
+    limit: int = 10,
+    hours: int = 24,
+    category_id: Optional[int] = None
+):
+    """
+    获取热门新闻
+    """
+    return get_trending_news(db, limit, hours, category_id)
+@router.get("/search", response_model=List[News])
+def search_news_api(
+    q: str,
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 100,
+    category_id: Optional[int] = None,
+    source_id: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None
+):
+    """
+    搜索新闻
+    """
+    return search_news(
+        db, q, skip, limit,
+        category_id=category_id,
+        source_id=source_id,
+        start_date=start_date,
+        end_date=end_date
+    )
+@router.get("/{news_id}", response_model=NewsInDB)
+def read_news_by_id(
+    news_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user)
+):
+    """
+    获取单条新闻详情
+    """
+    news = get_news_by_id(db, news_id)
+    if not news:
+        raise HTTPException(status_code=404, detail="News not found")
+    
+    # 增加浏览次数
+    update_news(db, news_id, {"view_count": news.view_count + 1})
+    
+    # 如果用户已登录，记录阅读历史
+    if current_user:
+        from app.crud.reading_history import create_reading_history
+        create_reading_history(db, {"user_id": current_user.id, "news_id": news_id})
+    
+    return news
+@router.get("/{news_id}/related", response_model=List[News])
+def read_related_news(
+    news_id: int,
+    db: Session = Depends(get_db),
+    limit: int = 5
+):
+    """
+    获取相关新闻
+    """
+    news = get_news_by_id(db, news_id)
+    if not news:
+        raise HTTPException(status_code=404, detail="News not found")
+    
+    return get_related_news(db, news_id, limit)
+@router.post("/", response_model=NewsInDB)
+def create_news_api(
+    news: NewsCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    创建新闻（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    return create_news(db, news.dict())
+@router.put("/{news_id}", response_model=NewsInDB)
+def update_news_api(
+    news_id: int,
+    news: NewsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    更新新闻（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    db_news = get_news_by_id(db, news_id)
+    if not db_news:
+        raise HTTPException(status_code=404, detail="News not found")
+    
+    return update_news(db, news_id, news.dict(exclude_unset=True))
+@router.delete("/{news_id}")
+def delete_news_api(
+    news_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    删除新闻（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    db_news = get_news_by_id(db, news_id)
+    if not db_news:
+        raise HTTPException(status_code=404, detail="News not found")
+    
+    delete_news(db, news_id)
+    return {"status": "success"}
+4.4.2 新闻源API
+
+# backend/app/api/v1/endpoints/sources.py
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from app.api.deps import get_db, get_current_user
+from app.schemas.source import Source, SourceCreate, SourceUpdate, SourceWithStats
+from app.crud.source import (
+    get_sources, get_source_by_id, create_source, update_source,
+    delete_source, get_source_stats
+)
+from app.models.user import User
+router = APIRouter()
+@router.get("/", response_model=List[Source])
+def read_sources(
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 100,
+    active: Optional[bool] = None,
+    category_id: Optional[int] = None,
+    country: Optional[str] = None,
+    language: Optional[str] = None
+):
+    """
+    获取新闻源列表
+    """
+    return get_sources(
+        db, skip, limit,
+        active=active,
+        category_id=category_id,
+        country=country,
+        language=language
+    )
+@router.get("/{source_id}", response_model=SourceWithStats)
+def read_source(
+    source_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    获取单个新闻源详情
+    """
+    source = get_source_by_id(db, source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    # 获取统计信息
+    stats = get_source_stats(db, source_id)
+    
+    return {
+        **source.__dict__,
+        "stats": stats
+    }
+@router.post("/", response_model=Source)
+def create_source_api(
+    source: SourceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    创建新闻源（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    # 检查ID是否已存在
+    existing_source = get_source_by_id(db, source.id)
+    if existing_source:
+        raise HTTPException(status_code=400, detail="Source ID already registered")
+    
+    return create_source(db, source.dict())
+@router.put("/{source_id}", response_model=Source)
+def update_source_api(
+    source_id: str,
+    source: SourceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    更新新闻源（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    db_source = get_source_by_id(db, source_id)
+    if not db_source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    return update_source(db, source_id, source.dict(exclude_unset=True))
+@router.delete("/{source_id}")
+def delete_source_api(
+    source_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    删除新闻源（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    db_source = get_source_by_id(db, source_id)
+    if not db_source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    delete_source(db, source_id)
+    return {"status": "success"}
+@router.post("/{source_id}/fetch")
+def fetch_source_api(
+    source_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    手动触发新闻源数据获取（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    db_source = get_source_by_id(db, source_id)
+    if not db_source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    # 触发异步任务
+    from worker.tasks.news_fetcher import fetch_news_from_source
+    task = fetch_news_from_source.delay(source_id)
+    
+    return {"status": "success", "task_id": task.id}
+4.4.3 分类API
+
+# backend/app/api/v1/endpoints/categories.py
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from app.api.deps import get_db, get_current_user
+from app.schemas.category import Category, CategoryCreate, CategoryUpdate, CategoryWithStats
+from app.crud.category import (
+    get_categories, get_category_by_id, create_category, update_category,
+    delete_category, get_category_stats
+)
+from app.models.user import User
+router = APIRouter()
+@router.get("/", response_model=List[Category])
+def read_categories(
+    db: Session = Depends(get_db),
+    skip: int = 0,
+    limit: int = 100,
+    parent_id: Optional[int] = None
+):
+    """
+    获取分类列表
+    """
+    return get_categories(db, skip, limit, parent_id)
+@router.get("/{category_id}", response_model=CategoryWithStats)
+def read_category(
+    category_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    获取单个分类详情
+    """
+    category = get_category_by_id(db, category_id)
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    # 获取统计信息
+    stats = get_category_stats(db, category_id)
+    
+    return {
+        **category.__dict__,
+        "stats": stats
+    }
+@router.post("/", response_model=Category)
+def create_category_api(
+    category: CategoryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    创建分类（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    return create_category(db, category.dict())
+@router.put("/{category_id}", response_model=Category)
+def update_category_api(
+    category_id: int,
+    category: CategoryUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    更新分类（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    db_category = get_category_by_id(db, category_id)
+    if not db_category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    return update_category(db, category_id, category.dict(exclude_unset=True))
+@router.delete("/{category_id}")
+def delete_category_api(
+    category_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    删除分类（需要管理员权限）
+    """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    db_category = get_category_by_id(db, category_id)
+    if not db_category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    delete_category(db, category_id)
+    return {"status": "success"}
+4.4.4 用户API
+
+# backend/app/api/v1/endpoints/users.py
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from app.api.deps import get_db, get_current_user
+from app.schemas.user import User, UserCreate, UserUpdate
+from app.schemas.favorite import Favorite
+from app.schemas.reading_history import ReadingHistory
+from app.schemas.subscription import Subscription, SubscriptionCreate
+from app.crud.user import (
+    get_users, get_user_by_id, create_user, update_user, delete_user
+)
+from app.crud.favorite import (
+    get_user_favorites, add_favorite, remove_favorite
+)
+from app.crud.reading_history import (
+    get_user_reading_history, clear_reading_history
+)
+from app.crud.subscription import (
+    get_user_subscriptions, add_subscription, remove_subscription
+)
+from app.models.user import User as UserModel
+router = APIRouter()
+@router.get("/me", response_model=User)
+def read_current_user(
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    获取当前用户信息
+    """
+    return current_user
+@router.put("/me", response_model=User)
+def update_current_user(
+    user: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    更新当前用户信息
+    """
+    return update_user(db, current_user.id, user.dict(exclude_unset=True))
+@router.get("/me/favorites", response_model=List[Favorite])
+def read_current_user_favorites(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 100
+):
+    """
+    获取当前用户收藏
+    """
+    return get_user_favorites(db, current_user.id, skip, limit)
+@router.post("/me/favorites/{news_id}")
+def add_current_user_favorite(
+    news_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    添加收藏
+    """
+    add_favorite(db, {"user_id": current_user.id, "news_id": news_id})
+    return {"status": "success"}
+@router.delete("/me/favorites/{news_id}")
+def remove_current_user_favorite(
+    news_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    删除收藏
+    """
+    remove_favorite(db, current_user.id, news_id)
+    return {"status": "success"}
+@router.get("/me/history", response_model=List[ReadingHistory])
+def read_current_user_history(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 100
+):
+    """
+    获取当前用户阅读历史
+    """
+    return get_user_reading_history(db, current_user.id, skip, limit)
+@router.delete("/me/history")
+def clear_current_user_history(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    清空阅读历史
+    """
+    clear_reading_history(db, current_user.id)
+    return {"status": "success"}
+@router.get("/me/subscriptions", response_model=List[Subscription])
+def read_current_user_subscriptions(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    获取当前用户订阅
+    """
+    return get_user_subscriptions(db, current_user.id)
+@router.post("/me/subscriptions", response_model=Subscription)
+def add_current_user_subscription(
+    subscription: SubscriptionCreate,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    添加订阅
+    """
+    return add_subscription(db, {**subscription.dict(), "user_id": current_user.id})
+@router.delete("/me/subscriptions/{subscription_id}")
+def remove_current_user_subscription(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    """
+    删除订阅
+    """
+    remove_subscription(db, subscription_id, current_user.id)
+    return {"status": "success"}
+5. 系统特性与优势
+5.1 高度可扩展性
+·  模块化设计：
+·  核心功能与扩展功能分离
+·  使用工厂模式和适配器模式实现新闻源的灵活扩展
+·  支持通过配置文件添加新的数据源，无需修改代码
+·  微服务架构：
+·  服务间通过消息队列和API进行松耦合通信
+·  每个服务可以独立扩展和部署
+·  支持水平扩展以应对高负载
+·  插件系统：
+·  支持通过插件扩展系统功能
+·  提供标准化的插件接口
+·  允许第三方开发者贡献新功能
+5.2 智能数据处理
+1. 自动内容提取：
+·  从HTML页面智能提取正文内容
+·  支持多种格式的数据解析
+·  处理非标准编码和特殊字符
+·  NLP分析能力：
+·  自动生成摘要
+·  提取关键词和实体
+·  情感分析和分类
+·  新闻聚类和话题提取
+·  多语言支持：
+·  支持多种语言的新闻源
+·  多语言文本处理
+·  跨语言聚类和分析
+5.3 高性能与可靠性
+1. 多级缓存策略：
+·  Redis缓存热门数据
+·  数据库查询结果缓存
+·  HTTP响应缓存
+·  异步任务处理：
+·  使用Celery处理耗时任务
+·  任务重试和错误处理机制
+·  任务优先级和调度
+·  容错机制：
+·  服务健康检查
+·  自动故障恢复
+·  数据源错误隔离
+5.4 友好的API设计
+·  RESTful API：
+·  符合REST设计原则
+·  使用
+继续
+5.4 友好的API设计
+·  RESTful API：
+·  符合REST设计原则
+·  使用HTTP标准方法和状态码
+·  支持资源嵌套和关联
+·  GraphQL API：
+·  支持灵活的数据查询
+·  减少网络请求次数
+·  客户端可以精确指定所需数据
+3. API文档与测试：
+·  自动生成OpenAPI文档
+·  内置API测试工具
+·  示例代码和使用指南
+·  版本控制：
+·  API版本管理
+·  向后兼容性保证
+·  平滑升级路径
+·  认证与授权：
+·  多种认证方式（JWT、OAuth2、API密钥）
+·  细粒度的权限控制
+·  请求限流和安全保护
+5.5 个性化体验
+·  用户偏好学习：
+·  基于用户行为自动学习偏好
+·  个性化内容推荐
+·  兴趣标签自动生成
+·  定制化视图：
+·  用户可自定义首页布局
+·  支持多种阅读模式
+·  自定义通知和提醒
+·  跨设备同步：
+·  阅读进度同步
+·  收藏和历史记录云同步
+·  设备间无缝切换
+6. API接口规范
+6.1 API设计原则
+1. 一致性：所有API遵循一致的命名和结构规范
+·  简洁性：API设计简洁明了，避免冗余
+·  自描述性：API名称和参数具有自描述性
+·  可发现性：提供API发现机制
+·  安全性：实施适当的认证和授权机制
+6.2 RESTful API规范
+6.2.1 基本URL结构
+
+https://api.newsaggregator.com/v1/{resource}
+6.2.2 HTTP方法使用
+·  GET：获取资源
+·  POST：创建资源
+·  PUT：更新资源（全量更新）
+·  PATCH：部分更新资源
+·  DELETE：删除资源
+6.2.3 状态码使用
+·  200 OK：请求成功
+·  201 Created：资源创建成功
+·  204 No Content：请求成功但无返回内容
+·  400 Bad Request：请求参数错误
+·  401 Unauthorized：未认证
+·  403 Forbidden：权限不足
+·  404 Not Found：资源不存在
+·  409 Conflict：资源冲突
+·  422 Unprocessable Entity：请求格式正确但语义错误
+·  429 Too Many Requests：请求过于频繁
+·  500 Internal Server Error：服务器错误
+6.2.4 分页
+
+GET /news?page=2&per_page=20
+响应包含分页元数据：
+
+{
+  "items": [...],
+  "meta": {
+    "page": 2,
+    "per_page": 20,
+    "total_items": 350,
+    "total_pages": 18
+  },
+  "links": {
+    "self": "/news?page=2&per_page=20",
+    "first": "/news?page=1&per_page=20",
+    "prev": "/news?page=1&per_page=20",
+    "next": "/news?page=3&per_page=20",
+    "last": "/news?page=18&per_page=20"
+  }
+}
+6.2.5 过滤、排序和搜索
+
+GET /news?category=tech&source=hackernews&sort=-published_at&q=python
+6.2.6 字段选择
+
+GET /news?fields=id,title,published_at,source
+6.2.7 错误响应格式
+
+{
+  "error": {
+    "code": "RESOURCE_NOT_FOUND",
+    "message": "The requested news item does not exist",
+    "details": {
+      "resource": "news",
+      "id": "12345"
+    }
+  }
+}
+6.3 GraphQL API
+6.3.1 基本查询
+
+query {
+  news(limit: 10, offset: 0, sort: { field: PUBLISHED_AT, order: DESC }) {
+    id
+    title
+    summary
+    publishedAt
+    source {
+      id
+      name
+    }
+    category {
+      id
+      name
+    }
+  }
+}
+6.3.2 变量和参数
+
+query GetNewsByCategory($categoryId: ID!, $limit: Int = 10) {
+  newsByCategory(categoryId: $categoryId, limit: $limit) {
+    id
+    title
+    publishedAt
+  }
+}
+6.3.3 变更操作
+
+mutation AddFavorite($newsId: ID!) {
+  addFavorite(newsId: $newsId) {
+    id
+    news {
+      id
+      title
+    }
+    createdAt
+  }
+}
+6.3.4 订阅
+
+subscription {
+  newNewsPublished(categories: ["tech", "science"]) {
+    id
+    title
+    source {
+      name
+    }
+    publishedAt
+  }
+}
+6.4 API认证与授权
+6.4.1 JWT认证
+
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+6.4.2 API密钥认证
+
+X-API-Key: abcd1234efgh5678
+6.4.3 OAuth2认证流程
+·  客户端重定向到授权服务器
+·  用户登录并授权
+·  授权服务器重定向回客户端，带有授权码
+4. 客户端使用授权码获取访问令牌
+·  客户端使用访问令牌调用API
+7. 部署与运维
+7.1 容器化部署
+
+# docker-compose.yml
+version: '3.8'
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/newsaggregator
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - db
+      - redis
+    restart: always
+  worker:
+    build: ./backend
+    command: celery -A worker.celery worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/newsaggregator
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    restart: always
+  scheduler:
+    build: ./backend
+    command: celery -A worker.celery beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/newsaggregator
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    restart: always
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    restart: always
+  db:
+    image: postgres:14
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=newsaggregator
+    restart: always
+  redis:
+    image: redis:7
+    volumes:
+      - redis_data:/data
+    restart: always
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: always
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: always
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    restart: always
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+7.2 Kubernetes部署
+
+# kubernetes/api-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-api
+  labels:
+    app: news-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: news-api
+  template:
+    metadata:
+      labels:
+        app: news-api
+    spec:
+      containers:
+      - name: api
+        image: newsaggregator/api:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: url
+        - name: REDIS_URL
+          value: redis://redis:6379/0
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: secret-key
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+7.3 CI/CD流程
+
+# .github/workflows/ci-cd.yml
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r backend/requirements-dev.txt
+    - name: Run tests
+      run: |
+        cd backend
+        pytest
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Build and push API
+      uses: docker/build-push-action@v3
+      with:
+        context: ./backend
+        push: true
+        tags: newsaggregator/api:latest
+    - name: Build and push Frontend
+      uses: docker/build-push-action@v3
+      with:
+        context: ./frontend
+        push: true
+        tags: newsaggregator/frontend:latest
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install ArgoCD CLI
+      run: |
+        curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+        chmod +x argocd
+        sudo mv argocd /usr/local/bin/
+    - name: Deploy with ArgoCD
+      run: |
+        argocd login ${{ secrets.ARGOCD_SERVER }} --username ${{ secrets.ARGOCD_USERNAME }} --password ${{ secrets.ARGOCD_PASSWORD }}
+        argocd app set news-aggregator --parameter image.tag=latest
+        argocd app sync news-aggregator
+7.4 监控与告警
+
+# monitoring/prometheus/prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - alertmanager:9093
+rule_files:
+  - "rules/*.yml"
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+  - job_name: 'api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['api:8000']
+  - job_name: 'worker'
+    static_configs:
+      - targets: ['worker:8888']
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+8. 扩展与未来规划
+8.1 短期规划
+·  移动应用支持：
+·  开发iOS和Android原生应用
+·  提供PWA支持
+·  实现离线阅读功能
+·  多媒体内容支持：
+·  视频新闻聚合
+·  播客内容整合
+·  图片新闻展示优化
+·  社交功能：
+·  用户评论系统
+·  内容分享功能
+·  社交媒体集成
+8.2 中期规划
+·  高级分析功能：
+·  事件检测和追踪
+·  趋势预测
+·  深度情感分析
+2. 内容创作工具：
+·  新闻摘要自动生成
+·  多语言翻译
+·  内容重写和改写
+·  企业版功能：
+·  定制化数据源
+·  高级API访问
+·  专业分析报告
+8.3 长期规划
+·  AI驱动的内容理解：
+·  深度语义理解
+·  多模态内容分析
+·  个性化知识图谱
+·  去中心化架构：
+·  区块链内容验证
+·  分布式存储
+·  P2P内容分发
+3. 生态系统扩展：
+·  开发者平台
+·  插件市场
+·  第三方集成
+9. 结论
+多源新闻聚合系统是一个高度可扩展、智能化的平台，能够从30+不同来源实时收集、处理和聚合新闻数据。通过模块化设计和微服务架构，系统具备极强的扩展性和可维护性。系统的核心优势包括：
+·  灵活的新闻源适配：支持多种类型的新闻源，包括API、Web和RSS，并能通过配置文件轻松添加新源。
+·  智能的内容处理：自动提取内容、生成摘要、分析情感、分类和聚类，提供高质量的新闻体验。
+·  个性化推荐：基于用户行为和偏好，提供个性化的内容推荐。
+·  友好的API设计：提供RESTful和GraphQL API，支持第三方集成和扩展。
+·  高性能与可靠性：多级缓存、异步任务处理和容错机制确保系统的高性能和可靠性。
+通过这一系统，用户可以在一个平台上获取全面、及时、个性化的新闻信息，开发者可以利用丰富的API构建创新应用，企业可以进行深入的舆情分析和内容监控。随着系统的不断发展和完善，它将成为连接信息生产者和消费者的重要桥梁，为用户提供更智能、更高效的信息获取体验。

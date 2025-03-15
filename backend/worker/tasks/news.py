@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session
+from celery import Task
 
 from app.crud.news import get_news_by_original_id, create_news, update_news
 from app.crud.source import get_source
@@ -13,213 +14,355 @@ from app.schemas.news import NewsCreate, NewsUpdate
 from worker.celery_app import celery_app
 from worker.sources.registry import source_registry
 from worker.sources.base import NewsItemModel
+from celery.utils.log import get_task_logger
+from app.core.config import settings
+from worker.sources.manager import source_manager
 
 
-logger = logging.getLogger(__name__)
+logger = get_task_logger(__name__)
 
 
-@celery_app.task(name="fetch_all_news")
-def fetch_all_news() -> Dict[str, Any]:
+@celery_app.task(bind=True, name="news.fetch_high_frequency_sources")
+def fetch_high_frequency_sources(self: Task) -> Dict[str, Any]:
     """
-    Fetch news from all sources
+    获取高频更新的新闻源（每10分钟）
+    主要是社交媒体等实时性较强的源
     """
-    logger.info("Starting fetch_all_news task")
-    
-    # Create event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    logger.info("Starting high frequency news fetch task")
     
     try:
-        # Load sources from database
-        loop.run_until_complete(source_registry.load_sources_from_db())
+        # 获取所有高频更新的新闻源（更新间隔小于等于15分钟）
+        sources = [
+            source for source in source_manager.get_all_sources()
+            if source.update_interval <= 900  # 15分钟 = 900秒
+        ]
         
-        # Fetch news from all sources
-        loop.run_until_complete(source_registry.fetch_all_sources())
+        if not sources:
+            logger.info("No high frequency sources found")
+            return {"status": "success", "message": "No high frequency sources found"}
         
-        # Process news items
-        for source_id, source in source_registry.sources.items():
-            try:
-                # Fetch news items
-                news_items = loop.run_until_complete(source.process())
-                
-                # Save news items to database
-                _save_news_items(source_id, news_items)
-                
-                logger.info(f"Processed {len(news_items)} news items from source {source_id}")
-            except Exception as e:
-                logger.error(f"Error processing source {source_id}: {str(e)}")
+        # 获取所有高频源的新闻
+        results = asyncio.run(_fetch_sources_news(sources))
         
-        return {"status": "success", "message": "News fetched successfully"}
+        return {
+            "status": "success",
+            "message": f"Fetched news from {len(results)} high frequency sources",
+            "sources": [source.source_id for source in sources],
+            "total_news": sum(len(news) for news in results.values())
+        }
     except Exception as e:
-        logger.error(f"Error in fetch_all_news task: {str(e)}")
+        logger.error(f"Error in high frequency news fetch task: {str(e)}")
         return {"status": "error", "message": str(e)}
-    finally:
-        loop.close()
 
 
-@celery_app.task(name="fetch_source_news")
-def fetch_source_news(source_id: str) -> Dict[str, Any]:
+@celery_app.task(bind=True, name="news.fetch_medium_frequency_sources")
+def fetch_medium_frequency_sources(self: Task) -> Dict[str, Any]:
     """
-    Fetch news from a specific source
+    获取中频更新的新闻源（每30分钟）
+    主要是新闻网站等更新较频繁的源
     """
-    logger.info(f"Starting fetch_source_news task for source {source_id}")
-    
-    # Create event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    logger.info("Starting medium frequency news fetch task")
     
     try:
-        # Load sources from database
-        loop.run_until_complete(source_registry.load_sources_from_db())
+        # 获取所有中频更新的新闻源（更新间隔大于15分钟且小于等于45分钟）
+        sources = [
+            source for source in source_manager.get_all_sources()
+            if 900 < source.update_interval <= 2700  # 15-45分钟
+        ]
         
-        # Get source
-        source = source_registry.get_source(source_id)
+        if not sources:
+            logger.info("No medium frequency sources found")
+            return {"status": "success", "message": "No medium frequency sources found"}
+        
+        # 获取所有中频源的新闻
+        results = asyncio.run(_fetch_sources_news(sources))
+        
+        return {
+            "status": "success",
+            "message": f"Fetched news from {len(results)} medium frequency sources",
+            "sources": [source.source_id for source in sources],
+            "total_news": sum(len(news) for news in results.values())
+        }
+    except Exception as e:
+        logger.error(f"Error in medium frequency news fetch task: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@celery_app.task(bind=True, name="news.fetch_low_frequency_sources")
+def fetch_low_frequency_sources(self: Task) -> Dict[str, Any]:
+    """
+    获取低频更新的新闻源（每小时或更长）
+    主要是博客、周刊等更新不频繁的源
+    """
+    logger.info("Starting low frequency news fetch task")
+    
+    try:
+        # 获取所有低频更新的新闻源（更新间隔大于45分钟）
+        sources = [
+            source for source in source_manager.get_all_sources()
+            if source.update_interval > 2700  # 45分钟以上
+        ]
+        
+        if not sources:
+            logger.info("No low frequency sources found")
+            return {"status": "success", "message": "No low frequency sources found"}
+        
+        # 获取所有低频源的新闻
+        results = asyncio.run(_fetch_sources_news(sources))
+        
+        return {
+            "status": "success",
+            "message": f"Fetched news from {len(results)} low frequency sources",
+            "sources": [source.source_id for source in sources],
+            "total_news": sum(len(news) for news in results.values())
+        }
+    except Exception as e:
+        logger.error(f"Error in low frequency news fetch task: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@celery_app.task(bind=True, name="news.fetch_all_news")
+def fetch_all_news(self: Task) -> Dict[str, Any]:
+    """
+    获取所有新闻源的新闻
+    """
+    logger.info("Starting fetch all news task")
+    
+    try:
+        # 获取所有新闻源
+        sources = source_manager.get_all_sources()
+        
+        if not sources:
+            logger.info("No sources found")
+            return {"status": "success", "message": "No sources found"}
+        
+        # 获取所有源的新闻
+        results = asyncio.run(_fetch_sources_news(sources))
+        
+        return {
+            "status": "success",
+            "message": f"Fetched news from {len(results)} sources",
+            "sources": [source.source_id for source in sources],
+            "total_news": sum(len(news) for news in results.values())
+        }
+    except Exception as e:
+        logger.error(f"Error in fetch all news task: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@celery_app.task(bind=True, name="news.fetch_source_news")
+def fetch_source_news(self: Task, source_id: str) -> Dict[str, Any]:
+    """
+    获取指定新闻源的新闻
+    """
+    logger.info(f"Starting fetch news task for source: {source_id}")
+    
+    try:
+        # 获取指定新闻源
+        source = source_manager.get_source(source_id)
+        
         if not source:
-            return {"status": "error", "message": f"Source {source_id} not found"}
+            logger.warning(f"Source not found: {source_id}")
+            return {"status": "error", "message": f"Source not found: {source_id}"}
         
-        # Fetch news items
-        news_items = loop.run_until_complete(source.process())
+        # 获取新闻
+        news_items = asyncio.run(_fetch_source_news(source))
         
-        # Save news items to database
-        _save_news_items(source_id, news_items)
+        # 保存到数据库
+        saved_count = _save_news_to_db(news_items)
         
-        logger.info(f"Processed {len(news_items)} news items from source {source_id}")
-        
-        return {"status": "success", "message": f"News fetched successfully for source {source_id}"}
+        return {
+            "status": "success",
+            "message": f"Fetched {len(news_items)} news items from source {source_id}",
+            "saved": saved_count
+        }
     except Exception as e:
-        logger.error(f"Error in fetch_source_news task for source {source_id}: {str(e)}")
+        logger.error(f"Error in fetch source news task for {source_id}: {str(e)}")
         return {"status": "error", "message": str(e)}
-    finally:
-        loop.close()
 
 
-def _save_news_items(source_id: str, news_items: List[NewsItemModel]) -> None:
+@celery_app.task(bind=True, name="news.cleanup_old_news")
+def cleanup_old_news(self: Task, days: int = 30) -> Dict[str, Any]:
     """
-    Save news items to database
+    清理旧新闻
+    默认清理30天前的新闻
     """
+    logger.info(f"Starting cleanup old news task (older than {days} days)")
+    
+    try:
+        db = SessionLocal()
+        try:
+            # 计算截止日期
+            cutoff_date = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+            
+            # 删除旧新闻
+            deleted_count = db.query(News).filter(News.published_at < cutoff_date).delete()
+            db.commit()
+            
+            logger.info(f"Deleted {deleted_count} old news items")
+            return {
+                "status": "success",
+                "message": f"Deleted {deleted_count} news items older than {days} days"
+            }
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in cleanup old news task: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@celery_app.task(bind=True, name="news.analyze_news_trends")
+def analyze_news_trends(self: Task, days: int = 7) -> Dict[str, Any]:
+    """
+    分析新闻趋势
+    默认分析最近7天的新闻
+    """
+    logger.info(f"Starting analyze news trends task (last {days} days)")
+    
+    try:
+        db = SessionLocal()
+        try:
+            # 计算起始日期
+            start_date = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+            
+            # 获取最近的新闻
+            recent_news = db.query(News).filter(News.published_at >= start_date).all()
+            
+            if not recent_news:
+                logger.info(f"No news found in the last {days} days")
+                return {
+                    "status": "success",
+                    "message": f"No news found in the last {days} days"
+                }
+            
+            # TODO: 实现趋势分析算法
+            # 这里可以实现关键词提取、聚类、热度计算等
+            
+            logger.info(f"Analyzed {len(recent_news)} news items")
+            return {
+                "status": "success",
+                "message": f"Analyzed {len(recent_news)} news items from the last {days} days"
+            }
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in analyze news trends task: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+async def _fetch_sources_news(sources: List[Any]) -> Dict[str, List[Any]]:
+    """
+    获取多个新闻源的新闻
+    """
+    results = {}
+    
+    # 创建任务列表
+    tasks = [_fetch_source_news(source) for source in sources]
+    
+    # 并发执行任务
+    completed_tasks = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # 处理结果
+    for i, result in enumerate(completed_tasks):
+        source = sources[i]
+        if isinstance(result, Exception):
+            logger.error(f"Error fetching news from source {source.source_id}: {str(result)}")
+            results[source.source_id] = []
+        else:
+            results[source.source_id] = result
+            # 保存到数据库
+            _save_news_to_db(result)
+    
+    return results
+
+
+async def _fetch_source_news(source: Any) -> List[Any]:
+    """
+    获取单个新闻源的新闻
+    """
+    try:
+        # 获取新闻源的新闻
+        news_items = await source.get_news(force_update=True)
+        logger.info(f"Fetched {len(news_items)} news items from source {source.source_id}")
+        return news_items
+    except Exception as e:
+        logger.error(f"Error fetching news from source {source.source_id}: {str(e)}")
+        raise
+
+
+def _save_news_to_db(news_items: List[Any]) -> int:
+    """
+    保存新闻到数据库
+    返回保存的新闻数量
+    """
+    if not news_items:
+        return 0
+    
     db = SessionLocal()
     try:
-        # Get source from database
-        db_source = get_source(db, source_id=source_id)
-        if not db_source:
-            logger.warning(f"Source {source_id} not found in database")
-            return
+        saved_count = 0
         
-        # Process each news item
         for item in news_items:
             try:
-                # Check if news item already exists
-                existing_news = get_news_by_original_id(
-                    db, source_id=source_id, original_id=item.id
-                )
+                # 检查新闻是否已存在
+                existing_news = db.query(News).filter(News.id == item.id).first()
                 
                 if existing_news:
-                    # Update existing news item if needed
-                    _update_existing_news(db, existing_news, item)
+                    # 更新现有新闻
+                    existing_news.title = item.title
+                    existing_news.url = item.url
+                    existing_news.mobile_url = item.mobile_url
+                    existing_news.content = item.content
+                    existing_news.summary = item.summary
+                    existing_news.image_url = item.image_url
+                    existing_news.published_at = item.published_at
+                    existing_news.is_top = item.is_top
+                    existing_news.extra = item.extra
+                    existing_news.updated_at = datetime.datetime.utcnow()
                 else:
-                    # Create new news item
-                    _create_new_news(db, source_id, item)
+                    # 创建新新闻
+                    news = News(
+                        id=item.id,
+                        title=item.title,
+                        url=item.url,
+                        mobile_url=item.mobile_url,
+                        content=item.content,
+                        summary=item.summary,
+                        image_url=item.image_url,
+                        published_at=item.published_at,
+                        is_top=item.is_top,
+                        extra=item.extra,
+                        source_id=item.extra.get("source_id"),
+                        created_at=datetime.datetime.utcnow(),
+                        updated_at=datetime.datetime.utcnow()
+                    )
+                    db.add(news)
+                    saved_count += 1
             except Exception as e:
                 logger.error(f"Error saving news item {item.id}: {str(e)}")
+                continue
+        
+        db.commit()
+        logger.info(f"Saved {saved_count} news items to database")
+        return saved_count
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving news to database: {str(e)}")
+        return 0
     finally:
         db.close()
 
 
-def _create_new_news(db: Session, source_id: str, item: NewsItemModel) -> None:
+def init_sources():
     """
-    Create a new news item in the database
+    初始化新闻源
     """
-    # Create news item
-    news_in = NewsCreate(
-        title=item.title,
-        url=item.url,
-        mobile_url=item.mobile_url,
-        content=item.content,
-        summary=item.summary,
-        image_url=item.image_url,
-        published_at=item.published_at or datetime.utcnow(),
-        source_id=source_id,
-        original_id=item.id,
-        author=item.extra.get("author"),
-        is_active=True,
-        extra=item.extra
-    )
-    
-    # Save to database
-    create_news(db, news=news_in)
+    # 注册默认新闻源
+    source_manager.register_default_sources()
+    logger.info("Initialized default news sources")
 
-
-def _update_existing_news(db: Session, existing_news: News, item: NewsItemModel) -> None:
-    """
-    Update an existing news item in the database if needed
-    """
-    # Check if update is needed
-    update_needed = False
-    update_data = {}
-    
-    # Check fields that might need updating
-    if existing_news.title != item.title:
-        update_data["title"] = item.title
-        update_needed = True
-    
-    if existing_news.url != item.url:
-        update_data["url"] = item.url
-        update_needed = True
-    
-    if item.mobile_url and existing_news.mobile_url != item.mobile_url:
-        update_data["mobile_url"] = item.mobile_url
-        update_needed = True
-    
-    if item.content and existing_news.content != item.content:
-        update_data["content"] = item.content
-        update_needed = True
-    
-    if item.summary and existing_news.summary != item.summary:
-        update_data["summary"] = item.summary
-        update_needed = True
-    
-    if item.image_url and existing_news.image_url != item.image_url:
-        update_data["image_url"] = item.image_url
-        update_needed = True
-    
-    if item.published_at and existing_news.published_at != item.published_at:
-        update_data["published_at"] = item.published_at
-        update_needed = True
-    
-    # Update if needed
-    if update_needed:
-        news_update = NewsUpdate(**update_data)
-        update_news(db, news_id=existing_news.id, news=news_update)
-
-
-@celery_app.task(name="cleanup_old_news")
-def cleanup_old_news(days: int = 30) -> Dict[str, Any]:
-    """
-    Clean up old news items
-    """
-    logger.info(f"Starting cleanup_old_news task for news older than {days} days")
-    
-    db = SessionLocal()
-    try:
-        # Calculate cutoff date
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
-        
-        # Get old news items
-        old_news = db.query(News).filter(News.published_at < cutoff_date).all()
-        
-        # Deactivate old news items
-        for news in old_news:
-            news.is_active = False
-        
-        # Commit changes
-        db.commit()
-        
-        logger.info(f"Deactivated {len(old_news)} old news items")
-        
-        return {"status": "success", "message": f"Deactivated {len(old_news)} old news items"}
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error in cleanup_old_news task: {str(e)}")
-        return {"status": "error", "message": str(e)}
-    finally:
-        db.close() 
+# 初始化新闻源
+init_sources() 

@@ -22,7 +22,7 @@ def read_sources(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
-    active_only: bool = False,
+    active_only: Optional[bool] = None,
     type_filter: Optional[SourceType] = None,
     category_id: Optional[int] = None,
     country: Optional[str] = None,
@@ -41,6 +41,14 @@ def read_sources(
         country=country,
         language=language
     )
+    
+    # 转换 timedelta 为整数（秒数）
+    for source in sources:
+        if hasattr(source, 'update_interval') and hasattr(source.update_interval, 'total_seconds'):
+            source.update_interval = int(source.update_interval.total_seconds())
+        if hasattr(source, 'cache_ttl') and hasattr(source.cache_ttl, 'total_seconds'):
+            source.cache_ttl = int(source.cache_ttl.total_seconds())
+    
     return sources
 
 
@@ -61,6 +69,13 @@ def create_new_source(
             detail=f"Source with ID {source_in.id} already exists",
         )
     source = create_source(db, source_in)
+    
+    # 转换 timedelta 为整数（秒数）
+    if hasattr(source, 'update_interval') and hasattr(source.update_interval, 'total_seconds'):
+        source.update_interval = int(source.update_interval.total_seconds())
+    if hasattr(source, 'cache_ttl') and hasattr(source.cache_ttl, 'total_seconds'):
+        source.cache_ttl = int(source.cache_ttl.total_seconds())
+    
     return source
 
 
@@ -79,6 +94,13 @@ def read_source(
             status_code=404,
             detail="Source not found",
         )
+    
+    # 转换 timedelta 为整数（秒数）
+    if hasattr(source, 'update_interval') and hasattr(source.update_interval, 'total_seconds'):
+        source.update_interval = int(source.update_interval.total_seconds())
+    if hasattr(source, 'cache_ttl') and hasattr(source.cache_ttl, 'total_seconds'):
+        source.cache_ttl = int(source.cache_ttl.total_seconds())
+    
     return source
 
 
@@ -100,6 +122,13 @@ def update_source_api(
             detail="Source not found",
         )
     source = update_source(db, source_id=source_id, source=source_in)
+    
+    # 转换 timedelta 为整数（秒数）
+    if hasattr(source, 'update_interval') and hasattr(source.update_interval, 'total_seconds'):
+        source.update_interval = int(source.update_interval.total_seconds())
+    if hasattr(source, 'cache_ttl') and hasattr(source.cache_ttl, 'total_seconds'):
+        source.cache_ttl = int(source.cache_ttl.total_seconds())
+    
     return source
 
 
@@ -148,6 +177,12 @@ def read_source_stats(
     # Remove SQLAlchemy state
     if "_sa_instance_state" in source_data:
         del source_data["_sa_instance_state"]
+    
+    # 转换 timedelta 为整数（秒数）
+    if "update_interval" in source_data and hasattr(source_data["update_interval"], "total_seconds"):
+        source_data["update_interval"] = int(source_data["update_interval"].total_seconds())
+    if "cache_ttl" in source_data and hasattr(source_data["cache_ttl"], "total_seconds"):
+        source_data["cache_ttl"] = int(source_data["cache_ttl"].total_seconds())
     
     return source_data
 

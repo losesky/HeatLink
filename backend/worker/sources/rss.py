@@ -1,19 +1,25 @@
+import asyncio
 import datetime
 import hashlib
+import logging
 import re
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 
+import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
 
 from worker.sources.base import NewsSource, NewsItemModel
 from worker.utils.http_client import http_client
 
+logger = logging.getLogger(__name__)
+
 
 class RSSNewsSource(NewsSource):
     """
-    RSS feed news source adapter
+    RSS新闻源适配器
+    支持从RSS feed获取新闻
     """
     
     def __init__(
@@ -21,16 +27,12 @@ class RSSNewsSource(NewsSource):
         source_id: str,
         name: str,
         feed_url: str,
-        update_interval: int = 600,
-        cache_ttl: int = 300,
+        update_interval: int = 1800,  # 默认30分钟更新一次
+        cache_ttl: int = 600,  # 默认缓存10分钟
         category: Optional[str] = None,
         country: Optional[str] = None,
         language: Optional[str] = None,
-        logo_url: Optional[str] = None,
-        content_selector: Optional[str] = None,
-        image_selector: Optional[str] = None,
-        mobile_url_pattern: Optional[str] = None,
-        summary_length: int = 200
+        config: Optional[Dict[str, Any]] = None
     ):
         super().__init__(
             source_id=source_id,
@@ -39,185 +41,269 @@ class RSSNewsSource(NewsSource):
             cache_ttl=cache_ttl,
             category=category,
             country=country,
-            language=language
+            language=language,
+            config=config
         )
         self.feed_url = feed_url
-        self.logo_url = logo_url
-        self.content_selector = content_selector
-        self.image_selector = image_selector
-        self.mobile_url_pattern = mobile_url_pattern
-        self.summary_length = summary_length
+        self.max_items = config.get("max_items", 20) if config else 20
+        self.fetch_content = config.get("fetch_content", False) if config else False
+        self.content_selector = config.get("content_selector") if config else None
+        self.image_selector = config.get("image_selector") if config else None
+        self.user_agent = config.get("user_agent", "HeatLink News Aggregator") if config else "HeatLink News Aggregator"
     
     async def fetch(self) -> List[NewsItemModel]:
         """
-        Fetch news from RSS feed
+        从RSS feed获取新闻
         """
-        # Fetch RSS feed content
-        response = await http_client.fetch(
-            url=self.feed_url,
-            method="GET",
-            response_type="text",
-            cache_ttl=self.cache_ttl
-        )
+        logger.info(f"Fetching news from RSS feed: {self.feed_url}")
         
-        # Parse feed
-        feed = feedparser.parse(response)
-        
-        # Process entries
-        news_items = []
-        for entry in feed.entries:
-            # Generate unique ID
-            entry_id = self._generate_id(entry)
-            
-            # Get published date
-            published_at = self._parse_date(entry)
-            
-            # Get content
-            content = self._get_content(entry)
-            
-            # Get summary
-            summary = self._get_summary(entry, content)
-            
-            # Get image URL
-            image_url = self._get_image_url(entry)
-            
-            # Get mobile URL
-            mobile_url = self._get_mobile_url(entry.link)
-            
-            # Create news item
-            news_item = NewsItemModel(
-                id=entry_id,
-                title=entry.title,
-                url=entry.link,
-                mobile_url=mobile_url,
-                content=content,
-                summary=summary,
-                image_url=image_url,
-                published_at=published_at,
-                extra={
-                    "author": getattr(entry, "author", None),
-                    "tags": [tag.term for tag in getattr(entry, "tags", [])],
-                    "source": {
-                        "id": self.source_id,
-                        "name": self.name,
-                        "logo_url": self.logo_url
-                    }
-                }
+        try:
+            # 获取RSS内容
+            response = await http_client.fetch(
+                url=self.feed_url,
+                method="GET",
+                headers={"User-Agent": self.user_agent},
+                response_type="text"
             )
             
-            news_items.append(news_item)
-        
-        return news_items
-    
-    def _generate_id(self, entry: Any) -> str:
-        """
-        Generate unique ID for entry
-        """
-        # Use guid if available
-        if hasattr(entry, "id"):
-            return f"{self.source_id}:{hashlib.md5(entry.id.encode()).hexdigest()}"
-        
-        # Use link as fallback
-        return f"{self.source_id}:{hashlib.md5(entry.link.encode()).hexdigest()}"
-    
-    def _parse_date(self, entry: Any) -> Optional[datetime.datetime]:
-        """
-        Parse published date from entry
-        """
-        # Try different date fields
-        for date_field in ["published_parsed", "updated_parsed", "created_parsed"]:
-            if hasattr(entry, date_field):
-                time_struct = getattr(entry, date_field)
-                if time_struct:
-                    return datetime.datetime.fromtimestamp(
-                        datetime.datetime(*time_struct[:6]).timestamp(),
-                        tz=datetime.timezone.utc
-                    )
-        
-        return None
-    
-    def _get_content(self, entry: Any) -> Optional[str]:
-        """
-        Get content from entry
-        """
-        # Try to get content from entry
-        if hasattr(entry, "content"):
-            for content in entry.content:
-                if content.get("type") == "text/html":
-                    return content.value
-        
-        # Try to get content from summary_detail
-        if hasattr(entry, "summary_detail") and entry.summary_detail.get("type") == "text/html":
-            return entry.summary_detail.value
-        
-        # Try to get content from summary
-        if hasattr(entry, "summary"):
-            return entry.summary
-        
-        return None
-    
-    def _get_summary(self, entry: Any, content: Optional[str]) -> Optional[str]:
-        """
-        Get or generate summary
-        """
-        # Try to get summary from entry
-        if hasattr(entry, "summary"):
-            return entry.summary[:self.summary_length] + "..." if len(entry.summary) > self.summary_length else entry.summary
-        
-        # Generate summary from content
-        if content:
-            # Remove HTML tags
-            soup = BeautifulSoup(content, "html.parser")
-            text = soup.get_text(separator=" ", strip=True)
+            # 解析RSS
+            feed = feedparser.parse(response)
             
-            # Truncate to summary length
-            return text[:self.summary_length] + "..." if len(text) > self.summary_length else text
+            if not feed.entries:
+                logger.warning(f"No entries found in RSS feed: {self.feed_url}")
+                return []
+            
+            # 处理条目
+            news_items = []
+            for entry in feed.entries[:self.max_items]:
+                try:
+                    # 生成唯一ID
+                    entry_id = entry.get('id') or entry.get('link')
+                    if not entry_id:
+                        continue
+                    
+                    item_id = hashlib.md5(f"{self.source_id}:{entry_id}".encode()).hexdigest()
+                    
+                    # 获取发布时间
+                    published_at = None
+                    if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                        published_at = datetime.datetime(*entry.published_parsed[:6])
+                    elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                        published_at = datetime.datetime(*entry.updated_parsed[:6])
+                    
+                    # 获取内容
+                    content = ""
+                    summary = ""
+                    
+                    if hasattr(entry, 'content') and entry.content:
+                        content = entry.content[0].value
+                    elif hasattr(entry, 'summary') and entry.summary:
+                        content = entry.summary
+                    elif hasattr(entry, 'description') and entry.description:
+                        content = entry.description
+                    
+                    # 提取纯文本摘要
+                    if content:
+                        text_content = self.extract_text_content(content)
+                        summary = self.generate_summary(text_content)
+                    
+                    # 获取图片URL
+                    image_url = None
+                    
+                    # 从媒体内容中获取
+                    if hasattr(entry, 'media_content') and entry.media_content:
+                        for media in entry.media_content:
+                            if 'url' in media and media.get('medium', '') in ['image', '']:
+                                image_url = media['url']
+                                break
+                    
+                    # 从媒体缩略图中获取
+                    if not image_url and hasattr(entry, 'media_thumbnail') and entry.media_thumbnail:
+                        for thumbnail in entry.media_thumbnail:
+                            if 'url' in thumbnail:
+                                image_url = thumbnail['url']
+                                break
+                    
+                    # 从内容中提取图片
+                    if not image_url and content:
+                        soup = BeautifulSoup(content, 'html.parser')
+                        img_tag = soup.find('img')
+                        if img_tag and img_tag.get('src'):
+                            image_url = img_tag.get('src')
+                    
+                    # 如果配置了获取完整内容，则获取文章页面
+                    if self.fetch_content:
+                        try:
+                            full_content = await self._fetch_full_content(entry.link)
+                            if full_content:
+                                content = full_content
+                                # 重新生成摘要
+                                text_content = self.extract_text_content(content)
+                                summary = self.generate_summary(text_content)
+                                
+                                # 如果没有图片，尝试从完整内容中提取
+                                if not image_url:
+                                    soup = BeautifulSoup(content, 'html.parser')
+                                    if self.image_selector:
+                                        img_tag = soup.select_one(self.image_selector)
+                                    else:
+                                        img_tag = soup.find('img')
+                                    
+                                    if img_tag and img_tag.get('src'):
+                                        image_url = img_tag.get('src')
+                        except Exception as e:
+                            logger.error(f"Error fetching full content for {entry.link}: {str(e)}")
+                    
+                    # 创建新闻项
+                    news_item = NewsItemModel(
+                        id=item_id,
+                        title=entry.title,
+                        url=entry.link,
+                        mobile_url=None,  # RSS通常不提供移动版URL
+                        content=content,
+                        summary=summary,
+                        image_url=image_url,
+                        published_at=published_at,
+                        is_top=False,
+                        extra={
+                            "source_id": self.source_id,
+                            "source_name": self.name,
+                            "category": self.category,
+                            "author": entry.get('author', ''),
+                            "tags": [tag.term for tag in entry.get('tags', [])] if hasattr(entry, 'tags') else []
+                        }
+                    )
+                    
+                    news_items.append(news_item)
+                except Exception as e:
+                    logger.error(f"Error processing RSS entry: {str(e)}")
+                    continue
+            
+            logger.info(f"Fetched {len(news_items)} news items from RSS feed: {self.feed_url}")
+            return news_items
         
-        return None
+        except Exception as e:
+            logger.error(f"Error fetching RSS feed {self.feed_url}: {str(e)}")
+            raise
     
-    def _get_image_url(self, entry: Any) -> Optional[str]:
+    async def _fetch_full_content(self, url: str) -> Optional[str]:
         """
-        Get image URL from entry
+        获取文章完整内容
         """
-        # Try to get image from media_content
-        if hasattr(entry, "media_content"):
-            for media in entry.media_content:
-                if media.get("medium") == "image":
-                    return media.get("url")
-        
-        # Try to get image from media_thumbnail
-        if hasattr(entry, "media_thumbnail"):
-            for thumbnail in entry.media_thumbnail:
-                return thumbnail.get("url")
-        
-        # Try to get image from links
-        if hasattr(entry, "links"):
-            for link in entry.links:
-                if link.get("type", "").startswith("image/"):
-                    return link.get("href")
-        
-        # Try to get image from enclosures
-        if hasattr(entry, "enclosures"):
-            for enclosure in entry.enclosures:
-                if enclosure.get("type", "").startswith("image/"):
-                    return enclosure.get("href")
-        
-        return None
-    
-    def _get_mobile_url(self, url: str) -> Optional[str]:
-        """
-        Get mobile URL from regular URL
-        """
-        if not self.mobile_url_pattern:
+        try:
+            response = await http_client.fetch(
+                url=url,
+                method="GET",
+                headers={"User-Agent": self.user_agent},
+                response_type="text"
+            )
+            
+            soup = BeautifulSoup(response, 'html.parser')
+            
+            # 使用选择器提取内容
+            if self.content_selector:
+                content_element = soup.select_one(self.content_selector)
+                if content_element:
+                    return str(content_element)
+            
+            # 尝试常见的内容容器
+            for selector in [
+                'article', 
+                '.article', 
+                '.post-content', 
+                '.entry-content', 
+                '.content', 
+                '#content',
+                '.article-content',
+                '.story-body'
+            ]:
+                content_element = soup.select_one(selector)
+                if content_element:
+                    return str(content_element)
+            
+            # 如果没有找到内容容器，返回None
             return None
         
-        parsed_url = urlparse(url)
-        domain = parsed_url.netloc
-        
-        # Replace domain with mobile pattern
-        mobile_domain = self.mobile_url_pattern.format(domain=domain)
-        
-        # Create mobile URL
-        mobile_url = parsed_url._replace(netloc=mobile_domain).geturl()
-        
-        return mobile_url 
+        except Exception as e:
+            logger.error(f"Error fetching full content from {url}: {str(e)}")
+            return None
+
+
+class RSSSourceFactory:
+    """
+    RSS新闻源工厂
+    用于创建常见RSS新闻源
+    """
+    
+    @staticmethod
+    def create_source(
+        source_id: str,
+        name: str,
+        feed_url: str,
+        **kwargs
+    ) -> RSSNewsSource:
+        """
+        创建RSS新闻源
+        """
+        return RSSNewsSource(
+            source_id=source_id,
+            name=name,
+            feed_url=feed_url,
+            **kwargs
+        )
+    
+    @staticmethod
+    def create_zhihu_daily() -> RSSNewsSource:
+        """
+        创建知乎日报新闻源
+        """
+        return RSSNewsSource(
+            source_id="zhihu_daily",
+            name="知乎日报",
+            feed_url="https://rsshub.app/zhihu/daily",
+            category="knowledge",
+            country="CN",
+            language="zh-CN",
+            update_interval=3600,  # 1小时更新一次
+            config={
+                "fetch_content": True,
+                "content_selector": ".content"
+            }
+        )
+    
+    @staticmethod
+    def create_hacker_news() -> RSSNewsSource:
+        """
+        创建Hacker News新闻源
+        """
+        return RSSNewsSource(
+            source_id="hacker_news",
+            name="Hacker News",
+            feed_url="https://news.ycombinator.com/rss",
+            category="technology",
+            country="US",
+            language="en",
+            update_interval=1800,  # 30分钟更新一次
+            config={
+                "fetch_content": True
+            }
+        )
+    
+    @staticmethod
+    def create_bbc_news() -> RSSNewsSource:
+        """
+        创建BBC新闻源
+        """
+        return RSSNewsSource(
+            source_id="bbc_news",
+            name="BBC News",
+            feed_url="http://feeds.bbci.co.uk/news/world/rss.xml",
+            category="news",
+            country="GB",
+            language="en",
+            update_interval=1800,  # 30分钟更新一次
+            config={
+                "fetch_content": True,
+                "content_selector": ".story-body__inner"
+            }
+        ) 

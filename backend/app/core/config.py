@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional, Dict, Any
-from pydantic import field_validator
+from pydantic import field_validator, ConfigDict
 from pydantic_settings import BaseSettings
 from datetime import timedelta
 
@@ -52,9 +52,10 @@ class Settings(BaseSettings):
             raise ValueError("SECRET_KEY must be set in production")
         return v
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = ConfigDict(
+        env_file=".env",
+        case_sensitive=True
+    )
 
 
 settings = Settings() 

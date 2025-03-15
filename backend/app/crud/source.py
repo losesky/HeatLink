@@ -22,7 +22,7 @@ def get_sources(
     db: Session, 
     skip: int = 0, 
     limit: int = 100, 
-    active_only: bool = False,
+    active_only: bool = None,
     type_filter: Optional[SourceType] = None,
     category_id: Optional[int] = None,
     country: Optional[str] = None,
@@ -30,8 +30,8 @@ def get_sources(
 ) -> List[Source]:
     query = db.query(Source)
     
-    if active_only:
-        query = query.filter(Source.active == True)
+    if active_only is not None:
+        query = query.filter(Source.active == active_only)
     
     if type_filter:
         query = query.filter(Source.type == type_filter)
