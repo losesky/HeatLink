@@ -114,7 +114,7 @@ class XueqiuHotStockSource(APINewsSource):
                     exchange = item.get("exchange", "")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=name,
                         url=url,  # 雪球的移动版URL与PC版相同
@@ -123,8 +123,8 @@ class XueqiuHotStockSource(APINewsSource):
                         image_url=None,
                         published_at=None,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "code": code,
                             "percent": percent,
                             "exchange": exchange

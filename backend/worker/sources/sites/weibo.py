@@ -76,12 +76,10 @@ class WeiboHotNewsSource(NewsSource):
                         is_hot = bool(item.select_one("td.td-02 > i.icon-hot"))
                         
                         # 创建新闻项
-                        news_item = NewsItemModel(
+                        news_item = self.create_news_item(
                             id=self.generate_id(url, title),
                             title=title,
                             url=url,
-                            source_id=self.source_id,
-                            source_name=self.name,
                             published_at=datetime.datetime.now(),
                             extra={
                                 "rank": rank,

@@ -78,7 +78,7 @@ class TiebaHotTopicSource(APINewsSource):
                     published_at = self.parse_date(str(create_time)) if create_time else None
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=topic_name,
                         url=url,  # 贴吧的移动版URL与PC版相同
@@ -87,8 +87,8 @@ class TiebaHotTopicSource(APINewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "topic_id": topic_id
                         }
                     )

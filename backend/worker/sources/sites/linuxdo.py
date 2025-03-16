@@ -103,7 +103,7 @@ class LinuxDoNewsSource(RESTNewsSource):
                     like_count = topic.get("like_count", 0)
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=str(topic_id),
                         title=title,
                         url=url,
@@ -114,8 +114,8 @@ class LinuxDoNewsSource(RESTNewsSource):
                         extra={
                             "is_top": False,
                             "mobile_url": url,
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "like_count": like_count,
                             "comment_count": reply_count,
                             "info": f"👍 {like_count} 💬 {reply_count}"

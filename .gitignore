@@ -20,7 +20,10 @@ var/
 .installed.cfg
 *.egg
 *.code-workspace
-source_test_report.json
+backend/source_test_report.json
+backend/test_source_api.py
+backend/update_news_sources.py
+backend/test_sources_report.py
 
 # Virtual Environment
 venv/

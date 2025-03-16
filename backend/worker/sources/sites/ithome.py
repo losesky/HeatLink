@@ -110,7 +110,7 @@ class ITHomeNewsSource(WebNewsSource):
                             logger.error(f"Error parsing date {date_text}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,
@@ -119,8 +119,6 @@ class ITHomeNewsSource(WebNewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": None, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
                             "date_text": date_text
                         }
                     )

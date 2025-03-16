@@ -75,7 +75,7 @@ class ToutiaoHotNewsSource(APINewsSource):
                         image_url = item["LabelUri"]["url"]
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 头条的移动版URL与PC版相同
@@ -84,8 +84,6 @@ class ToutiaoHotNewsSource(APINewsSource):
                         image_url=image_url,
                         published_at=None,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
                             "hot_value": hot_value
                         }
                     )

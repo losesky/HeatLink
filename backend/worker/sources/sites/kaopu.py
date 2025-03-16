@@ -126,7 +126,7 @@ class KaoPuNewsSource(RESTNewsSource):
                     item_id = self.generate_id(url)
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 靠谱新闻的移动版URL与PC版相同
@@ -135,8 +135,8 @@ class KaoPuNewsSource(RESTNewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "publisher": publisher,
                             "info": publisher
                         }

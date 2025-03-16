@@ -121,7 +121,7 @@ class FastBullExpressNewsSource(FastBullNewsSource):
                         logger.error(f"Error parsing timestamp {date_timestamp}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 快牛的移动版URL与PC版相同
@@ -130,8 +130,8 @@ class FastBullExpressNewsSource(FastBullNewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "original_title": title_text
                         }
                     )
@@ -220,7 +220,7 @@ class FastBullGeneralNewsSource(FastBullNewsSource):
                         logger.error(f"Error parsing timestamp {date_timestamp}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 快牛的移动版URL与PC版相同
@@ -228,9 +228,7 @@ class FastBullGeneralNewsSource(FastBullNewsSource):
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name
+                        extra={"is_top": False, "mobile_url": url
                         }
                     )
                     

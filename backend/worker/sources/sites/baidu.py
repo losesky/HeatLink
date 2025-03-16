@@ -87,12 +87,10 @@ class BaiduHotNewsSource(NewsSource):
                         image_url = item.get("img", "")
                         
                         # 创建新闻项
-                        news_item = NewsItemModel(
+                        news_item = self.create_news_item(
                             id=self.generate_id(url, title),
                             title=title,
                             url=url,
-                            source_id=self.source_id,
-                            source_name=self.name,
                             summary=desc,
                             image_url=image_url,
                             published_at=datetime.datetime.now(),

@@ -151,7 +151,7 @@ class Jin10NewsSource(WebNewsSource):
                     is_important = bool(item.get("important", 0))
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 金十数据的移动版URL与PC版相同
@@ -160,8 +160,8 @@ class Jin10NewsSource(WebNewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": is_important, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "is_important": is_important,
                             "tags": item.get("tags", [])
                         }

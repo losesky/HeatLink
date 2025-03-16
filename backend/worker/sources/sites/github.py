@@ -83,7 +83,7 @@ class GitHubTrendingSource(WebNewsSource):
                     item_id = self.generate_id(url_path)
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # GitHub的移动版URL与PC版相同
@@ -92,8 +92,8 @@ class GitHubTrendingSource(WebNewsSource):
                         image_url=None,
                         published_at=None,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "star_count": star_count
                         }
                     )

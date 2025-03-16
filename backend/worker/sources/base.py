@@ -200,7 +200,29 @@ class NewsSource(ABC):
             content += published_at.isoformat()
         
         # 使用MD5生成ID
-        return hashlib.md5(content.encode("utf-8")).hexdigest()
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+    
+    def create_news_item(self, **kwargs) -> NewsItemModel:
+        """
+        创建标准化的NewsItemModel实例，确保source_id和source_name正确设置
+        
+        这个辅助方法可以被所有数据源使用，以确保数据格式的一致性
+        """
+        # 确保source_id和source_name设置在主体字段中，而不是extra字段中
+        if 'source_id' not in kwargs:
+            kwargs['source_id'] = self.source_id
+        
+        if 'source_name' not in kwargs:
+            kwargs['source_name'] = self.name
+        
+        # 如果extra字段中包含source_id或source_name，将它们移除
+        if 'extra' in kwargs and isinstance(kwargs['extra'], dict):
+            if 'source_id' in kwargs['extra']:
+                kwargs['extra'].pop('source_id')
+            if 'source_name' in kwargs['extra']:
+                kwargs['extra'].pop('source_name')
+        
+        return NewsItemModel(**kwargs)
     
     async def extract_text_from_html(self, html: str, selector: str = None) -> str:
         """

@@ -63,12 +63,10 @@ class ZhihuHotNewsSource(NewsSource):
                         metrics = item_data.get("detail_text", "")
                         
                         # 创建新闻项
-                        news_item = NewsItemModel(
+                        news_item = self.create_news_item(
                             id=self.generate_id(url, title),
                             title=title,
                             url=url,
-                            source_id=self.source_id,
-                            source_name=self.name,
                             summary=excerpt,
                             published_at=datetime.datetime.now(),
                             extra={

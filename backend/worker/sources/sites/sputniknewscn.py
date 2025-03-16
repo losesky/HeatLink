@@ -105,7 +105,7 @@ class SputnikNewsCNSource(WebNewsSource):
                         logger.error(f"Error parsing timestamp {unix_timestamp}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 卫星通讯社的移动版URL与PC版相同
@@ -114,8 +114,8 @@ class SputnikNewsCNSource(WebNewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "timestamp": unix_timestamp
                         }
                     )

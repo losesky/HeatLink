@@ -120,7 +120,7 @@ class CanKaoXiaoXiNewsSource(RESTNewsSource):
                             logger.error(f"Error parsing date {publish_time}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=self.generate_id(item_id),
                         title=title,
                         url=url,
@@ -131,7 +131,7 @@ class CanKaoXiaoXiNewsSource(RESTNewsSource):
                         extra={
                             "is_top": False,
                             "mobile_url": url,  # 参考消息的移动版URL与PC版相同
-                            "source_id": self.source_id,
+                            
                             "source_name": self.name
                         }
                     )

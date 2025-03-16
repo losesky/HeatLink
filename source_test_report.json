@@ -1,0 +1,193 @@
+{
+  "summary": {
+    "total_sources": 37,
+    "successful_sources": 32,
+    "failed_sources": 5,
+    "success_rate": "86.5%",
+    "total_time": "85.33s"
+  },
+  "successful_sources": [
+    {
+      "source_type": "36kr",
+      "items_count": 20,
+      "elapsed_time": 0.7482895851135254
+    },
+    {
+      "source_type": "baidu",
+      "items_count": 51,
+      "elapsed_time": 0.5446977615356445
+    },
+    {
+      "source_type": "bilibili",
+      "items_count": 30,
+      "elapsed_time": 0.1352694034576416
+    },
+    {
+      "source_type": "cankaoxiaoxi",
+      "items_count": 150,
+      "elapsed_time": 0.7401375770568848
+    },
+    {
+      "source_type": "cls",
+      "items_count": 0,
+      "elapsed_time": 0.2898705005645752
+    },
+    {
+      "source_type": "douyin",
+      "items_count": 49,
+      "elapsed_time": 1.4927945137023926
+    },
+    {
+      "source_type": "fastbull-express",
+      "items_count": 40,
+      "elapsed_time": 4.034259557723999
+    },
+    {
+      "source_type": "fastbull-news",
+      "items_count": 3,
+      "elapsed_time": 4.990014314651489
+    },
+    {
+      "source_type": "gelonghui",
+      "items_count": 15,
+      "elapsed_time": 1.6663951873779297
+    },
+    {
+      "source_type": "github",
+      "items_count": 10,
+      "elapsed_time": 14.326952934265137
+    },
+    {
+      "source_type": "hackernews",
+      "items_count": 29,
+      "elapsed_time": 8.256197214126587
+    },
+    {
+      "source_type": "ifanr",
+      "items_count": 20,
+      "elapsed_time": 2.709491491317749
+    },
+    {
+      "source_type": "ithome",
+      "items_count": 46,
+      "elapsed_time": 0.5033817291259766
+    },
+    {
+      "source_type": "jin10",
+      "items_count": 44,
+      "elapsed_time": 0.41193556785583496
+    },
+    {
+      "source_type": "kaopu",
+      "items_count": 0,
+      "elapsed_time": 16.638043880462646
+    },
+    {
+      "source_type": "kuaishou",
+      "items_count": 50,
+      "elapsed_time": 5.964450836181641
+    },
+    {
+      "source_type": "linuxdo",
+      "items_count": 30,
+      "elapsed_time": 1.1754388809204102
+    },
+    {
+      "source_type": "producthunt",
+      "items_count": 0,
+      "elapsed_time": 0.6453049182891846
+    },
+    {
+      "source_type": "solidot",
+      "items_count": 20,
+      "elapsed_time": 0.7177820205688477
+    },
+    {
+      "source_type": "sputniknewscn",
+      "items_count": 20,
+      "elapsed_time": 0.29274940490722656
+    },
+    {
+      "source_type": "techcrunch",
+      "items_count": 0,
+      "elapsed_time": 0.8257849216461182
+    },
+    {
+      "source_type": "the_verge",
+      "items_count": 10,
+      "elapsed_time": 57.51682162284851
+    },
+    {
+      "source_type": "thepaper",
+      "items_count": 0,
+      "elapsed_time": 0.6668787002563477
+    },
+    {
+      "source_type": "tieba",
+      "items_count": 30,
+      "elapsed_time": 0.45798182487487793
+    },
+    {
+      "source_type": "toutiao",
+      "items_count": 50,
+      "elapsed_time": 0.6654772758483887
+    },
+    {
+      "source_type": "wallstreetcn",
+      "items_count": 30,
+      "elapsed_time": 0.37218666076660156
+    },
+    {
+      "source_type": "wallstreetcn-hot",
+      "items_count": 10,
+      "elapsed_time": 0.05824565887451172
+    },
+    {
+      "source_type": "wallstreetcn-news",
+      "items_count": 44,
+      "elapsed_time": 0.1443493366241455
+    },
+    {
+      "source_type": "weibo",
+      "items_count": 0,
+      "elapsed_time": 0.8786730766296387
+    },
+    {
+      "source_type": "xueqiu",
+      "items_count": 30,
+      "elapsed_time": 0.5833139419555664
+    },
+    {
+      "source_type": "zaobao",
+      "items_count": 60,
+      "elapsed_time": 1.2746553421020508
+    },
+    {
+      "source_type": "zhihu",
+      "items_count": 30,
+      "elapsed_time": 0.5995981693267822
+    }
+  ],
+  "failed_sources": [
+    {
+      "source_type": "bbc_news",
+      "error": "Timeout after 30.92s"
+    },
+    {
+      "source_type": "coolapk",
+      "error": "Error fetching data: 403, message='Forbidden', url=URL('https://api.coolapk.com/v6/page/dataList?url=/feed/headlineV8&title=%E5%A4%B4%E6%9D%A1&page=1')"
+    },
+    {
+      "source_type": "hacker_news",
+      "error": "Timeout after 30.41s"
+    },
+    {
+      "source_type": "v2ex",
+      "error": "Timeout after 60.00s"
+    },
+    {
+      "source_type": "zhihu_daily",
+      "error": "Timeout after 30.09s"
+    }
+  ]
+}

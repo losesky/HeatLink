@@ -139,7 +139,7 @@ class CoolApkNewsSource(RESTNewsSource):
                     tag = item.get("tag")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=str(item_id),
                         title=title,
                         url=url,
@@ -151,8 +151,8 @@ class CoolApkNewsSource(RESTNewsSource):
                         extra={
                             "is_top": False,
                             "mobile_url": url,
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "author": author,
                             "like_num": like_num,
                             "comment_num": comment_num,

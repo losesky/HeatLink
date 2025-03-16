@@ -109,7 +109,7 @@ class KuaishouHotSearchSource(WebNewsSource):
                     icon_url = hot_item.get("iconUrl", "")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=unique_id,
                         title=name,
                         url=url,  # 快手的移动版URL与PC版相同
@@ -118,8 +118,8 @@ class KuaishouHotSearchSource(WebNewsSource):
                         image_url=icon_url,
                         published_at=None,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "hot_search_word": hot_search_word
                         }
                     )

@@ -1,6 +1,8 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 
 from app.api.api import api_router
 from app.core.config import settings
@@ -26,6 +28,11 @@ app.add_middleware(
 # Include API router
 app.include_router(api_router, prefix="/api")
 
+# Mount static files
+static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 
 @app.get("/")
 def root():
@@ -33,6 +40,8 @@ def root():
         "message": f"Welcome to {settings.APP_NAME} API",
         "version": settings.APP_VERSION,
         "docs": "/api/docs",
+        "source_test_ui": "/static/source_test.html",
+        "format_checker_ui": "/static/format_checker.html",
     }
 
 

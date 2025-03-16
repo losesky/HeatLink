@@ -122,7 +122,7 @@ class CLSNewsSource(RESTNewsSource):
                     is_top = importance > 0
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=str(item_id),
                         title=title,
                         url=url,
@@ -133,8 +133,8 @@ class CLSNewsSource(RESTNewsSource):
                         published_at=published_at,
                         extra={
                             "is_top": is_top,
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "tag": tag,
                             "importance": importance,
                             "info": tag
@@ -248,7 +248,7 @@ class CLSArticleNewsSource(CLSNewsSource):
                     image_url = item.get("thumbnails", [None])[0]
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=str(item_id),
                         title=title,
                         url=url,
@@ -259,8 +259,8 @@ class CLSArticleNewsSource(CLSNewsSource):
                         published_at=published_at,
                         extra={
                             "is_top": False,
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "content_id": item_id,
                             "remark": tag
                         }

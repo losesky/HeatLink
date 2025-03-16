@@ -82,7 +82,7 @@ class WallStreetCNLiveNewsSource(APINewsSource):
                             logger.error(f"Error parsing timestamp {display_time}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,
@@ -93,8 +93,8 @@ class WallStreetCNLiveNewsSource(APINewsSource):
                         extra={
                             "is_top": False,
                             "mobile_url": url,  # 华尔街见闻的移动版URL与PC版相同
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "display_time": display_time
                         }
                     )
@@ -193,7 +193,7 @@ class WallStreetCNNewsSource(APINewsSource):
                             logger.error(f"Error parsing timestamp {display_time}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=uri,
@@ -204,8 +204,8 @@ class WallStreetCNNewsSource(APINewsSource):
                         extra={
                             "is_top": False,
                             "mobile_url": uri,  # 华尔街见闻的移动版URL与PC版相同
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "display_time": display_time
                         }
                     )
@@ -285,7 +285,7 @@ class WallStreetCNHotNewsSource(APINewsSource):
                         continue
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,
@@ -295,8 +295,8 @@ class WallStreetCNHotNewsSource(APINewsSource):
                         published_at=None,
                         extra={"is_top": False, 
                             "mobile_url": url,  # 华尔街见闻的移动版URL与PC版相同
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "display_time": None
                         }
                     )

@@ -93,7 +93,7 @@ class ProductHuntNewsSource(WebNewsSource):
                     url = f"{base_url}{url_path}"
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # Product Hunt的移动版URL与PC版相同
@@ -104,8 +104,8 @@ class ProductHuntNewsSource(WebNewsSource):
                         extra={
                             "is_top": False,
                             "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "vote_count": vote_count,
                             "info": f"△︎ {vote_count}" if vote_count else ""
                         }

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Source Tester</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .source-card {
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .source-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .result-container {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.3);
+            border-radius: 50%;
+            border-top-color: #007bff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .test-btn {
+            min-width: 100px;
+        }
+        #globalLoader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            flex-direction: column;
+            display: none;
+        }
+        #globalLoader .loading {
+            width: 50px;
+            height: 50px;
+            border-width: 5px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Global Loader -->
+    <div id="globalLoader">
+        <div class="loading"></div>
+        <p class="mt-3" id="loaderMessage">Loading...</p>
+    </div>
+
+    <div class="container mt-4">
+        <h1 class="mb-4">News Source Tester</h1>
+        
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Source Types</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between mb-3">
+                            <input type="text" id="sourceFilter" class="form-control me-2" placeholder="Filter sources...">
+                            <button id="refreshSourcesBtn" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="sourcesList" class="list-group">
+                            <div class="text-center py-3">
+                                <div class="loading"></div>
+                                <p class="mt-2">Loading sources...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Test All Sources</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="timeoutAll" class="form-label">Timeout (seconds)</label>
+                            <input type="number" id="timeoutAll" class="form-control" value="60" min="1" max="300">
+                        </div>
+                        <div class="mb-3">
+                            <label for="maxConcurrent" class="form-label">Max Concurrent</label>
+                            <input type="number" id="maxConcurrent" class="form-control" value="5" min="1" max="20">
+                        </div>
+                        <button id="testAllBtn" class="btn btn-primary w-100">Test All Sources</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 id="resultTitle">Test Results</h5>
+                        <div>
+                            <button id="clearResultsBtn" class="btn btn-sm btn-outline-secondary">Clear</button>
+                        </div>
+                    </div>
+                    <div class="card-body result-container">
+                        <div id="resultsContainer">
+                            <div class="alert alert-info">
+                                Select a source from the list or click "Test All Sources" to begin testing.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Templates -->
+    <template id="sourceCardTemplate">
+        <div class="card source-card">
+            <div class="card-body d-flex justify-content-between align-items-center py-2">
+                <div class="source-name"></div>
+                <button class="btn btn-sm btn-primary test-btn">Test</button>
+            </div>
+        </div>
+    </template>
+
+    <template id="singleResultTemplate">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="result-source mb-0"></h6>
+                <span class="result-badge"></span>
+            </div>
+            <div class="card-body">
+                <div class="result-content"></div>
+            </div>
+        </div>
+    </template>
+
+    <template id="allResultsTemplate">
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">Summary</h6>
+            </div>
+            <div class="card-body">
+                <div class="summary-content"></div>
+            </div>
+        </div>
+        
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">Successful Sources</h6>
+            </div>
+            <div class="card-body">
+                <div class="successful-content"></div>
+            </div>
+        </div>
+        
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">Failed Sources</h6>
+            </div>
+            <div class="card-body">
+                <div class="failed-content"></div>
+            </div>
+        </div>
+    </template>
+
+    <script>
+        const API_BASE_URL = '/api';
+        
+        // DOM Elements
+        const sourcesList = document.getElementById('sourcesList');
+        const sourceFilter = document.getElementById('sourceFilter');
+        const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
+        const testAllBtn = document.getElementById('testAllBtn');
+        const timeoutAllInput = document.getElementById('timeoutAll');
+        const maxConcurrentInput = document.getElementById('maxConcurrent');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const resultTitle = document.getElementById('resultTitle');
+        const clearResultsBtn = document.getElementById('clearResultsBtn');
+        const globalLoader = document.getElementById('globalLoader');
+        const loaderMessage = document.getElementById('loaderMessage');
+        
+        // Templates
+        const sourceCardTemplate = document.getElementById('sourceCardTemplate');
+        const singleResultTemplate = document.getElementById('singleResultTemplate');
+        const allResultsTemplate = document.getElementById('allResultsTemplate');
+        
+        // State
+        let allSources = [];
+        
+        // Helper functions
+        function showLoader(message = 'Loading...') {
+            loaderMessage.textContent = message;
+            globalLoader.style.display = 'flex';
+        }
+        
+        function hideLoader() {
+            globalLoader.style.display = 'none';
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchSources();
+            
+            // Event listeners
+            refreshSourcesBtn.addEventListener('click', fetchSources);
+            testAllBtn.addEventListener('click', testAllSources);
+            clearResultsBtn.addEventListener('click', clearResults);
+            sourceFilter.addEventListener('input', filterSources);
+        });
+        
+        // Fetch all source types
+        async function fetchSources() {
+            sourcesList.innerHTML = `
+                <div class="text-center py-3">
+                    <div class="loading"></div>
+                    <p class="mt-2">Loading sources...</p>
+                </div>
+            `;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/source-test/source-types`);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMessage = `HTTP error! status: ${response.status}`;
+                    try {
+                        // Try to parse error as JSON
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.detail) {
+                            errorMessage = errorJson.detail;
+                        }
+                    } catch (e) {
+                        // If not JSON, use text as is if it's not too long
+                        if (errorText && errorText.length < 200) {
+                            errorMessage = errorText;
+                        }
+                    }
+                    throw new Error(errorMessage);
+                }
+                
+                allSources = await response.json();
+                renderSources(allSources);
+            } catch (error) {
+                sourcesList.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p>Error loading sources: ${error.message}</p>
+                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="fetchSources()">Try Again</button>
+                    </div>
+                `;
+                console.error('Error fetching sources:', error);
+            }
+        }
+        
+        // Render source list
+        function renderSources(sources) {
+            sourcesList.innerHTML = '';
+            
+            if (sources.length === 0) {
+                sourcesList.innerHTML = `
+                    <div class="alert alert-info">
+                        No sources found.
+                    </div>
+                `;
+                return;
+            }
+            
+            sources.forEach(source => {
+                const sourceCard = sourceCardTemplate.content.cloneNode(true);
+                const card = sourceCard.querySelector('.source-card');
+                const sourceName = sourceCard.querySelector('.source-name');
+                const testBtn = sourceCard.querySelector('.test-btn');
+                
+                sourceName.textContent = source;
+                testBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    testSingleSource(source);
+                });
+                
+                card.addEventListener('click', () => {
+                    testSingleSource(source);
+                });
+                
+                sourcesList.appendChild(sourceCard);
+            });
+        }
+        
+        // Filter sources
+        function filterSources() {
+            const filterText = sourceFilter.value.toLowerCase();
+            const filteredSources = allSources.filter(source => 
+                source.toLowerCase().includes(filterText)
+            );
+            renderSources(filteredSources);
+        }
+        
+        // Test a single source
+        async function testSingleSource(sourceType) {
+            resultTitle.textContent = `Testing: ${sourceType}`;
+            
+            resultsContainer.innerHTML = `
+                <div class="text-center py-3">
+                    <div class="loading"></div>
+                    <p class="mt-2">Testing ${sourceType}...</p>
+                </div>
+            `;
+            
+            showLoader(`Testing ${sourceType}...`);
+            
+            try {
+                const timeout = parseInt(timeoutAllInput.value) || 60;
+                const response = await fetch(`${API_BASE_URL}/source-test/test-source/${sourceType}?timeout=${timeout}`);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMessage = `HTTP error! status: ${response.status}`;
+                    try {
+                        // Try to parse error as JSON
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.detail) {
+                            errorMessage = errorJson.detail;
+                        }
+                    } catch (e) {
+                        // If not JSON, use text as is if it's not too long
+                        if (errorText && errorText.length < 200) {
+                            errorMessage = errorText;
+                        }
+                    }
+                    throw new Error(errorMessage);
+                }
+                
+                const result = await response.json();
+                renderSingleResult(result);
+            } catch (error) {
+                resultsContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h5>Error testing source: ${sourceType}</h5>
+                        <p>${error.message}</p>
+                        <p class="mt-3 mb-0"><small>If this is an authentication error, please make sure you are logged in or contact your administrator.</small></p>
+                    </div>
+                `;
+                console.error('Error testing source:', error);
+            } finally {
+                hideLoader();
+            }
+        }
+        
+        // Render single source test result
+        function renderSingleResult(result) {
+            resultsContainer.innerHTML = '';
+            
+            const resultCard = singleResultTemplate.content.cloneNode(true);
+            const sourceElement = resultCard.querySelector('.result-source');
+            const badgeElement = resultCard.querySelector('.result-badge');
+            const contentElement = resultCard.querySelector('.result-content');
+            
+            sourceElement.textContent = result.source_type;
+            
+            if (result.success) {
+                badgeElement.className = 'badge bg-success';
+                badgeElement.textContent = 'Success';
+                
+                contentElement.innerHTML = `
+                    <p><strong>Items Count:</strong> ${result.items_count}</p>
+                    <p><strong>Elapsed Time:</strong> ${result.elapsed_time.toFixed(2)}s</p>
+                `;
+            } else {
+                badgeElement.className = 'badge bg-danger';
+                badgeElement.textContent = 'Failed';
+                
+                contentElement.innerHTML = `
+                    <p><strong>Error:</strong> ${result.error || 'Unknown error'}</p>
+                    <p><strong>Elapsed Time:</strong> ${result.elapsed_time.toFixed(2)}s</p>
+                `;
+            }
+            
+            resultsContainer.appendChild(resultCard);
+        }
+        
+        // Test all sources
+        async function testAllSources() {
+            resultTitle.textContent = 'Testing All Sources';
+            
+            resultsContainer.innerHTML = `
+                <div class="text-center py-3">
+                    <div class="loading"></div>
+                    <p class="mt-2">Testing all sources... This may take a while.</p>
+                </div>
+            `;
+            
+            showLoader('Testing all sources... This may take a while.');
+            
+            try {
+                const timeout = parseInt(timeoutAllInput.value) || 60;
+                const maxConcurrent = parseInt(maxConcurrentInput.value) || 5;
+                
+                const response = await fetch(
+                    `${API_BASE_URL}/source-test/test-all-sources?timeout=${timeout}&max_concurrent=${maxConcurrent}`
+                );
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMessage = `HTTP error! status: ${response.status}`;
+                    try {
+                        // Try to parse error as JSON
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.detail) {
+                            errorMessage = errorJson.detail;
+                        }
+                    } catch (e) {
+                        // If not JSON, use text as is if it's not too long
+                        if (errorText && errorText.length < 200) {
+                            errorMessage = errorText;
+                        }
+                    }
+                    throw new Error(errorMessage);
+                }
+                
+                const result = await response.json();
+                renderAllResults(result);
+            } catch (error) {
+                resultsContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <h5>Error testing all sources</h5>
+                        <p>${error.message}</p>
+                        <p class="mt-3 mb-0"><small>If this is an authentication error, please make sure you are logged in or contact your administrator.</small></p>
+                    </div>
+                `;
+                console.error('Error testing all sources:', error);
+            } finally {
+                hideLoader();
+            }
+        }
+        
+        // Render all sources test results
+        function renderAllResults(result) {
+            resultsContainer.innerHTML = '';
+            
+            const resultCards = allResultsTemplate.content.cloneNode(true);
+            const summaryContent = resultCards.querySelector('.summary-content');
+            const successfulContent = resultCards.querySelector('.successful-content');
+            const failedContent = resultCards.querySelector('.failed-content');
+            
+            // Render summary
+            const summary = result.summary;
+            summaryContent.innerHTML = `
+                <p><strong>Total Sources:</strong> ${summary.total_sources}</p>
+                <p><strong>Successful Sources:</strong> ${summary.successful_sources}</p>
+                <p><strong>Failed Sources:</strong> ${summary.failed_sources}</p>
+                <p><strong>Success Rate:</strong> ${summary.success_rate}</p>
+                <p><strong>Total Time:</strong> ${summary.total_time}</p>
+            `;
+            
+            // Render successful sources
+            if (result.successful_sources.length === 0) {
+                successfulContent.innerHTML = '<p>No successful sources.</p>';
+            } else {
+                const table = document.createElement('table');
+                table.className = 'table table-sm table-hover';
+                table.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th>Items Count</th>
+                            <th>Elapsed Time</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                `;
+                
+                const tbody = table.querySelector('tbody');
+                
+                result.successful_sources.forEach(source => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${source.source_type}</td>
+                        <td>${source.items_count}</td>
+                        <td>${source.elapsed_time.toFixed(2)}s</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+                
+                successfulContent.appendChild(table);
+            }
+            
+            // Render failed sources
+            if (result.failed_sources.length === 0) {
+                failedContent.innerHTML = '<p>No failed sources.</p>';
+            } else {
+                const table = document.createElement('table');
+                table.className = 'table table-sm table-hover';
+                table.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th>Error</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                `;
+                
+                const tbody = table.querySelector('tbody');
+                
+                result.failed_sources.forEach(source => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${source.source_type}</td>
+                        <td>${source.error}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+                
+                failedContent.appendChild(table);
+            }
+            
+            resultsContainer.appendChild(resultCards);
+        }
+        
+        // Clear results
+        function clearResults() {
+            resultTitle.textContent = 'Test Results';
+            resultsContainer.innerHTML = `
+                <div class="alert alert-info">
+                    Select a source from the list or click "Test All Sources" to begin testing.
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html> 

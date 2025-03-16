@@ -121,7 +121,7 @@ class GeLongHuiNewsSource(WebNewsSource):
                             logger.error(f"Error parsing date {relative_time}: {str(e)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 格隆汇的移动版URL与PC版相同
@@ -130,8 +130,8 @@ class GeLongHuiNewsSource(WebNewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "info": info,
                             "relative_time": relative_time
                         }

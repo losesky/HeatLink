@@ -167,7 +167,7 @@ class ZaoBaoNewsSource(WebNewsSource):
                             logger.error(f"Error parsing alternative date format {date_text}: {str(e2)}")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 早报的移动版URL与PC版相同
@@ -176,8 +176,8 @@ class ZaoBaoNewsSource(WebNewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "date_text": date_text
                         }
                     )

@@ -93,7 +93,7 @@ class HackerNewsSource(APINewsSource):
                     published_at = self.parse_date(str(time)) if time else None
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,
@@ -104,8 +104,6 @@ class HackerNewsSource(APINewsSource):
                         extra={
                             "is_top": False,
                             "mobile_url": url,  # Hacker News的移动版URL与PC版相同
-                            "source_id": self.source_id,
-                            "source_name": self.name,
                             "score": story_data.get("score", 0),
                             "by": story_data.get("by", ""),
                             "descendants": story_data.get("descendants", 0)

@@ -68,7 +68,7 @@ class BilibiliHotNewsSource(APINewsSource):
                     icon = item.get("icon", "")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,
@@ -77,8 +77,7 @@ class BilibiliHotNewsSource(APINewsSource):
                         image_url=icon,
                         published_at=None,
                         extra={
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            "rank": item.get("rank", 0),
                             "heat_score": item.get("heat_score", 0),
                             "mobile_url": url
                         }

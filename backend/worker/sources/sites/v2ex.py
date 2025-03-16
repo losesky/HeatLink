@@ -116,7 +116,7 @@ class V2EXHotTopicsSource(APINewsSource):
                     content_html = item.get("content_html", "")
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # V2EX的移动版URL与PC版相同
@@ -124,10 +124,7 @@ class V2EXHotTopicsSource(APINewsSource):
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name
-                        }
+                        extra={"is_top": False, "mobile_url": url}
                     )
                     
                     news_items.append(news_item)

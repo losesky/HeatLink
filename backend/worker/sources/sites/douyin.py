@@ -107,7 +107,7 @@ class DouyinHotNewsSource(APINewsSource):
                     published_at = self.parse_date(event_time) if event_time else None
                     
                     # 创建新闻项
-                    news_item = NewsItemModel(
+                    news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,  # 抖音的移动版URL与PC版相同
@@ -116,8 +116,8 @@ class DouyinHotNewsSource(APINewsSource):
                         image_url=None,
                         published_at=published_at,
                         extra={"is_top": False, "mobile_url": url, 
-                            "source_id": self.source_id,
-                            "source_name": self.name,
+                            
+                            
                             "hot_value": hot_value
                         }
                     )
