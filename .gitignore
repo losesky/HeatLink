@@ -19,6 +19,8 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+*.code-workspace
+source_test_report.json
 
 # Virtual Environment
 venv/

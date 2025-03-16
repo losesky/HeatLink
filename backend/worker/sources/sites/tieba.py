@@ -81,14 +81,12 @@ class TiebaHotTopicSource(APINewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=topic_name,
-                        url=url,
-                        mobile_url=url,  # 贴吧的移动版URL与PC版相同
+                        url=url,  # 贴吧的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "topic_id": topic_id

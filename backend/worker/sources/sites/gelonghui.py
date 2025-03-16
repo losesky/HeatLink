@@ -124,14 +124,12 @@ class GeLongHuiNewsSource(WebNewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=title,
-                        url=url,
-                        mobile_url=url,  # 格隆汇的移动版URL与PC版相同
+                        url=url,  # 格隆汇的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "info": info,

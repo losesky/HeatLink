@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 
 from worker.sources.base import NewsItemModel
 from worker.sources.web import APINewsSource
+from worker.utils.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -96,13 +97,13 @@ class HackerNewsSource(APINewsSource):
                         id=item_id,
                         title=title,
                         url=url,
-                        mobile_url=url,  # Hacker News的移动版URL与PC版相同
                         content=story_data.get("text", ""),
                         summary=None,  # Hacker News没有提供摘要
                         image_url=None,  # Hacker News没有提供图片
                         published_at=published_at,
-                        is_top=False,
                         extra={
+                            "is_top": False,
+                            "mobile_url": url,  # Hacker News的移动版URL与PC版相同
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "score": story_data.get("score", 0),
@@ -126,8 +127,6 @@ class HackerNewsSource(APINewsSource):
         从Hacker News API获取新闻
         重写fetch方法，因为需要先获取新闻ID列表，再获取每条新闻的详细信息
         """
-        from worker.utils.http_client import http_client
-        
         logger.info(f"Fetching news from Hacker News API: {self.api_url}")
         
         try:

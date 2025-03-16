@@ -104,8 +104,8 @@ class RSSNewsSource(NewsSource):
                     
                     # 提取纯文本摘要
                     if content:
-                        text_content = self.extract_text_content(content)
-                        summary = self.generate_summary(text_content)
+                        text_content = await self.extract_text_from_html(content)
+                        summary = await self.generate_summary(text_content)
                     
                     # 获取图片URL
                     image_url = None
@@ -138,8 +138,8 @@ class RSSNewsSource(NewsSource):
                             if full_content:
                                 content = full_content
                                 # 重新生成摘要
-                                text_content = self.extract_text_content(content)
-                                summary = self.generate_summary(text_content)
+                                text_content = await self.extract_text_from_html(content)
+                                summary = await self.generate_summary(text_content)
                                 
                                 # 如果没有图片，尝试从完整内容中提取
                                 if not image_url:
@@ -159,18 +159,18 @@ class RSSNewsSource(NewsSource):
                         id=item_id,
                         title=entry.title,
                         url=entry.link,
-                        mobile_url=None,  # RSS通常不提供移动版URL
                         content=content,
                         summary=summary,
                         image_url=image_url,
                         published_at=published_at,
-                        is_top=False,
                         extra={
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "category": self.category,
                             "author": entry.get('author', ''),
-                            "tags": [tag.term for tag in entry.get('tags', [])] if hasattr(entry, 'tags') else []
+                            "tags": [tag.term for tag in entry.get('tags', [])] if hasattr(entry, 'tags') else [],
+                            "mobile_url": None,  # RSS通常不提供移动版URL
+                            "is_top": False
                         }
                     )
                     
@@ -227,6 +227,13 @@ class RSSNewsSource(NewsSource):
         except Exception as e:
             logger.error(f"Error fetching full content from {url}: {str(e)}")
             return None
+
+    async def close(self):
+        """
+        关闭资源
+        """
+        # 调用父类的close方法
+        await super().close()
 
 
 class RSSSourceFactory:

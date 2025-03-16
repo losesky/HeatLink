@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 
 from worker.sources.base import NewsItemModel
 from worker.sources.web import WebNewsSource
+from worker.utils.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +59,14 @@ class Jin10NewsSource(WebNewsSource):
             url = f"{self.url}?t={timestamp}"
             
             # 获取快讯数据
-            response = await self.http_client.fetch(
+            client = await self.http_client
+            async with client.get(
                 url=url,
-                method="GET",
-                headers=self.headers,
-                response_type="text"
-            )
-            
-            # 解析响应
-            return await self.parse_response(response)
+                headers=self.headers
+            ) as response:
+                response_text = await response.text()
+                # 解析响应
+                return await self.parse_response(response_text)
             
         except Exception as e:
             logger.error(f"Error fetching Jin10 news: {str(e)}")
@@ -128,9 +128,16 @@ class Jin10NewsSource(WebNewsSource):
                             elif "小时前" in time_str:
                                 hours = int(time_str.replace("小时前", ""))
                                 published_at = now - datetime.timedelta(hours=hours)
-                            elif ":" in time_str:  # 今天的时间
-                                hour, minute = map(int, time_str.split(':'))
-                                published_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                            elif ":" in time_str:  # 今天的时间或完整日期时间
+                                if "-" in time_str:  # 完整日期时间格式 (2025-03-15 22:38:21)
+                                    try:
+                                        published_at = datetime.datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+                                    except ValueError:
+                                        # 尝试没有秒的格式 (2025-03-15 22:38)
+                                        published_at = datetime.datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+                                else:  # 只有时间 (22:38)
+                                    hour, minute = map(int, time_str.split(':'))
+                                    published_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
                             else:
                                 # 尝试解析完整日期时间
                                 try:
@@ -147,14 +154,12 @@ class Jin10NewsSource(WebNewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=title,
-                        url=url,
-                        mobile_url=url,  # 金十数据的移动版URL与PC版相同
+                        url=url,  # 金十数据的移动版URL与PC版相同
                         content=description,
                         summary=description,
                         image_url=None,
                         published_at=published_at,
-                        is_top=is_important,
-                        extra={
+                        extra={"is_top": is_important, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "is_important": is_important,

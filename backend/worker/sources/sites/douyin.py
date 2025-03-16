@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 
 from worker.sources.base import NewsItemModel
 from worker.sources.web import APINewsSource
+from worker.utils.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -52,29 +53,25 @@ class DouyinHotNewsSource(APINewsSource):
         """
         try:
             # 先访问抖音首页获取cookie
-            cookie_response = await self.http_client.fetch(
+            client = await self.http_client
+            async with client.get(
                 url="https://www.douyin.com/",
-                method="GET",
-                headers=self.headers,
-                response_type="text"
-            )
-            
-            # 从响应头中提取cookie
-            if hasattr(cookie_response, "cookies"):
-                cookies = cookie_response.cookies
-                cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
-                self.headers["Cookie"] = cookie_str
+                headers=self.headers
+            ) as cookie_response:
+                # 从响应头中提取cookie
+                if hasattr(cookie_response, "cookies"):
+                    cookies = cookie_response.cookies
+                    cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+                    self.headers["Cookie"] = cookie_str
             
             # 获取热搜数据
-            response = await self.http_client.fetch(
+            async with client.get(
                 url=self.api_url,
-                method="GET",
-                headers=self.headers,
-                response_type="json"
-            )
-            
-            # 解析响应
-            return await self.parse_response(response)
+                headers=self.headers
+            ) as response:
+                response_json = await response.json()
+                # 解析响应
+                return await self.parse_response(response_json)
             
         except Exception as e:
             logger.error(f"Error fetching Douyin hot search: {str(e)}")
@@ -113,14 +110,12 @@ class DouyinHotNewsSource(APINewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=title,
-                        url=url,
-                        mobile_url=url,  # 抖音的移动版URL与PC版相同
+                        url=url,  # 抖音的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "hot_value": hot_value

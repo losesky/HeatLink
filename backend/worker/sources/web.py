@@ -178,6 +178,10 @@ class WebNewsSource(NewsSource):
             return None
         
         try:
+            # 如果输入是整数，直接当作时间戳处理
+            if isinstance(date_str, int):
+                return datetime.datetime.fromtimestamp(date_str)
+            
             if format_str:
                 return datetime.datetime.strptime(date_str, format_str)
             

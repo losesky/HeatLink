@@ -56,12 +56,12 @@ class GitHubTrendingSource(WebNewsSource):
             soup = BeautifulSoup(response, 'html.parser')
             
             # 查找仓库列表
-            repo_list = soup.select("main .Box div[data-hpc] > article")
+            repo_list = soup.select("main .Box div[data-hpc] article")
             
             for item in repo_list:
                 try:
                     # 获取链接和标题
-                    link_element = item.select_one(">h2 a")
+                    link_element = item.select_one("h2 a")
                     if not link_element:
                         continue
                     
@@ -76,7 +76,7 @@ class GitHubTrendingSource(WebNewsSource):
                     star_count = star_element.text.replace("\n", "").replace(" ", "").strip() if star_element else ""
                     
                     # 获取描述
-                    desc_element = item.select_one(">p")
+                    desc_element = item.select_one("p")
                     description = desc_element.text.replace("\n", "").strip() if desc_element else ""
                     
                     # 生成唯一ID
@@ -86,14 +86,12 @@ class GitHubTrendingSource(WebNewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=title,
-                        url=url,
-                        mobile_url=url,  # GitHub的移动版URL与PC版相同
+                        url=url,  # GitHub的移动版URL与PC版相同
                         content=description,
                         summary=description,
                         image_url=None,
                         published_at=None,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "star_count": star_count

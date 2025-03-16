@@ -107,18 +107,18 @@ class LinuxDoNewsSource(RESTNewsSource):
                         id=str(topic_id),
                         title=title,
                         url=url,
-                        mobile_url=url,  # Linux中国的移动版URL与PC版相同
                         content=None,
                         summary=excerpt,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
                         extra={
+                            "is_top": False,
+                            "mobile_url": url,
                             "source_id": self.source_id,
                             "source_name": self.name,
-                            "reply_count": reply_count,
                             "like_count": like_count,
-                            "info": f"回复: {reply_count}, 点赞: {like_count}"
+                            "comment_count": reply_count,
+                            "info": f"👍 {like_count} 💬 {reply_count}"
                         }
                     )
                     

@@ -96,9 +96,16 @@ class ITHomeNewsSource(WebNewsSource):
                                 time_part = date_text.replace("昨天", "").strip()
                                 hour, minute = map(int, time_part.split(':'))
                                 published_at = (now - datetime.timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-                            elif ":" in date_text:  # 今天的时间
-                                hour, minute = map(int, date_text.split(':'))
-                                published_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                            elif ":" in date_text:  # 今天的时间或完整日期时间
+                                if "-" in date_text:  # 完整日期时间格式 (2025-03-16 01:07:18)
+                                    try:
+                                        published_at = datetime.datetime.strptime(date_text, "%Y-%m-%d %H:%M:%S")
+                                    except ValueError:
+                                        # 尝试没有秒的格式 (2025-03-16 01:07)
+                                        published_at = datetime.datetime.strptime(date_text, "%Y-%m-%d %H:%M")
+                                else:  # 只有时间 (01:07)
+                                    hour, minute = map(int, date_text.split(':'))
+                                    published_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
                         except Exception as e:
                             logger.error(f"Error parsing date {date_text}: {str(e)}")
                     
@@ -107,13 +114,11 @@ class ITHomeNewsSource(WebNewsSource):
                         id=item_id,
                         title=title,
                         url=url,
-                        mobile_url=None,
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": None, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "date_text": date_text

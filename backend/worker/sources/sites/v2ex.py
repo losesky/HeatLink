@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 
 from worker.sources.base import NewsItemModel
 from worker.sources.web import APINewsSource
+from worker.utils.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -55,20 +56,19 @@ class V2EXHotTopicsSource(APINewsSource):
             categories = ["create", "ideas", "programmer", "share"]
             all_news_items = []
             
+            client = await self.http_client
             for category in categories:
                 api_url = f"https://www.v2ex.com/feed/{category}.json"
                 
                 # 获取API响应
-                response = await self.http_client.fetch(
+                async with client.get(
                     url=api_url,
-                    method="GET",
-                    headers=self.headers,
-                    response_type="json"
-                )
-                
-                # 解析响应
-                news_items = await self.parse_response(response)
-                all_news_items.extend(news_items)
+                    headers=self.headers
+                ) as response:
+                    response_json = await response.json()
+                    # 解析响应
+                    news_items = await self.parse_response(response_json)
+                    all_news_items.extend(news_items)
             
             # 按发布时间排序
             all_news_items.sort(key=lambda x: x.published_at if x.published_at else datetime.datetime.min, reverse=True)
@@ -119,14 +119,12 @@ class V2EXHotTopicsSource(APINewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=title,
-                        url=url,
-                        mobile_url=url,  # V2EX的移动版URL与PC版相同
+                        url=url,  # V2EX的移动版URL与PC版相同
                         content=content_html,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name
                         }

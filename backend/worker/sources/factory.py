@@ -132,6 +132,57 @@ class NewsSourceFactory:
             return CLSNewsSource(**kwargs)
         elif source_type == "cls-article":
             return CLSArticleNewsSource(**kwargs)
+        elif source_type == "hacker_news":
+            return RSSSourceFactory.create_hacker_news(**kwargs)
+        elif source_type == "bbc_news":
+            return RSSSourceFactory.create_bbc_news(**kwargs)
+        elif source_type == "ifanr":
+            return RSSNewsSource(
+                source_id="ifanr",
+                name="爱范儿",
+                feed_url="https://www.ifanr.com/feed",
+                category="technology",
+                country="CN",
+                language="zh-CN",
+                update_interval=1800,  # 30分钟更新一次
+                config={
+                    "fetch_content": True,
+                    "content_selector": ".article-content"
+                },
+                **kwargs
+            )
+        elif source_type == "techcrunch":
+            return RSSNewsSource(
+                source_id="techcrunch",
+                name="TechCrunch",
+                feed_url="https://techcrunch.com/feed/",
+                category="technology",
+                country="US",
+                language="en",
+                update_interval=1800,  # 30分钟更新一次
+                config={
+                    "fetch_content": True,
+                    "content_selector": ".article-content"
+                },
+                **kwargs
+            )
+        elif source_type == "the_verge":
+            return RSSNewsSource(
+                source_id="the_verge",
+                name="The Verge",
+                feed_url="https://www.theverge.com/rss/index.xml",
+                category="technology",
+                country="US",
+                language="en",
+                update_interval=1800,  # 30分钟更新一次
+                config={
+                    "fetch_content": True,
+                    "content_selector": ".c-entry-content"
+                },
+                **kwargs
+            )
+        elif source_type == "zhihu_daily":
+            return RSSSourceFactory.create_zhihu_daily(**kwargs)
         else:
             logger.error(f"Unknown source type: {source_type}")
             return None

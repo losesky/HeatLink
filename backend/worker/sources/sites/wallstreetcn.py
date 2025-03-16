@@ -86,13 +86,13 @@ class WallStreetCNLiveNewsSource(APINewsSource):
                         id=item_id,
                         title=title,
                         url=url,
-                        mobile_url=url,  # 华尔街见闻的移动版URL与PC版相同
                         content=item.get("content_text", ""),
                         summary=item.get("content_short", ""),
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
                         extra={
+                            "is_top": False,
+                            "mobile_url": url,  # 华尔街见闻的移动版URL与PC版相同
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "display_time": display_time
@@ -197,13 +197,13 @@ class WallStreetCNNewsSource(APINewsSource):
                         id=item_id,
                         title=title,
                         url=uri,
-                        mobile_url=uri,  # 华尔街见闻的移动版URL与PC版相同
                         content=resource.get("content_text", ""),
                         summary=resource.get("content_short", ""),
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
                         extra={
+                            "is_top": False,
+                            "mobile_url": uri,  # 华尔街见闻的移动版URL与PC版相同
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "display_time": display_time
@@ -289,15 +289,15 @@ class WallStreetCNHotNewsSource(APINewsSource):
                         id=item_id,
                         title=title,
                         url=url,
-                        mobile_url=url,  # 华尔街见闻的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=None,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, 
+                            "mobile_url": url,  # 华尔街见闻的移动版URL与PC版相同
                             "source_id": self.source_id,
-                            "source_name": self.name
+                            "source_name": self.name,
+                            "display_time": None
                         }
                     )
                     

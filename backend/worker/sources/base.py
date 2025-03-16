@@ -174,11 +174,12 @@ class NewsSource(ABC):
     
     async def close(self):
         """
-        关闭HTTP客户端
+        关闭资源，子类可以重写此方法以释放额外资源
         """
-        if self._http_client and not self._http_client.closed:
-            await self._http_client.close()
-            self._http_client = None
+        if hasattr(self, '_http_client') and self._http_client is not None:
+            if hasattr(self._http_client, 'close') and callable(self._http_client.close):
+                await self._http_client.close()
+                self._http_client = None
     
     @abstractmethod
     async def fetch(self) -> List[NewsItemModel]:

@@ -109,13 +109,11 @@ class Kr36NewsSource(WebNewsSource):
                         id=item_id,
                         title=title,
                         url=url,
-                        mobile_url=None,
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": None, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "relative_date": relative_date

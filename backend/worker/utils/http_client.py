@@ -26,6 +26,23 @@ class HTTPClient:
     async def close(self):
         if self.session and not self.session.closed:
             await self.session.close()
+            self.session = None
+    
+    def __del__(self):
+        """
+        确保在对象被垃圾回收时关闭会话
+        """
+        if self.session and not self.session.closed:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self.close())
+                else:
+                    loop.run_until_complete(self.close())
+            except Exception:
+                # 如果无法获取事件循环或事件循环已关闭，则忽略
+                pass
     
     @cached(
         ttl=settings.DEFAULT_CACHE_TTL,

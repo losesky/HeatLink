@@ -97,8 +97,7 @@ class RESTNewsSource(NewsSource):
             method="GET",
             params=self.params,
             headers=self.headers,
-            response_type="json",
-            cache_ttl=self.cache_ttl
+            response_type="json"
         )
         
         # Use custom parser if provided

@@ -124,13 +124,13 @@ class CanKaoXiaoXiNewsSource(RESTNewsSource):
                         id=self.generate_id(item_id),
                         title=title,
                         url=url,
-                        mobile_url=url,  # 参考消息的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
                         extra={
+                            "is_top": False,
+                            "mobile_url": url,  # 参考消息的移动版URL与PC版相同
                             "source_id": self.source_id,
                             "source_name": self.name
                         }

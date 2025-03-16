@@ -72,16 +72,15 @@ class BilibiliHotNewsSource(APINewsSource):
                         id=item_id,
                         title=title,
                         url=url,
-                        mobile_url=url,  # B站的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=icon,
                         published_at=None,
-                        is_top=False,
                         extra={
                             "source_id": self.source_id,
                             "source_name": self.name,
-                            "heat_score": item.get("heat_score", 0)
+                            "heat_score": item.get("heat_score", 0),
+                            "mobile_url": url
                         }
                     )
                     

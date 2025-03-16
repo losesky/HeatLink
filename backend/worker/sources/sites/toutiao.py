@@ -78,14 +78,12 @@ class ToutiaoHotNewsSource(APINewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=title,
-                        url=url,
-                        mobile_url=url,  # 头条的移动版URL与PC版相同
+                        url=url,  # 头条的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=image_url,
                         published_at=None,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "hot_value": hot_value

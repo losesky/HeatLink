@@ -131,8 +131,8 @@ class CLSNewsSource(RESTNewsSource):
                         summary=content,
                         image_url=None,
                         published_at=published_at,
-                        is_top=is_top,
                         extra={
+                            "is_top": is_top,
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "tag": tag,
@@ -257,12 +257,12 @@ class CLSArticleNewsSource(CLSNewsSource):
                         summary=summary,
                         image_url=image_url,
                         published_at=published_at,
-                        is_top=False,
                         extra={
+                            "is_top": False,
                             "source_id": self.source_id,
                             "source_name": self.name,
-                            "tag": tag,
-                            "info": tag
+                            "content_id": item_id,
+                            "remark": tag
                         }
                     )
                     

@@ -135,6 +135,9 @@ class CoolApkNewsSource(RESTNewsSource):
                     # 获取评论数
                     comment_num = item.get("commentnum") or 0
                     
+                    # 获取标签
+                    tag = item.get("tag")
+                    
                     # 创建新闻项
                     news_item = NewsItemModel(
                         id=str(item_id),
@@ -145,14 +148,16 @@ class CoolApkNewsSource(RESTNewsSource):
                         summary=summary,
                         image_url=image_url,
                         published_at=published_at,
-                        is_top=False,
                         extra={
+                            "is_top": False,
+                            "mobile_url": url,
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "author": author,
                             "like_num": like_num,
                             "comment_num": comment_num,
-                            "info": f"👍 {like_num} 💬 {comment_num}"
+                            "tag": tag,
+                            "info": tag
                         }
                     )
                     

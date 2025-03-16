@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 
 from worker.sources.base import NewsItemModel
 from worker.sources.web import WebNewsSource
+from worker.utils.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -53,23 +54,25 @@ class ZaoBaoNewsSource(WebNewsSource):
         重写fetch_content方法，处理GB2312编码
         """
         try:
-            response = await self.http_client.get(self.url, headers=self.headers)
-            if response.status == 200:
-                # 获取原始二进制内容
-                content = await response.read()
+            client = await self.http_client
+            
+            async with client.get(
+                url=self.url,
+                headers=self.headers
+            ) as response:
+                response.raise_for_status()
+                # 获取二进制响应
+                response_bytes = await response.read()
                 
                 # 使用GB2312解码
                 encoding = self.config.get("encoding", "utf-8")
                 try:
-                    decoded_content = content.decode(encoding)
+                    decoded_content = response_bytes.decode(encoding)
                 except UnicodeDecodeError:
                     logger.warning(f"Failed to decode with {encoding}, falling back to utf-8")
-                    decoded_content = content.decode("utf-8", errors="replace")
+                    decoded_content = response_bytes.decode("utf-8", errors="replace")
                 
                 return decoded_content
-            else:
-                logger.error(f"Failed to fetch content from {self.url}, status: {response.status}")
-                return ""
         except Exception as e:
             logger.error(f"Error fetching content from {self.url}: {str(e)}")
             return ""
@@ -106,7 +109,8 @@ class ZaoBaoNewsSource(WebNewsSource):
                     if not date_element:
                         continue
                     date_text = date_element.text.strip()
-                    date_text = date_text.replace("-\s", " ")
+                    # 移除日期中的多余空格
+                    date_text = re.sub(r'\s+', ' ', date_text)
                     
                     if not url_path or not title or not date_text:
                         continue
@@ -121,8 +125,24 @@ class ZaoBaoNewsSource(WebNewsSource):
                     published_at = None
                     try:
                         # 尝试解析日期
-                        # 早报的日期格式通常为：2023-04-01 12:34
-                        published_at = datetime.datetime.strptime(date_text.strip(), "%Y-%m-%d %H:%M")
+                        # 早报的日期格式可能为：2025-03-15- 20:25:27 或 2025-03-15 20:25:27
+                        formats_to_try = [
+                            "%Y-%m-%d- %H:%M:%S",
+                            "%Y-%m-%d %H:%M:%S",
+                            "%Y-%m-%d- %H:%M",
+                            "%Y-%m-%d %H:%M"
+                        ]
+                        
+                        for fmt in formats_to_try:
+                            try:
+                                published_at = datetime.datetime.strptime(date_text, fmt)
+                                break
+                            except ValueError:
+                                continue
+                                
+                        if not published_at:
+                            raise ValueError(f"Could not parse date with any format: {date_text}")
+                            
                     except Exception as e:
                         logger.error(f"Error parsing date {date_text}: {str(e)}")
                         
@@ -132,8 +152,8 @@ class ZaoBaoNewsSource(WebNewsSource):
                             now = datetime.datetime.now()
                             if ":" in date_text:  # 包含时间
                                 if "-" in date_text:  # 包含日期
-                                    # 尝试不同的日期格式
-                                    for fmt in ["%Y-%m-%d %H:%M", "%m-%d %H:%M"]:
+                                    # 尝试不同的日期格式，包括可能有连字符的格式
+                                    for fmt in ["%Y-%m-%d %H:%M", "%Y-%m-%d- %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%m-%d %H:%M"]:
                                         try:
                                             if fmt == "%m-%d %H:%M":
                                                 dt = datetime.datetime.strptime(date_text.strip(), fmt)
@@ -143,10 +163,6 @@ class ZaoBaoNewsSource(WebNewsSource):
                                             break
                                         except:
                                             continue
-                                else:
-                                    # 只有时间格式：12:34
-                                    hour, minute = map(int, date_text.strip().split(':'))
-                                    published_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
                         except Exception as e2:
                             logger.error(f"Error parsing alternative date format {date_text}: {str(e2)}")
                     
@@ -154,14 +170,12 @@ class ZaoBaoNewsSource(WebNewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=title,
-                        url=url,
-                        mobile_url=url,  # 早报的移动版URL与PC版相同
+                        url=url,  # 早报的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "date_text": date_text

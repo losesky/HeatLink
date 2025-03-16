@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 
 from worker.sources.base import NewsItemModel
 from worker.sources.web import APINewsSource
+from worker.utils.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
@@ -51,30 +52,26 @@ class XueqiuHotStockSource(APINewsSource):
         需要先获取cookie
         """
         try:
+            client = await self.http_client
             # 先访问雪球首页获取cookie
-            cookie_response = await self.http_client.fetch(
+            async with client.get(
                 url="https://xueqiu.com/hq",
-                method="GET",
-                headers=self.headers,
-                response_type="text"
-            )
-            
-            # 从响应头中提取cookie
-            if hasattr(cookie_response, "cookies"):
-                cookies = cookie_response.cookies
-                cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
-                self.headers["Cookie"] = cookie_str
+                headers=self.headers
+            ) as cookie_response:
+                # 从响应头中提取cookie
+                if hasattr(cookie_response, "cookies"):
+                    cookies = cookie_response.cookies
+                    cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+                    self.headers["Cookie"] = cookie_str
             
             # 获取热门股票数据
-            response = await self.http_client.fetch(
+            async with client.get(
                 url=self.api_url,
-                method="GET",
-                headers=self.headers,
-                response_type="json"
-            )
-            
-            # 解析响应
-            return await self.parse_response(response)
+                headers=self.headers
+            ) as response:
+                response_json = await response.json()
+                # 解析响应
+                return await self.parse_response(response_json)
             
         except Exception as e:
             logger.error(f"Error fetching Xueqiu hot stocks: {str(e)}")
@@ -120,14 +117,12 @@ class XueqiuHotStockSource(APINewsSource):
                     news_item = NewsItemModel(
                         id=item_id,
                         title=name,
-                        url=url,
-                        mobile_url=url,  # 雪球的移动版URL与PC版相同
+                        url=url,  # 雪球的移动版URL与PC版相同
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=None,
-                        is_top=False,
-                        extra={
+                        extra={"is_top": False, "mobile_url": url, 
                             "source_id": self.source_id,
                             "source_name": self.name,
                             "code": code,
