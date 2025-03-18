@@ -27,7 +27,10 @@ backend/update_news_sources.py
 backend/test_sources_report.py
 dev.sh
 docker-compose.dev.yml
+docker-compose.local.yml
 Dockerfile.dev
+Dockerfile.worker
+HeatLink.code-workspace
 
 # Virtual Environment
 venv/
