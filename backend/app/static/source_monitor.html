@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Source Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment"></script>
+    <style>
+        .status-badge {
+            @apply px-2 py-1 rounded-full text-xs font-semibold;
+        }
+        .status-active {
+            @apply bg-green-100 text-green-800;
+        }
+        .status-error {
+            @apply bg-red-100 text-red-800;
+        }
+        .status-warning {
+            @apply bg-yellow-100 text-yellow-800;
+        }
+        .status-inactive {
+            @apply bg-gray-100 text-gray-800;
+        }
+        .metric-card {
+            @apply bg-white rounded-lg shadow-md p-4 transition-all duration-200 hover:shadow-lg;
+        }
+        .metric-value {
+            @apply text-2xl font-bold text-gray-900;
+        }
+        .metric-label {
+            @apply text-sm text-gray-500;
+        }
+        .chart-container {
+            @apply bg-white rounded-lg shadow-md p-4 h-64;
+        }
+        .source-card {
+            @apply bg-white rounded-lg shadow-md p-4 transition-all duration-200 hover:shadow-lg;
+        }
+        .source-header {
+            @apply flex items-center justify-between mb-2;
+        }
+        .source-title {
+            @apply text-lg font-semibold text-gray-900;
+        }
+        .source-meta {
+            @apply text-sm text-gray-500;
+        }
+        .source-stats {
+            @apply grid grid-cols-2 gap-4 mt-4;
+        }
+        .stat-item {
+            @apply text-center;
+        }
+        .stat-value {
+            @apply text-lg font-semibold text-gray-900;
+        }
+        .stat-label {
+            @apply text-xs text-gray-500;
+        }
+        .refresh-button {
+            @apply bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200;
+        }
+        .filter-section {
+            @apply bg-white rounded-lg shadow-md p-4 mb-4;
+        }
+        .filter-group {
+            @apply flex items-center space-x-4;
+        }
+        .filter-label {
+            @apply text-sm font-medium text-gray-700;
+        }
+        .filter-select {
+            @apply rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">News Source Monitor</h1>
+                <p class="text-gray-600">Real-time monitoring of news source performance and status</p>
+            </div>
+            <button id="refreshBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Refresh
+            </button>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-lg shadow p-4 mb-8">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                    <select id="statusFilter" class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">All</option>
+                        <option value="active">Active</option>
+                        <option value="error">Error</option>
+                        <option value="warning">Warning</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                    <select id="categoryFilter" class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">All</option>
+                        <option value="tech">Technology</option>
+                        <option value="news">News</option>
+                        <option value="sports">Sports</option>
+                        <option value="entertainment">Entertainment</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Search</label>
+                    <input type="text" id="searchInput" placeholder="Search sources..." class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                </div>
+            </div>
+        </div>
+
+        <!-- Overview Metrics -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Total Sources</h3>
+                <p id="totalSources" class="text-3xl font-bold text-gray-900">-</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Active Sources</h3>
+                <p id="activeSources" class="text-3xl font-bold text-green-600">-</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Error Sources</h3>
+                <p id="errorSources" class="text-3xl font-bold text-red-600">-</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">Avg Response Time</h3>
+                <p id="avgResponseTime" class="text-3xl font-bold text-blue-600">-</p>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Source Status Distribution</h3>
+                <canvas id="statusChart"></canvas>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Response Time Trend</h3>
+                <canvas id="responseTimeChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Source List -->
+        <div class="bg-white rounded-lg shadow">
+            <div class="p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Source Details</h3>
+                <div id="sourceList" class="space-y-4">
+                    <!-- Source cards will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let statusChart = null;
+        let responseTimeChart = null;
+
+        function initCharts() {
+            // Status Distribution Chart
+            const statusCtx = document.getElementById('statusChart').getContext('2d');
+            statusChart = new Chart(statusCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Active', 'Error', 'Warning', 'Inactive'],
+                    datasets: [{
+                        data: [0, 0, 0, 0],
+                        backgroundColor: [
+                            '#10B981', // green
+                            '#EF4444', // red
+                            '#F59E0B', // yellow
+                            '#6B7280'  // gray
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+
+            // Response Time Trend Chart
+            const responseTimeCtx = document.getElementById('responseTimeChart').getContext('2d');
+            responseTimeChart = new Chart(responseTimeCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Average Response Time (ms)',
+                        data: [],
+                        borderColor: '#3B82F6',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateCharts(data) {
+            // Update Status Distribution
+            statusChart.data.datasets[0].data = [
+                data.active_sources,
+                data.error_sources,
+                data.warning_sources,
+                data.inactive_sources
+            ];
+            statusChart.update();
+
+            // Update Response Time Trend
+            responseTimeChart.data.labels = data.historical_data.map(d => 
+                moment(d.timestamp).format('HH:mm')
+            );
+            responseTimeChart.data.datasets[0].data = data.historical_data.map(d => d.value);
+            responseTimeChart.update();
+        }
+
+        function updateMetrics(data) {
+            document.getElementById('totalSources').textContent = data.total_sources;
+            document.getElementById('activeSources').textContent = data.active_sources;
+            document.getElementById('errorSources').textContent = data.error_sources;
+            document.getElementById('avgResponseTime').textContent = 
+                `${Math.round(data.avg_response_time)}ms`;
+        }
+
+        function createSourceCard(source) {
+            const statusColors = {
+                active: 'bg-green-100 text-green-800',
+                error: 'bg-red-100 text-red-800',
+                warning: 'bg-yellow-100 text-yellow-800',
+                inactive: 'bg-gray-100 text-gray-800'
+            };
+
+            return `
+                <div class="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                    <div class="flex justify-between items-start mb-2">
+                        <div>
+                            <h4 class="text-lg font-semibold text-gray-900">${source.name}</h4>
+                            <p class="text-sm text-gray-600">${source.description}</p>
+                        </div>
+                        <span class="px-2 py-1 rounded-full text-sm font-medium ${statusColors[source.status]}">
+                            ${source.status}
+                        </span>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                        <div>
+                            <p class="text-sm text-gray-600">Success Rate</p>
+                            <p class="text-lg font-semibold">${(source.metrics.success_rate * 100).toFixed(1)}%</p>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-600">Avg Response Time</p>
+                            <p class="text-lg font-semibold">${Math.round(source.metrics.avg_response_time)}ms</p>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-600">Total Requests</p>
+                            <p class="text-lg font-semibold">${source.metrics.total_requests}</p>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-600">Error Count</p>
+                            <p class="text-lg font-semibold">${source.metrics.error_count}</p>
+                        </div>
+                    </div>
+                    ${source.metrics.last_error ? `
+                        <div class="mt-4 p-3 bg-red-50 rounded-md">
+                            <p class="text-sm text-red-700">Last Error: ${source.metrics.last_error}</p>
+                        </div>
+                    ` : ''}
+                    <div class="mt-4 text-sm text-gray-500">
+                        Last Update: ${moment(source.metrics.last_update).fromNow()}
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateSourceList(sources) {
+            const sourceList = document.getElementById('sourceList');
+            sourceList.innerHTML = sources.map(createSourceCard).join('');
+        }
+
+        async function fetchData() {
+            const status = document.getElementById('statusFilter').value;
+            const category = document.getElementById('categoryFilter').value;
+            const search = document.getElementById('searchInput').value;
+
+            try {
+                const response = await fetch(`/api/monitor/sources?${new URLSearchParams({
+                    ...(status && { status }),
+                    ...(category && { category }),
+                    ...(search && { search })
+                })}`);
+                
+                if (!response.ok) {
+                    throw new Error('Failed to fetch monitoring data');
+                }
+
+                const data = await response.json();
+                updateMetrics(data);
+                updateCharts(data);
+                updateSourceList(data.sources);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                // Show error notification
+                alert('Failed to fetch monitoring data. Please try again.');
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initCharts();
+            fetchData();
+
+            // Add event listeners
+            document.getElementById('refreshBtn').addEventListener('click', fetchData);
+            document.getElementById('statusFilter').addEventListener('change', fetchData);
+            document.getElementById('categoryFilter').addEventListener('change', fetchData);
+            document.getElementById('searchInput').addEventListener('input', 
+                debounce(fetchData, 500)
+            );
+
+            // Auto-refresh every 30 seconds
+            setInterval(fetchData, 30000);
+        });
+
+        // Utility function for debouncing
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+    </script>
+</body>
+</html> 
+</html> 

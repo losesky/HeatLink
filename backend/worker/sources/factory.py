@@ -15,6 +15,7 @@ from worker.sources.sites import (
     ITHomeNewsSource,
     GitHubTrendingSource,
     V2EXHotTopicsSource,
+    V2EXSeleniumSource,
     XueqiuHotStockSource,
     TiebaHotTopicSource,
     KuaishouHotSearchSource,
@@ -39,7 +40,14 @@ from worker.sources.sites import (
     CoolApkFeedNewsSource,
     CoolApkAppNewsSource,
     CLSNewsSource,
-    CLSArticleNewsSource
+    CLSArticleNewsSource,
+    BBCWorldNewsSource,
+    ThePaperSeleniumSource,
+    ZhihuDailyNewsSource,
+    BloombergNewsSource,
+    BloombergMarketsNewsSource,
+    BloombergTechnologyNewsSource,
+    BloombergChinaNewsSource
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +74,8 @@ class NewsSourceFactory:
             return BaiduHotNewsSource(**kwargs)
         elif source_type == "thepaper":
             return ThePaperHotNewsSource(**kwargs)
+        elif source_type == "thepaper-selenium" or source_type == "thepaper_selenium":
+            return ThePaperSeleniumSource(**kwargs)
         elif source_type == "hackernews":
             return HackerNewsSource(**kwargs)
         elif source_type == "bilibili":
@@ -79,7 +89,7 @@ class NewsSourceFactory:
         elif source_type == "github":
             return GitHubTrendingSource(**kwargs)
         elif source_type == "v2ex":
-            return V2EXHotTopicsSource(**kwargs)
+            return V2EXSeleniumSource(**kwargs)
         elif source_type == "xueqiu":
             return XueqiuHotStockSource(**kwargs)
         elif source_type == "tieba":
@@ -136,6 +146,16 @@ class NewsSourceFactory:
             return RSSSourceFactory.create_hacker_news(**kwargs)
         elif source_type == "bbc_news":
             return RSSSourceFactory.create_bbc_news(**kwargs)
+        elif source_type == "bbc_world":
+            return BBCWorldNewsSource(**kwargs)
+        elif source_type == "bloomberg":
+            return BloombergNewsSource(**kwargs)
+        elif source_type == "bloomberg-markets":
+            return BloombergMarketsNewsSource(**kwargs)
+        elif source_type == "bloomberg-tech":
+            return BloombergTechnologyNewsSource(**kwargs)
+        elif source_type == "bloomberg-china":
+            return BloombergChinaNewsSource(**kwargs)
         elif source_type == "ifanr":
             return RSSNewsSource(
                 source_id="ifanr",
@@ -182,7 +202,7 @@ class NewsSourceFactory:
                 **kwargs
             )
         elif source_type == "zhihu_daily":
-            return RSSSourceFactory.create_zhihu_daily(**kwargs)
+            return ZhihuDailyNewsSource(**kwargs)
         else:
             logger.error(f"Unknown source type: {source_type}")
             return None
@@ -204,7 +224,7 @@ class NewsSourceFactory:
         sources.append(BaiduHotNewsSource())
         
         # 添加澎湃新闻热榜
-        sources.append(ThePaperHotNewsSource())
+        sources.append(ThePaperSeleniumSource())
         
         # 添加Hacker News
         sources.append(HackerNewsSource())
@@ -225,7 +245,7 @@ class NewsSourceFactory:
         sources.append(GitHubTrendingSource())
         
         # 添加V2EX热门
-        sources.append(V2EXHotTopicsSource())
+        sources.append(V2EXSeleniumSource())
         
         # 添加雪球热门股票
         sources.append(XueqiuHotStockSource())
@@ -242,19 +262,19 @@ class NewsSourceFactory:
         # 添加参考消息
         sources.append(CanKaoXiaoXiNewsSource())
         
-        # 添加奇客
+        # 添加Solidot
         sources.append(SolidotNewsSource())
         
-        # 添加早报
+        # 添加联合早报
         sources.append(ZaoBaoNewsSource())
         
-        # 添加卫星通讯社
+        # 添加Sputnik中文
         sources.append(SputnikNewsCNSource())
         
-        # 添加Product Hunt
+        # 添加ProductHunt
         sources.append(ProductHuntNewsSource())
         
-        # 添加Linux中国
+        # 添加Linux迷
         sources.append(LinuxDoNewsSource())
         
         # 添加靠谱新闻
@@ -263,77 +283,91 @@ class NewsSourceFactory:
         # 添加格隆汇
         sources.append(GeLongHuiNewsSource())
         
-        # 添加快牛快讯
+        # 添加FastBull快讯
         sources.append(FastBullExpressNewsSource())
         
-        # 添加快牛新闻
-        sources.append(FastBullGeneralNewsSource())
-        
-        # 添加华尔街见闻快讯
-        sources.append(WallStreetCNLiveNewsSource())
-        
-        # 添加华尔街见闻文章
+        # 添加华尔街见闻
         sources.append(WallStreetCNNewsSource())
         
-        # 添加华尔街见闻热门
-        sources.append(WallStreetCNHotNewsSource())
-        
-        # 添加36氪快讯
+        # 添加36氪
         sources.append(Kr36NewsSource())
         
-        # 添加酷安头条
+        # 添加酷安
         sources.append(CoolApkNewsSource())
         
-        # 添加财联社快讯
+        # 添加财联社
         sources.append(CLSNewsSource())
         
-        # 添加RSS新闻源
-        sources.append(RSSSourceFactory.create_zhihu_daily())
-        sources.append(RSSSourceFactory.create_hacker_news())
-        sources.append(RSSSourceFactory.create_bbc_news())
+        # 添加BBC世界新闻
+        sources.append(BBCWorldNewsSource())
         
-        # 添加一些中文科技新闻源
-        sources.append(RSSNewsSource(
-            source_id="ifanr",
-            name="爱范儿",
-            feed_url="https://www.ifanr.com/feed",
-            category="technology",
-            country="CN",
-            language="zh-CN",
-            update_interval=1800,  # 30分钟更新一次
-            config={
-                "fetch_content": True,
-                "content_selector": ".article-content"
-            }
-        ))
+        # 添加知乎日报
+        sources.append(ZhihuDailyNewsSource())
         
-        # 添加一些英文科技新闻源
-        sources.append(RSSNewsSource(
-            source_id="techcrunch",
-            name="TechCrunch",
-            feed_url="https://techcrunch.com/feed/",
-            category="technology",
-            country="US",
-            language="en",
-            update_interval=1800,  # 30分钟更新一次
-            config={
-                "fetch_content": True,
-                "content_selector": ".article-content"
-            }
-        ))
+        # 添加彭博社
+        sources.append(BloombergNewsSource())
         
-        sources.append(RSSNewsSource(
-            source_id="the_verge",
-            name="The Verge",
-            feed_url="https://www.theverge.com/rss/index.xml",
-            category="technology",
-            country="US",
-            language="en",
-            update_interval=1800,  # 30分钟更新一次
-            config={
-                "fetch_content": True,
-                "content_selector": ".c-entry-content"
-            }
-        ))
+        # 添加彭博社中国新闻
+        sources.append(BloombergChinaNewsSource())
         
+        return sources
+
+    @staticmethod
+    def get_available_sources() -> List[str]:
+        """
+        获取所有可用的新闻源类型
+        :return: 可用的新闻源类型列表
+        """
+        try:
+            # 首先尝试从数据库中获取所有源类型
+            # 需要导入这些模块以便访问数据库
+            import os
+            import sys
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            sys.path.insert(0, base_dir)
+            
+            from app.db.session import SessionLocal
+            from sqlalchemy import text
+            
+            # 创建数据库会话
+            db = SessionLocal()
+            try:
+                # 查询数据库中的所有源类型
+                result = db.execute(text("SELECT id FROM sources WHERE active = true"))
+                db_sources = [row[0] for row in result]
+                
+                # 排除通用的"rss"类型，因为它需要额外的参数
+                if "rss" in db_sources:
+                    db_sources.remove("rss")
+                
+                if db_sources:
+                    logger.info(f"从数据库获取了 {len(db_sources)} 个新闻源类型")
+                    return db_sources
+                else:
+                    logger.warning("数据库中没有找到活跃的新闻源，将使用硬编码列表")
+            except Exception as e:
+                logger.error(f"从数据库获取新闻源类型失败: {str(e)}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"初始化数据库连接失败: {str(e)}")
+        
+        # 如果从数据库获取失败或没有找到数据，使用硬编码列表作为备用
+        # 手动定义所有支持的新闻源类型
+        sources = [
+            "zhihu", "weibo", "baidu", "thepaper", "hacker_news", "bilibili", "douyin",
+            "toutiao", "ithome", "github_trending", "v2ex", "v2ex_selenium", "xueqiu",
+            "tieba", "kuaishou", "jin10", "cankaoxiaoxi", "solidot", "zaobao",
+            "sputnik_cn", "producthunt", "linuxdo", "linuxdo_latest", "linuxdo_hot",
+            "kaopu", "gelonghui", "fastbull_express", "fastbull_general", "wallstreetcn_live",
+            "wallstreetcn", "wallstreetcn_hot", "36kr", "coolapk", "coolapk-feed",
+            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper_selenium",
+            "zhihu_daily", "bloomberg", "bloomberg_markets", "bloomberg_technology",
+            "bloomberg_china", "ifanr", "techcrunch", "the_verge"
+        ]
+        # 排除通用的"rss"类型，因为它需要额外的参数
+        if "rss" in sources:
+            sources.remove("rss")
+            
+        logger.info(f"使用硬编码列表提供 {len(sources)} 个新闻源类型")
         return sources 

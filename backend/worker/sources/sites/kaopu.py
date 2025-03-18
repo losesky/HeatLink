@@ -1,5 +1,6 @@
 import logging
 import datetime
+import json
 from typing import List, Dict, Any, Optional
 
 from worker.sources.base import NewsItemModel
@@ -62,16 +63,25 @@ class KaoPuNewsSource(RESTNewsSource):
         
         for json_url in self.json_urls:
             try:
+                logger.info(f"Fetching data from {json_url}")
+                
                 # 发送请求
                 response = await self.http_client.get(json_url, headers=self.headers)
                 
                 # 解析响应
                 if response.status == 200:
-                    data = await response.json()
+                    # 先获取响应文本，然后手动解析JSON，不依赖Content-Type
+                    response_text = await response.text()
                     
-                    # 使用自定义解析器处理数据
-                    file_items = self.custom_parser(data)
-                    news_items.extend(file_items)
+                    try:
+                        data = json.loads(response_text)
+                        
+                        # 使用自定义解析器处理数据
+                        file_items = self.custom_parser(data)
+                        logger.info(f"Parsed {len(file_items)} items from {json_url}")
+                        news_items.extend(file_items)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse JSON from {json_url}: {str(e)}")
                 else:
                     logger.error(f"Failed to fetch data from {json_url}, status: {response.status}")
             except Exception as e:
@@ -80,6 +90,7 @@ class KaoPuNewsSource(RESTNewsSource):
         # 按日期排序
         news_items.sort(key=lambda x: x.published_at if x.published_at else datetime.datetime.now(), reverse=True)
         
+        logger.info(f"Total fetched items after merging: {len(news_items)}")
         return news_items
     
     def custom_parser(self, data: List[Dict[str, Any]]) -> List[NewsItemModel]:
@@ -90,6 +101,12 @@ class KaoPuNewsSource(RESTNewsSource):
         
         try:
             # 数据是一个列表
+            if not isinstance(data, list):
+                logger.error(f"Expected a list but got {type(data)}")
+                return []
+                
+            logger.info(f"Parsing {len(data)} items")
+            
             for item in data:
                 try:
                     # 获取发布者

@@ -1,0 +1,13 @@
+{
+  "timestamp": 1742111884.361202,
+  "datetime": "2025-03-16T15:58:04.361202",
+  "total_sources": 37,
+  "successful_sources": 33,
+  "failed_sources": 4,
+  "total_items": 907,
+  "avg_elapsed_time": 41.71136076522596,
+  "max_elapsed_time": 944.2150323390961,
+  "min_elapsed_time": 0.13275861740112305,
+  "slowest_source": "v2ex",
+  "fastest_source": "bilibili"
+}

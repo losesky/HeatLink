@@ -38,7 +38,13 @@ TAGS = [
     {"name": "区块链", "slug": "blockchain", "description": "区块链相关新闻"},
     {"name": "元宇宙", "slug": "metaverse", "description": "元宇宙相关新闻"},
     {"name": "Web3", "slug": "web3", "description": "Web3相关新闻"},
-    {"name": "创业", "slug": "startup", "description": "创业相关新闻"}
+    {"name": "创业", "slug": "startup", "description": "创业相关新闻"},
+    {"name": "知识", "slug": "knowledge", "description": "知识和学习相关内容"},
+    {"name": "Linux", "slug": "linux", "description": "Linux相关新闻和讨论"},
+    {"name": "应用", "slug": "app", "description": "移动应用和软件相关内容"},
+    {"name": "BBC", "slug": "bbc", "description": "BBC新闻内容"},
+    {"name": "彭博社", "slug": "bloomberg", "description": "彭博社财经新闻"},
+    {"name": "市场", "slug": "market", "description": "市场分析和行情"}
 ]
 
 def init_tags():

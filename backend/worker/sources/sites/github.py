@@ -1,4 +1,5 @@
 import logging
+import datetime
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
 
@@ -29,7 +30,12 @@ class GitHubTrendingSource(WebNewsSource):
         config.update({
             "headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
+            },
+            "max_retries": 5,  # GitHub可能需要更多重试
+            "retry_delay": 3,  # 增加重试延迟
+            "connect_timeout": 15,  # 增加连接超时
+            "read_timeout": 45,  # 增加读取超时
+            "total_timeout": 90  # 增加总超时
         })
         
         super().__init__(
@@ -43,6 +49,29 @@ class GitHubTrendingSource(WebNewsSource):
             language=language,
             config=config
         )
+    
+    async def fetch(self) -> List[NewsItemModel]:
+        """
+        从GitHub Trending获取热门仓库
+        """
+        logger.info(f"Fetching trending repositories from GitHub: {self.url}")
+        
+        try:
+            # 使用带重试的请求
+            response = await self.fetch_with_retry(
+                url=self.url,
+                method="GET",
+                headers=self.headers
+            )
+            
+            # 解析响应
+            news_items = await self.parse_response(response)
+            
+            logger.info(f"Fetched {len(news_items)} trending repositories from GitHub")
+            return news_items
+        except Exception as e:
+            logger.error(f"Error fetching trending repositories from GitHub: {str(e)}")
+            raise
     
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """
@@ -79,6 +108,14 @@ class GitHubTrendingSource(WebNewsSource):
                     desc_element = item.select_one("p")
                     description = desc_element.text.replace("\n", "").strip() if desc_element else ""
                     
+                    # 获取语言
+                    lang_element = item.select_one("[itemprop='programmingLanguage']")
+                    language = lang_element.text.strip() if lang_element else ""
+                    
+                    # 获取今日新增星标
+                    today_stars_element = item.select_one("span.d-inline-block.float-sm-right")
+                    today_stars = today_stars_element.text.strip() if today_stars_element else ""
+                    
                     # 生成唯一ID
                     item_id = self.generate_id(url_path)
                     
@@ -90,11 +127,13 @@ class GitHubTrendingSource(WebNewsSource):
                         content=description,
                         summary=description,
                         image_url=None,
-                        published_at=None,
-                        extra={"is_top": False, "mobile_url": url, 
-                            
-                            
-                            "star_count": star_count
+                        published_at=datetime.datetime.now(),  # GitHub Trending没有提供发布时间
+                        extra={
+                            "is_top": False, 
+                            "mobile_url": url,
+                            "star_count": star_count,
+                            "programming_language": language,
+                            "today_stars": today_stars
                         }
                     )
                     

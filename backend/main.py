@@ -3,9 +3,68 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+import sys
+import logging
+import atexit
+import signal
+import psutil
 
-from app.api.api import api_router
+# 添加当前目录到 Python 路径，确保可以正确导入模块
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# 修改导入路径
+from app.api import api_router
 from app.core.config import settings
+from app.core.logging_config import configure_logging
+
+# 配置日志
+configure_logging()
+logger = logging.getLogger(__name__)
+
+def find_and_kill_chrome_processes():
+    """查找并杀死所有Chrome进程，尤其是Selenium启动的进程"""
+    try:
+        chrome_processes = []
+        for process in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                # 检查进程名是否包含chrome或chromium
+                if process.info['name'] and ('chrome' in process.info['name'].lower() or 'chromium' in process.info['name'].lower()):
+                    # 确认是由Python脚本启动的Chrome (通过检查命令行参数中是否包含"--remote-debugging-port")
+                    if process.info['cmdline'] and any('--remote-debugging-port' in arg for arg in process.info['cmdline']):
+                        chrome_processes.append(process)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        
+        # 杀死找到的Chrome进程
+        for process in chrome_processes:
+            try:
+                process.terminate()
+                logger.info(f"已终止Chrome进程 (PID: {process.pid})")
+            except Exception as e:
+                logger.error(f"终止Chrome进程 (PID: {process.pid}) 失败: {str(e)}")
+                try:
+                    # 如果无法正常终止，尝试强制结束
+                    process.kill()
+                    logger.info(f"已强制结束Chrome进程 (PID: {process.pid})")
+                except Exception as e:
+                    logger.error(f"强制结束Chrome进程 (PID: {process.pid}) 失败: {str(e)}")
+                    
+        # 等待进程实际终止
+        gone, still_alive = psutil.wait_procs(chrome_processes, timeout=3)
+        for process in still_alive:
+            try:
+                process.kill()
+                logger.info(f"强制结束未响应的Chrome进程 (PID: {process.pid})")
+            except Exception as e:
+                logger.error(f"无法强制结束Chrome进程 (PID: {process.pid}): {str(e)}")
+                
+        return len(chrome_processes)
+    except ImportError:
+        logger.error("未安装psutil模块，无法查找和杀死Chrome进程")
+        return 0
+    except Exception as e:
+        logger.error(f"查找和杀死Chrome进程时出错: {str(e)}")
+        return 0
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -42,8 +101,67 @@ def root():
         "docs": "/api/docs",
         "source_test_ui": "/static/source_test.html",
         "format_checker_ui": "/static/format_checker.html",
+        "source_monitor_ui": "/static/source_monitor.html",
+        "source_monitor_simple_ui": "/static/source_monitor_simple.html",
     }
 
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时执行的事件处理器"""
+    logger.info("应用启动，初始化数据源...")
+    
+    try:
+        # 清理遗留的Chrome进程
+        chrome_count = find_and_kill_chrome_processes()
+        if chrome_count > 0:
+            logger.info(f"已清理 {chrome_count} 个遗留的Chrome进程")
+        
+        # 导入需要的模块
+        from worker.sources.factory import NewsSourceFactory
+        
+        # 获取所有可用的数据源类型
+        source_types = NewsSourceFactory.get_available_sources()
+        
+        # 输出数据源类型列表
+        logger.info(f"加载了 {len(source_types)} 个数据源类型:")
+        
+        # 按字母顺序排序并分组输出，每行10个
+        sorted_sources = sorted(source_types)
+        for i in range(0, len(sorted_sources), 10):
+            chunk = sorted_sources[i:i+10]
+            logger.info(", ".join(chunk))
+            
+    except Exception as e:
+        logger.error(f"初始化数据源时出错: {str(e)}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时执行的事件处理器"""
+    logger.info("应用关闭，清理资源...")
+    
+    try:
+        # 清理所有Chrome进程
+        chrome_count = find_and_kill_chrome_processes()
+        if chrome_count > 0:
+            logger.info(f"已清理 {chrome_count} 个Chrome进程")
+    except Exception as e:
+        logger.error(f"清理资源时出错: {str(e)}")
+
+# 注册退出处理函数
+atexit.register(lambda: find_and_kill_chrome_processes())
+
+# 设置信号处理器
+def signal_handler(signum, frame):
+    """信号处理器，用于捕获终止信号并执行清理操作"""
+    logger.info(f"收到信号 {signum}，开始清理资源...")
+    find_and_kill_chrome_processes()
+    sys.exit(0)
+
+# 注册信号处理器
+signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+signal.signal(signal.SIGTERM, signal_handler)  # 终止信号
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 

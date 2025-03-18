@@ -1,5 +1,6 @@
 import logging
 import datetime
+import re
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
 
@@ -30,7 +31,8 @@ class ITHomeNewsSource(WebNewsSource):
         config.update({
             "headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
+            },
+            "ad_keywords": ["神券", "优惠", "补贴", "京东", "促销", "打折", "折扣", "特价"]
         })
         
         super().__init__(
@@ -45,6 +47,29 @@ class ITHomeNewsSource(WebNewsSource):
             config=config
         )
     
+    async def fetch(self) -> List[NewsItemModel]:
+        """
+        从IT之家获取新闻
+        """
+        logger.info(f"Fetching news from IT之家: {self.url}")
+        
+        try:
+            # 使用带重试的请求
+            response = await self.fetch_with_retry(
+                url=self.url,
+                method="GET",
+                headers=self.headers
+            )
+            
+            # 解析响应
+            news_items = await self.parse_response(response)
+            
+            logger.info(f"Fetched {len(news_items)} news items from IT之家")
+            return news_items
+        except Exception as e:
+            logger.error(f"Error fetching news from IT之家: {str(e)}")
+            raise
+    
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """
         解析IT之家网页响应
@@ -57,6 +82,9 @@ class ITHomeNewsSource(WebNewsSource):
             
             # 查找新闻列表
             news_list = soup.select("#list > div.fl > ul > li")
+            
+            # 获取广告关键词
+            ad_keywords = self.config.get("ad_keywords", ["神券", "优惠", "补贴", "京东"])
             
             for item in news_list:
                 try:
@@ -73,7 +101,7 @@ class ITHomeNewsSource(WebNewsSource):
                     date_text = date_element.text.strip() if date_element else ""
                     
                     # 检查是否为广告
-                    is_ad = "lapin" in url or any(keyword in title for keyword in ["神券", "优惠", "补贴", "京东"])
+                    is_ad = "lapin" in url or any(keyword in title for keyword in ad_keywords)
                     if is_ad:
                         continue
                     
@@ -109,16 +137,22 @@ class ITHomeNewsSource(WebNewsSource):
                         except Exception as e:
                             logger.error(f"Error parsing date {date_text}: {str(e)}")
                     
+                    # 获取摘要
+                    summary_element = item.select_one("p")
+                    summary = summary_element.text.strip() if summary_element else ""
+                    
                     # 创建新闻项
                     news_item = self.create_news_item(
                         id=item_id,
                         title=title,
                         url=url,
                         content=None,
-                        summary=None,
+                        summary=summary,
                         image_url=None,
                         published_at=published_at,
-                        extra={"is_top": False, "mobile_url": None, 
+                        extra={
+                            "is_top": False, 
+                            "mobile_url": url.replace("www.ithome.com", "m.ithome.com") if "www.ithome.com" in url else url,
                             "date_text": date_text
                         }
                     )

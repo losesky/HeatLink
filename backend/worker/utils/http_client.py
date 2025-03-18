@@ -33,6 +33,11 @@ class HTTPClient:
         确保在对象被垃圾回收时关闭会话
         """
         if self.session and not self.session.closed:
+            import sys
+            # 检查Python是否正在关闭
+            if sys.meta_path is None:
+                return  # Python正在关闭，不要尝试关闭会话
+                
             import asyncio
             try:
                 loop = asyncio.get_event_loop()

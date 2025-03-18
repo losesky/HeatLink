@@ -26,7 +26,8 @@ CATEGORIES = {
     "finance": "财经",
     "social": "社交媒体",
     "forum": "论坛社区",
-    "dev": "开发者"
+    "dev": "开发者",
+    "knowledge": "知识"
 }
 
 # 新闻源数据
@@ -468,6 +469,163 @@ SOURCES = [
             "api_url": "https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=20&desktop=true",
             "data_path": "data"
         }
+    },
+    {
+        "id": "zhihu_daily",
+        "name": "知乎日报",
+        "description": "知乎日报精选内容",
+        "url": "https://daily.zhihu.com/",
+        "type": SourceType.API,
+        "category": "knowledge",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {
+            "api_url": "https://daily.zhihu.com/api/4/news/latest",
+            "backup_urls": ["https://news-at.zhihu.com/api/4/news/latest"]
+        }
+    },
+    {
+        "id": "thepaper-selenium",
+        "name": "澎湃新闻热榜",
+        "description": "使用Selenium获取澎湃新闻热榜",
+        "url": "https://www.thepaper.cn/",
+        "type": SourceType.WEB,
+        "category": "news",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {
+            "third_party_api_url": "https://api.vvhan.com/api/hotlist/pengPai"
+        }
+    },
+    {
+        "id": "bbc_world",
+        "name": "BBC World News",
+        "description": "BBC世界新闻",
+        "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+        "type": SourceType.RSS,
+        "category": "news",
+        "country": "英国",
+        "language": "en",
+        "config": {
+            "backup_urls": [
+                "https://news.google.com/rss/search?q=site:bbc.com/news&hl=en-US&gl=US&ceid=US:en"
+            ]
+        }
+    },
+    {
+        "id": "bloomberg",
+        "name": "彭博社",
+        "description": "彭博社国际财经新闻",
+        "url": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
+        "type": SourceType.RSS,
+        "category": "finance",
+        "country": "美国",
+        "language": "en",
+        "config": {
+            "feed_type": "latest",
+            "backup_urls": [
+                "https://news.google.com/rss/search?q=site:bloomberg.com+finance&hl=en-US&gl=US&ceid=US:en"
+            ]
+        }
+    },
+    {
+        "id": "bloomberg-markets",
+        "name": "彭博社市场",
+        "description": "彭博社市场新闻",
+        "url": "https://news.google.com/rss/search?q=site:bloomberg.com+markets&hl=en-US&gl=US&ceid=US:en",
+        "type": SourceType.RSS,
+        "category": "finance",
+        "country": "美国",
+        "language": "en",
+        "config": {
+            "feed_type": "markets"
+        }
+    },
+    {
+        "id": "bloomberg-tech",
+        "name": "彭博社科技",
+        "description": "彭博社科技新闻",
+        "url": "https://news.google.com/rss/search?q=site:bloomberg.com+technology&hl=en-US&gl=US&ceid=US:en",
+        "type": SourceType.RSS,
+        "category": "technology",
+        "country": "美国",
+        "language": "en",
+        "config": {
+            "feed_type": "technology"
+        }
+    },
+    {
+        "id": "bloomberg-china",
+        "name": "彭博社中国",
+        "description": "彭博社中国相关新闻",
+        "url": "https://news.google.com/rss/search?q=site:bloomberg.com+china&hl=en-US&gl=US&ceid=US:en",
+        "type": SourceType.RSS,
+        "category": "finance",
+        "country": "中国",
+        "language": "en",
+        "config": {
+            "feed_type": "china"
+        }
+    },
+    {
+        "id": "coolapk",
+        "name": "酷安",
+        "description": "酷安新闻和动态",
+        "url": "https://www.coolapk.com",
+        "type": SourceType.WEB,
+        "category": "technology",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {
+            "third_party_url": "https://api.vvhan.com/api/apptop"
+        }
+    },
+    {
+        "id": "coolapk-feed",
+        "name": "酷安动态",
+        "description": "酷安动态消息",
+        "url": "https://www.coolapk.com",
+        "type": SourceType.WEB,
+        "category": "technology",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {}
+    },
+    {
+        "id": "coolapk-app",
+        "name": "酷安应用",
+        "description": "酷安应用更新和推荐",
+        "url": "https://www.coolapk.com/apk",
+        "type": SourceType.WEB,
+        "category": "technology",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {}
+    },
+    {
+        "id": "cls",
+        "name": "财联社",
+        "description": "财联社财经新闻",
+        "url": "https://www.cls.cn/",
+        "type": SourceType.API,
+        "category": "finance",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {
+            "public_api_url": "https://api.tianapi.com/caijing/index",
+            "backup_api_url": "https://api.jisuapi.com/finance/news"
+        }
+    },
+    {
+        "id": "cls-article",
+        "name": "财联社文章",
+        "description": "财联社文章和深度报道",
+        "url": "https://www.cls.cn/",
+        "type": SourceType.API,
+        "category": "finance",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {}
     }
 ]
 

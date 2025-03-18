@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Source Monitor - Simple</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            color: #212529;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        h1 {
+            margin: 0;
+            color: #343a40;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0069d9;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background-color: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .metric-label {
+            color: #6c757d;
+            font-size: 14px;
+        }
+        .source-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .source-card {
+            background-color: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .source-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .source-title {
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .status-active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .status-inactive {
+            background-color: #e2e3e5;
+            color: #383d41;
+        }
+        .source-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-weight: bold;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+        }
+        .error-message {
+            margin-top: 10px;
+            padding: 8px;
+            background-color: #f8d7da;
+            color: #721c24;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>News Source Monitor</h1>
+                <p>Simple monitoring dashboard for news sources</p>
+            </div>
+            <button id="refreshBtn">Refresh Data</button>
+        </header>
+
+        <!-- Overview Metrics -->
+        <div class="metrics">
+            <div class="metric-card">
+                <div class="metric-label">Total Sources</div>
+                <div id="totalSources" class="metric-value">-</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Active Sources</div>
+                <div id="activeSources" class="metric-value">-</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Error Sources</div>
+                <div id="errorSources" class="metric-value">-</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Avg Response Time</div>
+                <div id="avgResponseTime" class="metric-value">-</div>
+            </div>
+        </div>
+
+        <!-- Source List -->
+        <h2>Source Details</h2>
+        <div id="sourceList" class="source-list">
+            <!-- Source cards will be dynamically generated here -->
+        </div>
+    </div>
+
+    <script>
+        // Fetch data from API
+        async function fetchData() {
+            try {
+                const response = await fetch('/api/monitor/sources');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch monitoring data');
+                }
+                const data = await response.json();
+                updateDashboard(data);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                alert('Failed to fetch monitoring data. Please try again.');
+            }
+        }
+
+        // Update dashboard with new data
+        function updateDashboard(data) {
+            // Update metrics
+            document.getElementById('totalSources').textContent = data.total_sources;
+            document.getElementById('activeSources').textContent = data.active_sources;
+            document.getElementById('errorSources').textContent = data.error_sources;
+            document.getElementById('avgResponseTime').textContent = `${Math.round(data.avg_response_time)}ms`;
+
+            // Update source list
+            const sourceListEl = document.getElementById('sourceList');
+            sourceListEl.innerHTML = data.sources.map(source => createSourceCard(source)).join('');
+        }
+
+        // Create HTML for a source card
+        function createSourceCard(source) {
+            // Get status class
+            const statusClass = {
+                'active': 'status-active',
+                'error': 'status-error',
+                'warning': 'status-warning',
+                'inactive': 'status-inactive'
+            }[source.status] || 'status-inactive';
+
+            // Format last update time
+            const lastUpdate = source.metrics.last_update
+                ? new Date(source.metrics.last_update).toLocaleString()
+                : 'Never';
+
+            return `
+                <div class="source-card">
+                    <div class="source-header">
+                        <div class="source-title">${source.name}</div>
+                        <span class="status-badge ${statusClass}">${source.status}</span>
+                    </div>
+                    <div>Category: ${source.category || 'N/A'}</div>
+                    <div class="source-stats">
+                        <div class="stat-item">
+                            <div class="stat-value">${(source.metrics.success_rate * 100).toFixed(1)}%</div>
+                            <div class="stat-label">Success Rate</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${Math.round(source.metrics.avg_response_time)}ms</div>
+                            <div class="stat-label">Avg Response Time</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${source.metrics.total_requests}</div>
+                            <div class="stat-label">Total Requests</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${source.metrics.error_count}</div>
+                            <div class="stat-label">Error Count</div>
+                        </div>
+                    </div>
+                    <div>Last Update: ${lastUpdate}</div>
+                    ${source.metrics.last_error ? 
+                        `<div class="error-message">${source.metrics.last_error}</div>` : 
+                        ''}
+                </div>
+            `;
+        }
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', () => {
+            // Load initial data
+            fetchData();
+
+            // Add event listener for refresh button
+            document.getElementById('refreshBtn').addEventListener('click', fetchData);
+
+            // Auto-refresh every 60 seconds
+            setInterval(fetchData, 60000);
+        });
+    </script>
+</body>
+</html> 

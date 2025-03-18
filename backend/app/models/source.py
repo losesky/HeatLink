@@ -14,6 +14,13 @@ class SourceType(str, Enum):
     MIXED = "MIXED"
 
 
+class SourceStatus(str, Enum):
+    ACTIVE = "active"
+    ERROR = "error"
+    WARNING = "warning"
+    INACTIVE = "inactive"
+
+
 class Source(Base):
     __tablename__ = "sources"
     
@@ -35,11 +42,14 @@ class Source(Base):
     last_error = Column(Text, nullable=True)  # Last error message
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    status = Column(SQLEnum(SourceStatus), default=SourceStatus.INACTIVE)
+    last_update = Column(DateTime)
     
     # Relationships
     news = relationship("News", back_populates="source")
     category = relationship("Category", back_populates="sources")
     aliases = relationship("SourceAlias", back_populates="source")
+    stats = relationship("SourceStats", back_populates="source")
 
 
 class SourceAlias(Base):

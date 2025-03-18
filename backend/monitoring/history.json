@@ -1,0 +1,617 @@
+{
+  "baidu": [
+    {
+      "source_id": "baidu",
+      "timestamp": 1742110938.9903703,
+      "datetime": "2025-03-16T15:42:18.990370",
+      "success": true,
+      "error": null,
+      "items_count": 51,
+      "elapsed_time": 0.3885536193847656,
+      "memory_usage": 0
+    }
+  ],
+  "thepaper": [
+    {
+      "source_id": "thepaper",
+      "timestamp": 1742110938.9906073,
+      "datetime": "2025-03-16T15:42:18.990607",
+      "success": true,
+      "error": null,
+      "items_count": 0,
+      "elapsed_time": 0.43403029441833496,
+      "memory_usage": 0
+    }
+  ],
+  "zhihu": [
+    {
+      "source_id": "zhihu",
+      "timestamp": 1742110938.9724936,
+      "datetime": "2025-03-16T15:42:18.972494",
+      "success": true,
+      "error": null,
+      "items_count": 30,
+      "elapsed_time": 0.5210072994232178,
+      "memory_usage": 0
+    }
+  ],
+  "bilibili": [
+    {
+      "source_id": "bilibili",
+      "timestamp": 1742110939.3790216,
+      "datetime": "2025-03-16T15:42:19.379022",
+      "success": true,
+      "error": null,
+      "items_count": 30,
+      "elapsed_time": 0.13275861740112305,
+      "memory_usage": 0
+    }
+  ],
+  "weibo": [
+    {
+      "source_id": "weibo",
+      "timestamp": 1742110938.9900222,
+      "datetime": "2025-03-16T15:42:18.990023",
+      "success": true,
+      "error": null,
+      "items_count": 0,
+      "elapsed_time": 0.785541296005249,
+      "memory_usage": 0
+    }
+  ],
+  "toutiao": [
+    {
+      "source_id": "toutiao",
+      "timestamp": 1742110939.4935997,
+      "datetime": "2025-03-16T15:42:19.493600",
+      "success": true,
+      "error": null,
+      "items_count": 50,
+      "elapsed_time": 0.651207447052002,
+      "memory_usage": 0
+    }
+  ],
+  "douyin": [
+    {
+      "source_id": "douyin",
+      "timestamp": 1742110939.4247355,
+      "datetime": "2025-03-16T15:42:19.424735",
+      "success": true,
+      "error": null,
+      "items_count": 50,
+      "elapsed_time": 1.0323166847229004,
+      "memory_usage": 0
+    }
+  ],
+  "github": [
+    {
+      "source_id": "github",
+      "timestamp": 1742110939.775689,
+      "datetime": "2025-03-16T15:42:19.775689",
+      "success": true,
+      "error": null,
+      "items_count": 10,
+      "elapsed_time": 2.1217238903045654,
+      "memory_usage": 0,
+      "performance_metrics": [
+        {
+          "operation": "GET https://github.com/trending?spoken_language_code=",
+          "elapsed_time": 2.0207326412200928,
+          "timestamp": 1742110941.7965152
+        }
+      ]
+    }
+  ],
+  "tieba": [
+    {
+      "source_id": "tieba",
+      "timestamp": 1742110941.897598,
+      "datetime": "2025-03-16T15:42:21.897598",
+      "success": true,
+      "error": null,
+      "items_count": 30,
+      "elapsed_time": 0.2819037437438965,
+      "memory_usage": 0
+    }
+  ],
+  "kuaishou": [
+    {
+      "source_id": "kuaishou",
+      "timestamp": 1742110942.1795568,
+      "datetime": "2025-03-16T15:42:22.179557",
+      "success": true,
+      "error": null,
+      "items_count": 50,
+      "elapsed_time": 0.9880106449127197,
+      "memory_usage": 0
+    }
+  ],
+  "jin10": [
+    {
+      "source_id": "jin10",
+      "timestamp": 1742110943.1678047,
+      "datetime": "2025-03-16T15:42:23.167805",
+      "success": true,
+      "error": null,
+      "items_count": 37,
+      "elapsed_time": 0.30085301399230957,
+      "memory_usage": 0
+    }
+  ],
+  "cankaoxiaoxi": [
+    {
+      "source_id": "cankaoxiaoxi",
+      "timestamp": 1742110943.4688137,
+      "datetime": "2025-03-16T15:42:23.468814",
+      "success": true,
+      "error": null,
+      "items_count": 150,
+      "elapsed_time": 0.6966497898101807,
+      "memory_usage": 0
+    }
+  ],
+  "solidot": [
+    {
+      "source_id": "solidot",
+      "timestamp": 1742110944.1655734,
+      "datetime": "2025-03-16T15:42:24.165573",
+      "success": true,
+      "error": null,
+      "items_count": 20,
+      "elapsed_time": 0.6285872459411621,
+      "memory_usage": 0
+    }
+  ],
+  "ithome": [
+    {
+      "source_id": "ithome",
+      "timestamp": 1742110939.5118275,
+      "datetime": "2025-03-16T15:42:19.511827",
+      "success": true,
+      "error": null,
+      "items_count": 42,
+      "elapsed_time": 5.378905296325684,
+      "memory_usage": 0,
+      "performance_metrics": [
+        {
+          "operation": "GET https://www.ithome.com/list/",
+          "elapsed_time": 5.361119747161865,
+          "timestamp": 1742110944.8730166
+        }
+      ]
+    }
+  ],
+  "sputniknewscn": [
+    {
+      "source_id": "sputniknewscn",
+      "timestamp": 1742110944.8909087,
+      "datetime": "2025-03-16T15:42:24.890909",
+      "success": true,
+      "error": null,
+      "items_count": 20,
+      "elapsed_time": 0.2751584053039551,
+      "memory_usage": 0
+    }
+  ],
+  "xueqiu": [
+    {
+      "source_id": "xueqiu",
+      "timestamp": 1742110940.4571722,
+      "datetime": "2025-03-16T15:42:20.457172",
+      "success": true,
+      "error": null,
+      "items_count": 30,
+      "elapsed_time": 5.502098798751831,
+      "memory_usage": 0
+    }
+  ],
+  "zaobao": [
+    {
+      "source_id": "zaobao",
+      "timestamp": 1742110944.7943244,
+      "datetime": "2025-03-16T15:42:24.794324",
+      "success": true,
+      "error": null,
+      "items_count": 60,
+      "elapsed_time": 1.453603982925415,
+      "memory_usage": 0
+    }
+  ],
+  "kaopu": [
+    {
+      "source_id": "kaopu",
+      "timestamp": 1742110946.2481282,
+      "datetime": "2025-03-16T15:42:26.248128",
+      "success": true,
+      "error": null,
+      "items_count": 0,
+      "elapsed_time": 2.321063756942749,
+      "memory_usage": 0
+    }
+  ],
+  "gelonghui": [
+    {
+      "source_id": "gelonghui",
+      "timestamp": 1742110948.5692973,
+      "datetime": "2025-03-16T15:42:28.569298",
+      "success": true,
+      "error": null,
+      "items_count": 15,
+      "elapsed_time": 1.8009767532348633,
+      "memory_usage": 0
+    }
+  ],
+  "linuxdo": [
+    {
+      "source_id": "linuxdo",
+      "timestamp": 1742110945.9593692,
+      "datetime": "2025-03-16T15:42:25.959369",
+      "success": true,
+      "error": null,
+      "items_count": 30,
+      "elapsed_time": 6.162440061569214,
+      "memory_usage": 0
+    }
+  ],
+  "fastbull-express": [
+    {
+      "source_id": "fastbull-express",
+      "timestamp": 1742110950.3704085,
+      "datetime": "2025-03-16T15:42:30.370408",
+      "success": true,
+      "error": null,
+      "items_count": 40,
+      "elapsed_time": 3.355820655822754,
+      "memory_usage": 0
+    }
+  ],
+  "fastbull-news": [
+    {
+      "source_id": "fastbull-news",
+      "timestamp": 1742110952.121851,
+      "datetime": "2025-03-16T15:42:32.121851",
+      "success": true,
+      "error": null,
+      "items_count": 3,
+      "elapsed_time": 3.9415550231933594,
+      "memory_usage": 0
+    }
+  ],
+  "producthunt": [
+    {
+      "source_id": "producthunt",
+      "timestamp": 1742110945.1661704,
+      "datetime": "2025-03-16T15:42:25.166170",
+      "success": true,
+      "error": null,
+      "items_count": 0,
+      "elapsed_time": 12.724613904953003,
+      "memory_usage": 0
+    }
+  ],
+  "wallstreetcn-hot": [
+    {
+      "source_id": "wallstreetcn-hot",
+      "timestamp": 1742110957.8908398,
+      "datetime": "2025-03-16T15:42:37.890840",
+      "success": true,
+      "error": null,
+      "items_count": 10,
+      "elapsed_time": 1.098325252532959,
+      "memory_usage": 0
+    }
+  ],
+  "wallstreetcn-news": [
+    {
+      "source_id": "wallstreetcn-news",
+      "timestamp": 1742110956.063562,
+      "datetime": "2025-03-16T15:42:36.063562",
+      "success": true,
+      "error": null,
+      "items_count": 40,
+      "elapsed_time": 3.045560836791992,
+      "memory_usage": 0
+    }
+  ],
+  "wallstreetcn": [
+    {
+      "source_id": "wallstreetcn",
+      "timestamp": 1742110953.7263782,
+      "datetime": "2025-03-16T15:42:33.726378",
+      "success": true,
+      "error": null,
+      "items_count": 30,
+      "elapsed_time": 5.385103940963745,
+      "memory_usage": 0
+    }
+  ],
+  "coolapk": [
+    {
+      "source_id": "coolapk",
+      "timestamp": 1742110959.1094599,
+      "datetime": "2025-03-16T15:42:39.109460",
+      "success": false,
+      "error": "403, message='Forbidden', url=URL('https://api.coolapk.com/v6/page/dataList?url=/feed/headlineV8&title=%E5%A4%B4%E6%9D%A1&page=1')",
+      "items_count": 0,
+      "elapsed_time": 0,
+      "memory_usage": 0
+    }
+  ],
+  "zhihu_daily": [
+    {
+      "source_id": "zhihu_daily",
+      "timestamp": 1742110959.2690248,
+      "datetime": "2025-03-16T15:42:39.269025",
+      "success": false,
+      "error": "Cannot connect to host rsshub.app:443 ssl:default [Network is unreachable]",
+      "items_count": 0,
+      "elapsed_time": 0,
+      "memory_usage": 0
+    }
+  ],
+  "cls": [
+    {
+      "source_id": "cls",
+      "timestamp": 1742110959.1115336,
+      "datetime": "2025-03-16T15:42:39.111533",
+      "success": true,
+      "error": null,
+      "items_count": 0,
+      "elapsed_time": 0.45311641693115234,
+      "memory_usage": 0
+    }
+  ],
+  "36kr": [
+    {
+      "source_id": "36kr",
+      "timestamp": 1742110958.989226,
+      "datetime": "2025-03-16T15:42:38.989226",
+      "success": true,
+      "error": null,
+      "items_count": 20,
+      "elapsed_time": 0.9847180843353271,
+      "memory_usage": 0
+    }
+  ],
+  "ifanr": [
+    {
+      "source_id": "ifanr",
+      "timestamp": 1742110959.9740148,
+      "datetime": "2025-03-16T15:42:39.974015",
+      "success": true,
+      "error": null,
+      "items_count": 20,
+      "elapsed_time": 2.8495495319366455,
+      "memory_usage": 0
+    }
+  ],
+  "techcrunch": [
+    {
+      "source_id": "techcrunch",
+      "timestamp": 1742110962.8236477,
+      "datetime": "2025-03-16T15:42:42.823648",
+      "success": true,
+      "error": null,
+      "items_count": 0,
+      "elapsed_time": 2.0493178367614746,
+      "memory_usage": 0
+    }
+  ],
+  "bbc_news": [
+    {
+      "source_id": "bbc_news",
+      "timestamp": 1742110959.5647473,
+      "datetime": "2025-03-16T15:42:39.564747",
+      "success": false,
+      "error": "",
+      "items_count": 0,
+      "elapsed_time": 0,
+      "memory_usage": 0
+    }
+  ],
+  "hacker_news": [
+    {
+      "source_id": "hacker_news",
+      "timestamp": 1742110959.3395822,
+      "datetime": "2025-03-16T15:42:39.339583",
+      "success": false,
+      "error": "",
+      "items_count": 0,
+      "elapsed_time": 0,
+      "memory_usage": 0
+    }
+  ],
+  "the_verge": [
+    {
+      "source_id": "the_verge",
+      "timestamp": 1742110964.8730142,
+      "datetime": "2025-03-16T15:42:44.873015",
+      "success": true,
+      "error": null,
+      "items_count": 10,
+      "elapsed_time": 93.19820952415466,
+      "memory_usage": 0
+    }
+  ],
+  "hackernews": [
+    {
+      "source_id": "hackernews",
+      "timestamp": 1742110938.9908142,
+      "datetime": "2025-03-16T15:42:18.990814",
+      "success": true,
+      "error": null,
+      "items_count": 29,
+      "elapsed_time": 271.3165912628174,
+      "memory_usage": 0,
+      "performance_metrics": [
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/topstories.json",
+          "elapsed_time": 2.6126792430877686,
+          "timestamp": 1742110941.6035624
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43375923.json",
+          "elapsed_time": 0.9093449115753174,
+          "timestamp": 1742110942.5137017
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43340651.json",
+          "elapsed_time": 0.9173626899719238,
+          "timestamp": 1742110942.5219507
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43377287.json",
+          "elapsed_time": 0.9249083995819092,
+          "timestamp": 1742110942.529187
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43361440.json",
+          "elapsed_time": 0.3002817630767822,
+          "timestamp": 1742110942.814283
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43360222.json",
+          "elapsed_time": 0.30149054527282715,
+          "timestamp": 1742110942.8310337
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43373157.json",
+          "elapsed_time": 1.2349486351013184,
+          "timestamp": 1742110942.839689
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43348434.json",
+          "elapsed_time": 0.3259587287902832,
+          "timestamp": 1742110942.8482158
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43377169.json",
+          "elapsed_time": 1.2490510940551758,
+          "timestamp": 1742110942.8532465
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43375676.json",
+          "elapsed_time": 0.30765771865844727,
+          "timestamp": 1742110943.122238
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43374237.json",
+          "elapsed_time": 0.29409193992614746,
+          "timestamp": 1742110943.1340785
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43376570.json",
+          "elapsed_time": 0.3037102222442627,
+          "timestamp": 1742110943.1350594
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43339084.json",
+          "elapsed_time": 0.2975926399230957,
+          "timestamp": 1742110943.1461103
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43349296.json",
+          "elapsed_time": 0.3145763874053955,
+          "timestamp": 1742110943.168157
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43343808.json",
+          "elapsed_time": 0.3014521598815918,
+          "timestamp": 1742110943.4239886
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43372431.json",
+          "elapsed_time": 0.2961914539337158,
+          "timestamp": 1742110943.4305642
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43376824.json",
+          "elapsed_time": 1.8351621627807617,
+          "timestamp": 1742110943.43893
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43373196.json",
+          "elapsed_time": 0.3144659996032715,
+          "timestamp": 1742110943.4497588
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43333975.json",
+          "elapsed_time": 0.3069629669189453,
+          "timestamp": 1742110943.4533505
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43335987.json",
+          "elapsed_time": 0.30121564865112305,
+          "timestamp": 1742110943.4697223
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43374283.json",
+          "elapsed_time": 0.29236602783203125,
+          "timestamp": 1742110943.7166498
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43373242.json",
+          "elapsed_time": 0.2920389175415039,
+          "timestamp": 1742110943.7228887
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43371583.json",
+          "elapsed_time": 0.2939777374267578,
+          "timestamp": 1742110943.733203
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43374505.json",
+          "elapsed_time": 0.3012247085571289,
+          "timestamp": 1742110943.7548907
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43375123.json",
+          "elapsed_time": 0.3063938617706299,
+          "timestamp": 1742110943.75646
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43375780.json",
+          "elapsed_time": 0.29378771781921387,
+          "timestamp": 1742110943.7637784
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43361959.json",
+          "elapsed_time": 0.2868771553039551,
+          "timestamp": 1742110944.0038216
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43376033.json",
+          "elapsed_time": 134.87065529823303,
+          "timestamp": 1742111076.4747646
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43360522.json",
+          "elapsed_time": 137.81172895431519,
+          "timestamp": 1742111079.41624
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43358914.json",
+          "elapsed_time": 267.9465732574463,
+          "timestamp": 1742111209.5505724
+        },
+        {
+          "operation": "GET https://hacker-news.firebaseio.com/v0/item/43374519.json",
+          "elapsed_time": 268.7026388645172,
+          "timestamp": 1742111210.307073
+        }
+      ]
+    }
+  ],
+  "v2ex": [
+    {
+      "source_id": "v2ex",
+      "timestamp": 1742110940.1448615,
+      "datetime": "2025-03-16T15:42:20.144861",
+      "success": true,
+      "error": null,
+      "items_count": 0,
+      "elapsed_time": 944.2150323390961,
+      "memory_usage": 0
+    }
+  ]
+}

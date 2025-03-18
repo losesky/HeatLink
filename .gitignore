@@ -20,10 +20,14 @@ var/
 .installed.cfg
 *.egg
 *.code-workspace
+cleanup_tests.py
 backend/source_test_report.json
 backend/test_source_api.py
 backend/update_news_sources.py
 backend/test_sources_report.py
+dev.sh
+docker-compose.dev.yml
+Dockerfile.dev
 
 # Virtual Environment
 venv/

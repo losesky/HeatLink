@@ -10,6 +10,7 @@ from worker.sources.sites.toutiao import ToutiaoHotNewsSource
 from worker.sources.sites.ithome import ITHomeNewsSource
 from worker.sources.sites.github import GitHubTrendingSource
 from worker.sources.sites.v2ex import V2EXHotTopicsSource
+from worker.sources.sites.v2ex_selenium import V2EXSeleniumSource
 from worker.sources.sites.xueqiu import XueqiuHotStockSource
 from worker.sources.sites.tieba import TiebaHotTopicSource
 from worker.sources.sites.kuaishou import KuaishouHotSearchSource
@@ -33,6 +34,19 @@ from worker.sources.sites.kr36 import Kr36NewsSource
 # 新增适配器
 from worker.sources.sites.coolapk import CoolApkNewsSource, CoolApkFeedNewsSource, CoolApkAppNewsSource
 from worker.sources.sites.cls import CLSNewsSource, CLSArticleNewsSource
+# 添加BBC世界新闻适配器
+from worker.sources.sites.bbc import BBCWorldNewsSource
+# 添加新创建的澎湃新闻Selenium适配器
+from worker.sources.sites.thepaper_selenium import ThePaperSeleniumSource
+# 添加知乎日报适配器
+from worker.sources.sites.zhihu_daily import ZhihuDailyNewsSource
+# 添加彭博社新闻适配器
+from worker.sources.sites.bloomberg import (
+    BloombergNewsSource,
+    BloombergMarketsNewsSource,
+    BloombergTechnologyNewsSource, 
+    BloombergChinaNewsSource
+)
 
 # 导出所有新闻源适配器
 __all__ = [
@@ -47,6 +61,7 @@ __all__ = [
     "ITHomeNewsSource",
     "GitHubTrendingSource",
     "V2EXHotTopicsSource",
+    "V2EXSeleniumSource",
     "XueqiuHotStockSource",
     "TiebaHotTopicSource",
     "KuaishouHotSearchSource",
@@ -71,5 +86,12 @@ __all__ = [
     "CoolApkFeedNewsSource",
     "CoolApkAppNewsSource",
     "CLSNewsSource",
-    "CLSArticleNewsSource"
+    "CLSArticleNewsSource",
+    "BBCWorldNewsSource",
+    "ThePaperSeleniumSource",
+    "ZhihuDailyNewsSource",
+    "BloombergNewsSource",
+    "BloombergMarketsNewsSource",
+    "BloombergTechnologyNewsSource",
+    "BloombergChinaNewsSource"
 ] 

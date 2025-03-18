@@ -292,7 +292,8 @@ class RSSSourceFactory:
             language="en",
             update_interval=1800,  # 30分钟更新一次
             config={
-                "fetch_content": True
+                "fetch_content": False,  # 设置为False以避免获取每篇文章的完整内容
+                "max_items": 15  # 限制条目数量以提高性能
             }
         )
     
