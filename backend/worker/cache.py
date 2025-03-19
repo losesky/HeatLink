@@ -19,11 +19,13 @@ class CacheManager:
         self,
         redis_url: Optional[str] = None,
         enable_memory_cache: bool = True,
-        default_ttl: int = 900  # 默认缓存时间，单位秒，默认15分钟
+        default_ttl: int = 900,  # 默认缓存时间，单位秒，默认15分钟
+        verbose_logging: bool = False  # 是否启用详细日志记录
     ):
         self.redis_url = redis_url
         self.enable_memory_cache = enable_memory_cache
         self.default_ttl = default_ttl
+        self.verbose_logging = verbose_logging
         
         # 内存缓存
         self.memory_cache: Dict[str, Dict[str, Any]] = {}
@@ -33,6 +35,11 @@ class CacheManager:
         
         # 初始化标志
         self.initialized = False
+    
+    def _debug_log(self, message: str):
+        """仅在启用详细日志的情况下记录DEBUG日志"""
+        if self.verbose_logging:
+            logger.debug(message)
     
     async def initialize(self):
         """
@@ -87,7 +94,7 @@ class CacheManager:
             if cache_item:
                 # 检查是否过期
                 if cache_item.get("expire_time", 0) > time.time():
-                    logger.debug(f"Memory cache hit: {key}")
+                    self._debug_log(f"Memory cache hit: {key}")
                     return cache_item.get("data")
                 else:
                     # 过期，删除缓存
@@ -114,7 +121,7 @@ class CacheManager:
                                     "expire_time": expire_time
                                 }
                         
-                        logger.debug(f"Redis cache hit: {key}")
+                        self._debug_log(f"Redis cache hit: {key}")
                         return result
                     except Exception as e:
                         logger.error(f"Failed to deserialize Redis data: {str(e)}")
@@ -122,7 +129,7 @@ class CacheManager:
                 logger.error(f"Failed to get data from Redis: {str(e)}")
         
         # 缓存未命中
-        logger.debug(f"Cache miss: {key}")
+        self._debug_log(f"Cache miss: {key}")
         return None
     
     async def set(self, key: str, data: Any, ttl: Optional[int] = None):
@@ -154,7 +161,12 @@ class CacheManager:
                 # 存入Redis
                 await self.redis.setex(key, ttl, serialized_data)
                 
-                logger.debug(f"Set Redis cache: {key}, ttl: {ttl}s")
+                # 只记录操作成功的简要日志，如果是缓存批量操作，避免过多日志
+                if self.verbose_logging:
+                    self._debug_log(f"Set Redis cache: {key}, ttl: {ttl}s")
+                elif key.startswith("sources:all") or key.startswith("categories:all"):
+                    # 只记录关键缓存操作的日志
+                    self._debug_log(f"Set Redis cache for key: {key}")
             except Exception as e:
                 logger.error(f"Failed to set data to Redis: {str(e)}")
     
@@ -174,7 +186,7 @@ class CacheManager:
         if self.redis:
             try:
                 await self.redis.delete(key)
-                logger.debug(f"Deleted Redis cache: {key}")
+                self._debug_log(f"Deleted Redis cache: {key}")
             except Exception as e:
                 logger.error(f"Failed to delete data from Redis: {str(e)}")
     
