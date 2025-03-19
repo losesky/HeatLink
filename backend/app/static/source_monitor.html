@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>News Source Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/moment"></script>
     <style>
         .status-badge {
@@ -108,10 +108,13 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
                     <select id="categoryFilter" class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
                         <option value="">All</option>
-                        <option value="tech">Technology</option>
-                        <option value="news">News</option>
-                        <option value="sports">Sports</option>
-                        <option value="entertainment">Entertainment</option>
+                        <option value="tech">科技</option>
+                        <option value="news">新闻资讯</option>
+                        <option value="finance">财经</option>
+                        <option value="social">社交媒体</option>
+                        <option value="forum">论坛社区</option>
+                        <option value="dev">开发者</option>
+                        <option value="knowledge">知识</option>
                     </select>
                 </div>
                 <div>
@@ -142,14 +145,51 @@
         </div>
 
         <!-- Charts -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-            <div class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-semibold text-gray-700 mb-4">Source Status Distribution</h3>
-                <canvas id="statusChart"></canvas>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h3 class="text-gray-700 text-lg font-medium mb-4">源状态分布</h3>
+                <div class="h-64">
+                    <canvas id="statusChart"></canvas>
+                </div>
             </div>
-            <div class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-semibold text-gray-700 mb-4">Response Time Trend</h3>
-                <canvas id="responseTimeChart"></canvas>
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h3 class="text-gray-700 text-lg font-medium mb-4">响应时间趋势</h3>
+                <div class="h-64">
+                    <canvas id="responseTimeChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 新增: 历史数据和访问高峰期 -->
+        <div class="bg-white p-4 rounded-lg shadow mb-8">
+            <h3 class="text-gray-700 text-lg font-medium mb-4">历史访问统计与高峰期分析</h3>
+            <div class="flex flex-col md:flex-row mb-4">
+                <div class="w-full md:w-1/4 mb-4 md:mb-0 pr-0 md:pr-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">选择源</label>
+                    <select id="sourceHistorySelect" class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">选择一个源...</option>
+                    </select>
+                </div>
+                <div class="w-full md:w-1/4 mb-4 md:mb-0 pr-0 md:pr-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">时间范围</label>
+                    <select id="timeRangeSelect" class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="24">最近24小时</option>
+                        <option value="48">最近48小时</option>
+                        <option value="72">最近72小时</option>
+                        <option value="168">最近一周</option>
+                    </select>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="h-64">
+                    <canvas id="historyChart"></canvas>
+                </div>
+                <div>
+                    <h4 class="text-gray-700 text-md font-medium mb-2">访问高峰期分析</h4>
+                    <div id="peakTimeInfo" class="bg-gray-50 p-4 rounded-lg">
+                        <p class="text-gray-500 text-sm">选择一个源查看访问高峰期分析</p>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -167,60 +207,114 @@
     <script>
         let statusChart = null;
         let responseTimeChart = null;
+        let historyChart = null;
 
         function initCharts() {
-            // Status Distribution Chart
-            const statusCtx = document.getElementById('statusChart').getContext('2d');
-            statusChart = new Chart(statusCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Active', 'Error', 'Warning', 'Inactive'],
-                    datasets: [{
-                        data: [0, 0, 0, 0],
-                        backgroundColor: [
-                            '#10B981', // green
-                            '#EF4444', // red
-                            '#F59E0B', // yellow
-                            '#6B7280'  // gray
+            // 状态分布图
+            statusChart = new Chart(
+                document.getElementById('statusChart'),
+                {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Active', 'Error', 'Warning', 'Inactive'],
+                        datasets: [{
+                            data: [0, 0, 0, 0],
+                            backgroundColor: ['#10b981', '#ef4444', '#f59e0b', '#6b7280']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                            }
+                        }
+                    }
+                }
+            );
+            
+            // 响应时间趋势图
+            responseTimeChart = new Chart(
+                document.getElementById('responseTimeChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Avg Response Time (ms)',
+                            data: [],
+                            borderColor: '#3b82f6',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                }
+            );
+            
+            // 历史数据图表
+            historyChart = new Chart(
+                document.getElementById('historyChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: '响应时间 (ms)',
+                                data: [],
+                                borderColor: '#3b82f6',
+                                tension: 0.1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: '请求数',
+                                data: [],
+                                borderColor: '#10b981',
+                                tension: 0.1,
+                                yAxisID: 'y1'
+                            }
                         ]
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: {
-                            position: 'bottom'
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: '响应时间 (ms)'
+                                }
+                            },
+                            y1: {
+                                beginAtZero: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: '请求数'
+                                },
+                                grid: {
+                                    drawOnChartArea: false
+                                }
+                            }
                         }
                     }
                 }
-            });
-
-            // Response Time Trend Chart
-            const responseTimeCtx = document.getElementById('responseTimeChart').getContext('2d');
-            responseTimeChart = new Chart(responseTimeCtx, {
-                type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Average Response Time (ms)',
-                        data: [],
-                        borderColor: '#3B82F6',
-                        tension: 0.1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    scales: {
-                        y: {
-                            beginAtZero: true
-                        }
-                    }
-                }
-            });
+            );
         }
 
         function updateCharts(data) {
-            // Update Status Distribution
+            // 更新状态分布图
             statusChart.data.datasets[0].data = [
                 data.active_sources,
                 data.error_sources,
@@ -228,13 +322,121 @@
                 data.inactive_sources
             ];
             statusChart.update();
-
-            // Update Response Time Trend
-            responseTimeChart.data.labels = data.historical_data.map(d => 
-                moment(d.timestamp).format('HH:mm')
+            
+            // 更新响应时间趋势图
+            responseTimeChart.data.labels = data.historical_data.map(
+                item => new Date(item.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
             );
-            responseTimeChart.data.datasets[0].data = data.historical_data.map(d => d.value);
+            responseTimeChart.data.datasets[0].data = data.historical_data.map(item => item.value);
             responseTimeChart.update();
+            
+            // 更新源选择下拉菜单
+            const sourceSelect = document.getElementById('sourceHistorySelect');
+            // 保存当前选择
+            const currentSelection = sourceSelect.value;
+            // 清空现有选项（第一个除外）
+            while (sourceSelect.options.length > 1) {
+                sourceSelect.remove(1);
+            }
+            
+            // 添加源选项
+            data.sources.forEach(source => {
+                const option = document.createElement('option');
+                option.value = source.id;
+                option.textContent = source.name;
+                sourceSelect.appendChild(option);
+            });
+            
+            // 恢复之前的选择（如果存在）
+            if (currentSelection && Array.from(sourceSelect.options).some(opt => opt.value === currentSelection)) {
+                sourceSelect.value = currentSelection;
+                fetchSourceHistory();
+            }
+        }
+        
+        // 获取特定源的历史数据
+        async function fetchSourceHistory() {
+            const sourceId = document.getElementById('sourceHistorySelect').value;
+            const hours = document.getElementById('timeRangeSelect').value;
+            
+            if (!sourceId) {
+                // 清空图表
+                historyChart.data.labels = [];
+                historyChart.data.datasets[0].data = [];
+                historyChart.data.datasets[1].data = [];
+                historyChart.update();
+                document.getElementById('peakTimeInfo').innerHTML = '<p class="text-gray-500 text-sm">选择一个源查看访问高峰期分析</p>';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/monitor/sources/${sourceId}/history?hours=${hours}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch source history');
+                }
+                
+                const data = await response.json();
+                updateSourceHistory(data);
+            } catch (error) {
+                console.error('Error fetching source history:', error);
+                alert('Failed to fetch source history. Please try again.');
+            }
+        }
+        
+        // 更新源历史数据图表
+        function updateSourceHistory(data) {
+            // 时间格式化
+            const formatTimestamp = timestamp => {
+                const date = new Date(timestamp);
+                return date.toLocaleString([], {
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            };
+            
+            // 更新历史图表
+            historyChart.data.labels = data.history.map(item => formatTimestamp(item.timestamp));
+            historyChart.data.datasets[0].data = data.history.map(item => item.avg_response_time);
+            historyChart.data.datasets[1].data = data.history.map(item => item.total_requests);
+            historyChart.update();
+            
+            // 更新高峰期信息
+            const peakTimeInfo = document.getElementById('peakTimeInfo');
+            if (data.peak_times && data.peak_times.length > 0) {
+                let peakHtml = '<div class="space-y-4">';
+                
+                // 按天统计的高峰期
+                if (data.peak_times_by_day && data.peak_times_by_day.length > 0) {
+                    peakHtml += '<div><h5 class="font-medium text-gray-700">每日高峰期:</h5><ul class="list-disc pl-5 mt-2">';
+                    data.peak_times_by_day.forEach(peak => {
+                        peakHtml += `<li class="text-sm"><span class="font-medium">${peak.day}:</span> ${peak.hour}点 (${peak.count}次请求)</li>`;
+                    });
+                    peakHtml += '</ul></div>';
+                }
+                
+                // 总体高峰期
+                peakHtml += '<div><h5 class="font-medium text-gray-700">总体高峰期:</h5><ul class="list-disc pl-5 mt-2">';
+                data.peak_times.forEach(peak => {
+                    peakHtml += `<li class="text-sm">${formatTimestamp(peak.timestamp)} (${peak.count}次请求)</li>`;
+                });
+                peakHtml += '</ul></div>';
+                
+                // 最高响应时间
+                if (data.highest_response_times && data.highest_response_times.length > 0) {
+                    peakHtml += '<div><h5 class="font-medium text-gray-700">最高响应时间:</h5><ul class="list-disc pl-5 mt-2">';
+                    data.highest_response_times.forEach(item => {
+                        peakHtml += `<li class="text-sm">${formatTimestamp(item.timestamp)}: ${Math.round(item.avg_response_time)}ms</li>`;
+                    });
+                    peakHtml += '</ul></div>';
+                }
+                
+                peakHtml += '</div>';
+                peakTimeInfo.innerHTML = peakHtml;
+            } else {
+                peakTimeInfo.innerHTML = '<p class="text-gray-500 text-sm">没有足够的数据来分析访问高峰期</p>';
+            }
         }
 
         function updateMetrics(data) {
@@ -288,7 +490,9 @@
                         </div>
                     ` : ''}
                     <div class="mt-4 text-sm text-gray-500">
-                        Last Update: ${moment(source.metrics.last_update).fromNow()}
+                        Last Update: ${source.metrics.last_update ? 
+                            `${moment(source.metrics.last_update).fromNow()} (${moment(source.metrics.last_update).format('YYYY-MM-DD HH:mm:ss')})` : 
+                            'Never'}
                     </div>
                 </div>
             `;
@@ -338,6 +542,8 @@
             document.getElementById('searchInput').addEventListener('input', 
                 debounce(fetchData, 500)
             );
+            document.getElementById('sourceHistorySelect').addEventListener('change', fetchSourceHistory);
+            document.getElementById('timeRangeSelect').addEventListener('change', fetchSourceHistory);
 
             // Auto-refresh every 30 seconds
             setInterval(fetchData, 30000);
@@ -357,5 +563,4 @@
         }
     </script>
 </body>
-</html> 
 </html> 

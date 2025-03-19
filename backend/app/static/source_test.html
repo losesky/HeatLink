@@ -231,7 +231,7 @@
             `;
             
             try {
-                const response = await fetch(`${API_BASE_URL}/source-test/source-types`);
+                const response = await fetch(`${API_BASE_URL}/external/source-types`);
                 if (!response.ok) {
                     const errorText = await response.text();
                     let errorMessage = `HTTP error! status: ${response.status}`;
@@ -320,7 +320,7 @@
             
             try {
                 const timeout = parseInt(timeoutAllInput.value) || 60;
-                const response = await fetch(`${API_BASE_URL}/source-test/test-source/${sourceType}?timeout=${timeout}`);
+                const response = await fetch(`${API_BASE_URL}/external/test-source/${sourceType}?timeout=${timeout}`);
                 
                 if (!response.ok) {
                     const errorText = await response.text();
@@ -365,7 +365,8 @@
             const badgeElement = resultCard.querySelector('.result-badge');
             const contentElement = resultCard.querySelector('.result-content');
             
-            sourceElement.textContent = result.source_type;
+            // Use source_id if present, fall back to source_type
+            sourceElement.textContent = result.source_id || result.source_type;
             
             if (result.success) {
                 badgeElement.className = 'badge bg-success';
@@ -406,7 +407,7 @@
                 const maxConcurrent = parseInt(maxConcurrentInput.value) || 5;
                 
                 const response = await fetch(
-                    `${API_BASE_URL}/source-test/test-all-sources?timeout=${timeout}&max_concurrent=${maxConcurrent}`
+                    `${API_BASE_URL}/external/test-all-sources?timeout=${timeout}&max_concurrent=${maxConcurrent}`
                 );
                 
                 if (!response.ok) {
@@ -483,8 +484,10 @@
                 
                 result.successful_sources.forEach(source => {
                     const row = document.createElement('tr');
+                    // Use source_id if present, fall back to source_type
+                    const sourceId = source.source_id || source.source_type;
                     row.innerHTML = `
-                        <td>${source.source_type}</td>
+                        <td>${sourceId}</td>
                         <td>${source.items_count}</td>
                         <td>${source.elapsed_time.toFixed(2)}s</td>
                     `;
@@ -514,8 +517,10 @@
                 
                 result.failed_sources.forEach(source => {
                     const row = document.createElement('tr');
+                    // Use source_id if present, fall back to source_type
+                    const sourceId = source.source_id || source.source_type;
                     row.innerHTML = `
-                        <td>${source.source_type}</td>
+                        <td>${sourceId}</td>
                         <td>${source.error}</td>
                     `;
                     tbody.appendChild(row);

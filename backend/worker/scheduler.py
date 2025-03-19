@@ -59,12 +59,17 @@ class AdaptiveScheduler:
         if self.initialized:
             return
         
-        # 创建默认数据源
-        sources = NewsSourceFactory.create_default_sources()
+        # 获取所有可用的源类型
+        source_types = NewsSourceFactory.get_available_sources()
         
-        # 注册数据源
-        for source in sources:
-            self.register_source(source)
+        # 创建并注册源实例
+        for source_type in source_types:
+            try:
+                source = NewsSourceFactory.create_source(source_type)
+                if source:
+                    self.register_source(source)
+            except Exception as e:
+                logger.error(f"创建源 {source_type} 时出错: {str(e)}")
         
         # 初始化完成
         self.initialized = True

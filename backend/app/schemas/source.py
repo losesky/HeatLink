@@ -17,7 +17,7 @@ class SourceBase(BaseModel):
     country: Optional[str] = None
     language: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
-    priority: int = 0
+    priority: Optional[int] = 0
 
 
 class SourceCreate(SourceBase):
@@ -42,7 +42,7 @@ class SourceUpdate(BaseModel):
 class SourceInDB(SourceBase):
     id: str
     last_updated: Optional[datetime] = None
-    error_count: int = 0
+    error_count: Optional[int] = 0
     last_error: Optional[str] = None
     created_at: datetime
     updated_at: datetime

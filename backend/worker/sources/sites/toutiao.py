@@ -29,11 +29,12 @@ class ToutiaoHotNewsSource(APINewsSource):
     增强了稳定性，包括多种备用获取方式和更强大的重试机制
     """
     
-    # 第三方API URLs
+    # 第三方API URLs - 已更新为最新可用的API
     THIRD_PARTY_API_URLS = [
         "https://api.vvhan.com/api/hotlist/jrtt",
-        "https://api.ailoveu.cn:8888/toutiao",
-        "https://v.api.aa1.cn/api/toutiao-hot"
+        "https://api.oioweb.cn/api/common/HotList",
+        "https://api.qqsuu.cn/api/all/hotlist",
+        "https://api.mcloc.cn/toutiao"
     ]
     
     def __init__(

@@ -6,8 +6,12 @@ from datetime import datetime, timedelta
 from app.api import deps
 from app.crud import source as source_crud
 from app.crud import source_stats as stats_crud
-from app.schemas.monitor import MonitorResponse, SourceInfo, SourceMetrics, TimeSeriesData
+from app.schemas.monitor import (
+    MonitorResponse, SourceInfo, SourceMetrics, TimeSeriesData,
+    SourceHistoryResponse, SourceHistoryData, PeakTimeInfo, DayPeakInfo
+)
 from app.models.source import Source, SourceStatus
+from app.models.category import Category
 
 router = APIRouter()
 
@@ -29,7 +33,8 @@ def get_source_monitor_data(
         if status:
             query = query.filter(Source.status == status)
         if category:
-            query = query.filter(Source.category == category)
+            # 通过连接categories表和过滤slug字段实现分类过滤
+            query = query.join(Source.category).filter(Category.slug == category)
         if search:
             query = query.filter(
                 (Source.name.ilike(f"%{search}%")) |
@@ -117,4 +122,99 @@ def get_source_monitor_data(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch monitoring data: {str(e)}"
-        ) 
+        )
+
+@router.get("/sources/{source_id}/history", response_model=SourceHistoryResponse)
+def get_source_history(
+    source_id: str,
+    hours: int = Query(24, ge=1, le=168),
+    db: Session = Depends(deps.get_db)
+):
+    """
+    获取特定源的历史统计数据和访问高峰期分析
+    
+    Args:
+        source_id: 新闻源ID
+        hours: 查询历史数据的小时数 (1-168小时)
+        
+    Returns:
+        包含历史数据、高峰期和其他统计信息的JSON对象
+    """
+    # 获取源及其历史统计数据
+    source = source_crud.get_source(db, source_id)
+    if not source:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source with ID {source_id} not found"
+        )
+    
+    # 获取历史统计数据
+    stats_history = stats_crud.get_stats_history(db, source_id, hours=hours)
+    if not stats_history:
+        return {
+            "history": [],
+            "peak_times": [],
+            "peak_times_by_day": [],
+            "highest_response_times": []
+        }
+    
+    # 准备历史数据
+    history = []
+    for stat in stats_history:
+        history.append(SourceHistoryData(
+            timestamp=stat.created_at,
+            success_rate=stat.success_rate,
+            avg_response_time=stat.avg_response_time,
+            total_requests=stat.total_requests,
+            error_count=stat.error_count
+        ))
+    
+    # 分析访问高峰期 - 按绝对时间点
+    request_counts = {}
+    for i in range(len(history) - 1):
+        # 计算每个时间点的请求增量
+        curr = history[i]
+        next_stat = history[i+1]
+        
+        # 防止数据异常导致的负值
+        request_diff = max(0, next_stat.total_requests - curr.total_requests)
+        if request_diff > 0:
+            timestamp = next_stat.timestamp
+            request_counts[timestamp] = request_diff
+    
+    # 找出前3个高峰期
+    peak_times = []
+    if request_counts:
+        sorted_counts = sorted(request_counts.items(), key=lambda x: x[1], reverse=True)
+        peak_times = [PeakTimeInfo(timestamp=ts, count=count) for ts, count in sorted_counts[:3]]
+    
+    # 按天和小时分析高峰期
+    day_hour_counts = {}
+    for timestamp, count in request_counts.items():
+        day_name = timestamp.strftime('%A')  # 星期几
+        hour = timestamp.hour
+        
+        key = (day_name, hour)
+        if key not in day_hour_counts:
+            day_hour_counts[key] = 0
+        day_hour_counts[key] += count
+    
+    # 找出每天的高峰小时
+    days = {}
+    for (day, hour), count in day_hour_counts.items():
+        if day not in days or count > days[day]["count"]:
+            days[day] = {"hour": hour, "count": count}
+    
+    peak_times_by_day = [DayPeakInfo(day=day, hour=data["hour"], count=data["count"]) 
+                          for day, data in days.items()]
+    
+    # 找出响应时间最高的几个时间点
+    sorted_by_response_time = sorted(history, key=lambda x: x.avg_response_time, reverse=True)
+    highest_response_times = sorted_by_response_time[:3]
+    
+    return SourceHistoryResponse(
+        history=history,
+        peak_times=peak_times,
+        peak_times_by_day=peak_times_by_day,
+        highest_response_times=highest_response_times
+    ) 

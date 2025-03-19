@@ -87,6 +87,90 @@ news_item = NewsItemModel(
 3. 验证 `source_id` 和 `source_name` 是否正确设置在主体字段中
 4. 确保没有在 `extra` 字段中重复设置 `source_id` 和 `source_name`
 
+## 源统计信息收集
+
+为了监控和评估数据源的性能和可靠性，系统会自动收集每个数据源的统计信息。这些统计信息对于识别问题源、优化资源分配和提高系统整体性能至关重要。
+
+### 统计更新器的工作方式
+
+统计信息通过 `StatsUpdater` 自动收集，该组件会包装数据源的 `fetch` 方法并收集以下指标：
+
+- 请求成功率
+- 平均响应时间
+- 总请求次数
+- 错误次数和最新错误信息
+
+### 如何确保统计信息被收集
+
+为了确保统计信息被正确收集，请遵循以下最佳实践：
+
+1. **使用源管理器**: 始终通过 `NewsSourceManager.fetch_news()` 方法调用数据源，而不是直接调用源的 `fetch` 方法。这是因为统计包装器在源管理器中应用。
+
+```python
+# 正确的方式 - 会自动收集统计信息
+from worker.sources.manager import source_manager
+news = await source_manager.fetch_news('your-source-id')
+
+# 错误的方式 - 不会收集统计信息
+from worker.sources.factory import NewsSourceFactory
+source = NewsSourceFactory.create_source('your-source-id')
+news = await source.fetch()
+```
+
+2. **源ID格式一致性**: 源ID在代码和数据库中应保持一致。虽然统计更新器会尝试将下划线格式的ID转换为连字符格式（例如，将 `thepaper_selenium` 转换为 `thepaper-selenium`），但最好在源代码中直接使用与数据库一致的格式。
+
+3. **实现正确的错误处理**: 确保异常被正确捕获和向上传播，以便统计更新器可以记录失败请求。
+
+```python
+async def fetch(self):
+    try:
+        # 获取数据
+        response = await self.client.get(self.url)
+        # 处理响应
+        return self.parse_response(response)
+    except Exception as e:
+        # 记录错误并重新抛出，允许统计更新器捕获
+        logger.error(f"获取数据时出错: {str(e)}")
+        raise
+```
+
+### 查看源统计信息
+
+可以通过多种方式查看统计信息：
+
+1. **数据库查询**:
+```python
+from app.db.session import SessionLocal
+from app.models.source_stats import SourceStats
+
+db = SessionLocal()
+try:
+    stats = db.query(SourceStats).filter(
+        SourceStats.source_id == 'your-source-id'
+    ).order_by(SourceStats.created_at.desc()).first()
+    
+    if stats:
+        print(f"成功率: {stats.success_rate}")
+        print(f"平均响应时间: {stats.avg_response_time}ms")
+        print(f"总请求次数: {stats.total_requests}")
+finally:
+    db.close()
+```
+
+2. **API查询**:
+```
+GET /api/sources/stats/{source_id}
+```
+
+### 源适配器开发最佳实践
+
+开发新的源适配器时，请遵循以下最佳实践，以确保统计信息可以被正确收集：
+
+1. 正确实现 `fetch` 方法，确保它捕获并向上传播异常
+2. 不要直接调用其他源的 `fetch` 方法，而应通过源管理器
+3. 在 `get_news` 方法中使用类的 `fetch` 方法，而不是绕过它
+4. 保持源ID格式一致，最好使用连字符格式（例如 `thepaper-selenium`）
+
 ## 常见问题
 
 ### Q: 为什么不能在 extra 中设置 source_id 和 source_name？

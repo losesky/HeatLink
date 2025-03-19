@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>News Source Monitor - Simple</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -22,6 +24,8 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
         }
         h1 {
             margin: 0;
@@ -34,9 +38,14 @@
             padding: 8px 16px;
             border-radius: 4px;
             cursor: pointer;
+            transition: background-color 0.2s;
         }
         button:hover {
             background-color: #0069d9;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
         }
         .metrics {
             display: grid;
@@ -127,16 +136,93 @@
             border-radius: 4px;
             font-size: 12px;
         }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0, 123, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #007bff;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 8px;
+        }
+        .section-card {
+            position: relative;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .error-banner {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .metrics {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            }
+            .source-list {
+                grid-template-columns: 1fr;
+            }
+            .controls-row {
+                flex-direction: column;
+            }
+            .control-item {
+                width: 100%;
+            }
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border-width: 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
+        <div id="errorBanner" class="error-banner" role="alert"></div>
+        
         <header>
             <div>
                 <h1>News Source Monitor</h1>
                 <p>Simple monitoring dashboard for news sources</p>
             </div>
-            <button id="refreshBtn">Refresh Data</button>
+            <div>
+                <button id="refreshBtn" aria-label="Refresh data">
+                    Refresh Data
+                    <span id="refreshLoading" class="loading" style="display: none;"></span>
+                </button>
+            </div>
         </header>
 
         <!-- Overview Metrics -->
@@ -159,26 +245,99 @@
             </div>
         </div>
 
+        <!-- History Data and Peak Times -->
+        <div style="margin-bottom: 30px;">
+            <h2>Access Statistics and Peak Times</h2>
+            <div class="controls-row" style="display: flex; gap: 15px; margin-bottom: 15px; flex-wrap: wrap;">
+                <div class="control-item" style="min-width: 200px;">
+                    <label for="sourceHistorySelect" style="display: block; margin-bottom: 5px;">Select Source</label>
+                    <select id="sourceHistorySelect" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+                        <option value="">Select a source...</option>
+                    </select>
+                </div>
+                <div class="control-item" style="min-width: 150px;">
+                    <label for="timeRangeSelect" style="display: block; margin-bottom: 5px;">Time Range</label>
+                    <select id="timeRangeSelect" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+                        <option value="24">Last 24 hours</option>
+                        <option value="48">Last 48 hours</option>
+                        <option value="72">Last 72 hours</option>
+                        <option value="168">Last week</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr; gap: 20px;">
+                <div id="chartContainer" class="section-card" style="height: 300px;">
+                    <canvas id="historyChart"></canvas>
+                    <div id="chartLoading" class="loading-overlay" style="display: none;">
+                        <div class="loading"></div>
+                    </div>
+                </div>
+                <div class="section-card">
+                    <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 16px;">Peak Time Analysis</h3>
+                    <div id="peakTimeInfo" style="background: #f8f9fa; padding: 10px; border-radius: 4px;">
+                        <p style="color: #6c757d; margin: 0; font-size: 14px;">Select a source to view peak time analysis</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Source List -->
         <h2>Source Details</h2>
         <div id="sourceList" class="source-list">
             <!-- Source cards will be dynamically generated here -->
+            <div id="sourceListLoading" style="text-align: center; padding: 20px; grid-column: 1 / -1;">
+                <div class="loading"></div>
+                <p>Loading sources...</p>
+            </div>
         </div>
     </div>
 
     <script>
+        // Global variables for loading states
+        let isLoadingData = false;
+        let isLoadingHistory = false;
+        
+        // Error handling
+        function showError(message, duration = 5000) {
+            const errorBanner = document.getElementById('errorBanner');
+            errorBanner.textContent = message;
+            errorBanner.style.display = 'block';
+            
+            // Auto-hide after duration
+            if (duration > 0) {
+                setTimeout(() => {
+                    errorBanner.style.display = 'none';
+                }, duration);
+            }
+        }
+        
         // Fetch data from API
         async function fetchData() {
+            if (isLoadingData) return;
+            
+            isLoadingData = true;
+            
+            // Show loading states
+            document.getElementById('refreshLoading').style.display = 'inline-block';
+            document.getElementById('refreshBtn').disabled = true;
+            document.getElementById('sourceListLoading').style.display = 'block';
+            
             try {
                 const response = await fetch('/api/monitor/sources');
                 if (!response.ok) {
-                    throw new Error('Failed to fetch monitoring data');
+                    throw new Error(`Failed to fetch monitoring data: ${response.status} ${response.statusText}`);
                 }
                 const data = await response.json();
                 updateDashboard(data);
             } catch (error) {
                 console.error('Error fetching data:', error);
-                alert('Failed to fetch monitoring data. Please try again.');
+                showError(`Failed to fetch monitoring data: ${error.message}`);
+            } finally {
+                // Hide loading states
+                document.getElementById('refreshLoading').style.display = 'none';
+                document.getElementById('refreshBtn').disabled = false;
+                document.getElementById('sourceListLoading').style.display = 'none';
+                isLoadingData = false;
             }
         }
 
@@ -192,7 +351,37 @@
 
             // Update source list
             const sourceListEl = document.getElementById('sourceList');
-            sourceListEl.innerHTML = data.sources.map(source => createSourceCard(source)).join('');
+            
+            if (data.sources && data.sources.length > 0) {
+                sourceListEl.innerHTML = data.sources.map(source => createSourceCard(source)).join('');
+            } else {
+                sourceListEl.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #6c757d;">No sources available</div>';
+            }
+            
+            // Update source select dropdown
+            const sourceSelect = document.getElementById('sourceHistorySelect');
+            // Save current selection
+            const currentSelection = sourceSelect.value;
+            // Clear existing options (except the first one)
+            while (sourceSelect.options.length > 1) {
+                sourceSelect.remove(1);
+            }
+            
+            // Add source options
+            if (data.sources && data.sources.length > 0) {
+                data.sources.forEach(source => {
+                    const option = document.createElement('option');
+                    option.value = source.id;
+                    option.textContent = source.name;
+                    sourceSelect.appendChild(option);
+                });
+                
+                // Restore previous selection (if exists)
+                if (currentSelection && Array.from(sourceSelect.options).some(opt => opt.value === currentSelection)) {
+                    sourceSelect.value = currentSelection;
+                    fetchSourceHistory();
+                }
+            }
         }
 
         // Create HTML for a source card
@@ -207,14 +396,14 @@
 
             // Format last update time
             const lastUpdate = source.metrics.last_update
-                ? new Date(source.metrics.last_update).toLocaleString()
+                ? `${moment(source.metrics.last_update).fromNow()} (${moment(source.metrics.last_update).format('YYYY-MM-DD HH:mm:ss')})`
                 : 'Never';
 
             return `
                 <div class="source-card">
                     <div class="source-header">
                         <div class="source-title">${source.name}</div>
-                        <span class="status-badge ${statusClass}">${source.status}</span>
+                        <span class="status-badge ${statusClass}" role="status">${source.status}</span>
                     </div>
                     <div>Category: ${source.category || 'N/A'}</div>
                     <div class="source-stats">
@@ -237,7 +426,7 @@
                     </div>
                     <div>Last Update: ${lastUpdate}</div>
                     ${source.metrics.last_error ? 
-                        `<div class="error-message">${source.metrics.last_error}</div>` : 
+                        `<div class="error-message" role="alert">${source.metrics.last_error}</div>` : 
                         ''}
                 </div>
             `;
@@ -247,13 +436,180 @@
         document.addEventListener('DOMContentLoaded', () => {
             // Load initial data
             fetchData();
+            
+            // Initialize history chart
+            initHistoryChart();
 
             // Add event listener for refresh button
             document.getElementById('refreshBtn').addEventListener('click', fetchData);
+            
+            // Add event listeners for source history
+            document.getElementById('sourceHistorySelect').addEventListener('change', fetchSourceHistory);
+            document.getElementById('timeRangeSelect').addEventListener('change', fetchSourceHistory);
 
             // Auto-refresh every 60 seconds
             setInterval(fetchData, 60000);
         });
+        
+        // Initialize history chart
+        let historyChart;
+        function initHistoryChart() {
+            historyChart = new Chart(
+                document.getElementById('historyChart'),
+                {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: 'Response Time (ms)',
+                                data: [],
+                                borderColor: '#007bff',
+                                borderWidth: 2,
+                                tension: 0.1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: 'Request Count',
+                                data: [],
+                                borderColor: '#28a745',
+                                borderWidth: 2,
+                                tension: 0.1,
+                                yAxisID: 'y1'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Response Time (ms)'
+                                }
+                            },
+                            y1: {
+                                beginAtZero: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'Request Count'
+                                },
+                                grid: {
+                                    drawOnChartArea: false
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                enabled: true
+                            }
+                        }
+                    }
+                }
+            );
+        }
+        
+        // Get history data for a specific source
+        async function fetchSourceHistory() {
+            const sourceId = document.getElementById('sourceHistorySelect').value;
+            const hours = document.getElementById('timeRangeSelect').value;
+            
+            if (!sourceId) {
+                // Clear chart
+                historyChart.data.labels = [];
+                historyChart.data.datasets[0].data = [];
+                historyChart.data.datasets[1].data = [];
+                historyChart.update();
+                document.getElementById('peakTimeInfo').innerHTML = '<p style="color: #6c757d; margin: 0; font-size: 14px;">Select a source to view peak time analysis</p>';
+                return;
+            }
+            
+            if (isLoadingHistory) return;
+            isLoadingHistory = true;
+            
+            // Show loading state
+            document.getElementById('chartLoading').style.display = 'flex';
+            
+            try {
+                const response = await fetch(`/api/monitor/sources/${sourceId}/history?hours=${hours}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch source history: ${response.status} ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                updateSourceHistory(data);
+            } catch (error) {
+                console.error('Error fetching source history:', error);
+                showError(`Failed to fetch source history: ${error.message}`);
+            } finally {
+                // Hide loading state
+                document.getElementById('chartLoading').style.display = 'none';
+                isLoadingHistory = false;
+            }
+        }
+        
+        // Update source history chart
+        function updateSourceHistory(data) {
+            // Format timestamp
+            const formatTimestamp = timestamp => {
+                const date = new Date(timestamp);
+                return date.toLocaleString([], {
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            };
+            
+            // Update history chart
+            historyChart.data.labels = data.history.map(item => formatTimestamp(item.timestamp));
+            historyChart.data.datasets[0].data = data.history.map(item => item.avg_response_time);
+            historyChart.data.datasets[1].data = data.history.map(item => item.total_requests);
+            historyChart.update();
+            
+            // Update peak time information
+            const peakTimeInfo = document.getElementById('peakTimeInfo');
+            if (data.peak_times && data.peak_times.length > 0) {
+                let peakHtml = '';
+                
+                // Peak times by day
+                if (data.peak_times_by_day && data.peak_times_by_day.length > 0) {
+                    peakHtml += '<div style="margin-bottom: 15px;"><strong>Daily Peak Times:</strong><ul style="list-style-type: disc; padding-left: 20px; margin-top: 5px;">';
+                    data.peak_times_by_day.forEach(peak => {
+                        peakHtml += `<li><strong>${peak.day}:</strong> ${peak.hour}:00 (${peak.count} requests)</li>`;
+                    });
+                    peakHtml += '</ul></div>';
+                }
+                
+                // Overall peak times
+                peakHtml += '<div style="margin-bottom: 15px;"><strong>Overall Peak Times:</strong><ul style="list-style-type: disc; padding-left: 20px; margin-top: 5px;">';
+                data.peak_times.forEach(peak => {
+                    peakHtml += `<li>${formatTimestamp(peak.timestamp)} (${peak.count} requests)</li>`;
+                });
+                peakHtml += '</ul></div>';
+                
+                // Highest response times
+                if (data.highest_response_times && data.highest_response_times.length > 0) {
+                    peakHtml += '<div><strong>Highest Response Times:</strong><ul style="list-style-type: disc; padding-left: 20px; margin-top: 5px;">';
+                    data.highest_response_times.forEach(item => {
+                        peakHtml += `<li>${formatTimestamp(item.timestamp)}: ${Math.round(item.avg_response_time)}ms</li>`;
+                    });
+                    peakHtml += '</ul></div>';
+                }
+                
+                peakTimeInfo.innerHTML = peakHtml;
+            } else {
+                peakTimeInfo.innerHTML = '<p style="color: #6c757d; margin: 0; font-size: 14px;">Not enough data to analyze peak times</p>';
+            }
+        }
     </script>
 </body>
 </html> 

@@ -1,16 +1,23 @@
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
+import datetime
 
 from app.models.category import Category
 from app.schemas.category import CategoryCreate, CategoryUpdate
 
 
 def get_category(db: Session, category_id: int) -> Optional[Category]:
-    return db.query(Category).filter(Category.id == category_id).first()
+    category = db.query(Category).filter(Category.id == category_id).first()
+    if category and category.order is None:
+        category.order = 0
+    return category
 
 
 def get_category_by_slug(db: Session, slug: str) -> Optional[Category]:
-    return db.query(Category).filter(Category.slug == slug).first()
+    category = db.query(Category).filter(Category.slug == slug).first()
+    if category and category.order is None:
+        category.order = 0
+    return category
 
 
 def get_categories(
@@ -24,11 +31,25 @@ def get_categories(
     if parent_id is not None:
         query = query.filter(Category.parent_id == parent_id)
     
-    return query.order_by(Category.order).offset(skip).limit(limit).all()
+    categories = query.order_by(Category.order).offset(skip).limit(limit).all()
+    
+    # 确保所有记录的 order 字段都有值
+    for category in categories:
+        if category.order is None:
+            category.order = 0
+    
+    return categories
 
 
 def get_root_categories(db: Session) -> List[Category]:
-    return db.query(Category).filter(Category.parent_id == None).order_by(Category.order).all()
+    categories = db.query(Category).filter(Category.parent_id == None).order_by(Category.order).all()
+    
+    # 确保所有记录的 order 字段都有值
+    for category in categories:
+        if category.order is None:
+            category.order = 0
+    
+    return categories
 
 
 def create_category(db: Session, category: CategoryCreate) -> Category:
@@ -77,15 +98,27 @@ def get_category_tree(db: Session) -> List[Dict[str, Any]]:
     categories = db.query(Category).all()
     
     # Create a dictionary to store the tree
-    category_dict = {category.id: {
-        "id": category.id,
-        "name": category.name,
-        "description": category.description,
-        "slug": category.slug,
-        "icon": category.icon,
-        "order": category.order,
-        "children": []
-    } for category in categories}
+    category_dict = {}
+    for category in categories:
+        # 确保 order 有有效值
+        order = 0 if category.order is None else category.order
+        
+        # 确保日期时间信息正确格式化为 ISO 字符串
+        created_at = category.created_at.isoformat() if category.created_at else datetime.datetime.utcnow().isoformat()
+        updated_at = category.updated_at.isoformat() if category.updated_at else datetime.datetime.utcnow().isoformat()
+        
+        category_dict[category.id] = {
+            "id": category.id,
+            "name": category.name,
+            "description": category.description,
+            "slug": category.slug,
+            "parent_id": category.parent_id,
+            "icon": category.icon,
+            "order": order,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "children": []
+        }
     
     # Build the tree
     root_categories = []

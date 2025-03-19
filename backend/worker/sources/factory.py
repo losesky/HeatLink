@@ -212,111 +212,26 @@ class NewsSourceFactory:
         """
         创建默认的新闻源适配器
         """
+        # 获取所有可用的源类型
+        source_types = NewsSourceFactory.get_available_sources()
+        
+        # 创建所有源的实例
         sources = []
+        for source_type in source_types:
+            try:
+                source = NewsSourceFactory.create_source(source_type)
+                if source:
+                    sources.append(source)
+            except Exception as e:
+                logger.error(f"创建源 {source_type} 时出错: {str(e)}")
         
-        # 添加知乎热榜
-        sources.append(ZhihuHotNewsSource())
-        
-        # 添加微博热搜
-        sources.append(WeiboHotNewsSource())
-        
-        # 添加百度热搜
-        sources.append(BaiduHotNewsSource())
-        
-        # 添加澎湃新闻热榜
-        sources.append(ThePaperSeleniumSource())
-        
-        # 添加Hacker News
-        sources.append(HackerNewsSource())
-        
-        # 添加B站热搜
-        sources.append(BilibiliHotNewsSource())
-        
-        # 添加抖音热搜
-        sources.append(DouyinHotNewsSource())
-        
-        # 添加今日头条热搜
-        sources.append(ToutiaoHotNewsSource())
-        
-        # 添加IT之家
-        sources.append(ITHomeNewsSource())
-        
-        # 添加GitHub Trending
-        sources.append(GitHubTrendingSource())
-        
-        # 添加V2EX热门
-        sources.append(V2EXSeleniumSource())
-        
-        # 添加雪球热门股票
-        sources.append(XueqiuHotStockSource())
-        
-        # 添加贴吧热门话题
-        sources.append(TiebaHotTopicSource())
-        
-        # 添加快手热搜
-        sources.append(KuaishouHotSearchSource())
-        
-        # 添加金十数据快讯
-        sources.append(Jin10NewsSource())
-        
-        # 添加参考消息
-        sources.append(CanKaoXiaoXiNewsSource())
-        
-        # 添加Solidot
-        sources.append(SolidotNewsSource())
-        
-        # 添加联合早报
-        sources.append(ZaoBaoNewsSource())
-        
-        # 添加Sputnik中文
-        sources.append(SputnikNewsCNSource())
-        
-        # 添加ProductHunt
-        sources.append(ProductHuntNewsSource())
-        
-        # 添加Linux迷
-        sources.append(LinuxDoNewsSource())
-        
-        # 添加靠谱新闻
-        sources.append(KaoPuNewsSource())
-        
-        # 添加格隆汇
-        sources.append(GeLongHuiNewsSource())
-        
-        # 添加FastBull快讯
-        sources.append(FastBullExpressNewsSource())
-        
-        # 添加华尔街见闻
-        sources.append(WallStreetCNNewsSource())
-        
-        # 添加36氪
-        sources.append(Kr36NewsSource())
-        
-        # 添加酷安
-        sources.append(CoolApkNewsSource())
-        
-        # 添加财联社
-        sources.append(CLSNewsSource())
-        
-        # 添加BBC世界新闻
-        sources.append(BBCWorldNewsSource())
-        
-        # 添加知乎日报
-        sources.append(ZhihuDailyNewsSource())
-        
-        # 添加彭博社
-        sources.append(BloombergNewsSource())
-        
-        # 添加彭博社中国新闻
-        sources.append(BloombergChinaNewsSource())
-        
+        logger.info(f"成功创建了 {len(sources)} 个新闻源适配器")
         return sources
-
+    
     @staticmethod
     def get_available_sources() -> List[str]:
         """
         获取所有可用的新闻源类型
-        :return: 可用的新闻源类型列表
         """
         try:
             # 首先尝试从数据库中获取所有源类型
@@ -355,15 +270,15 @@ class NewsSourceFactory:
         # 如果从数据库获取失败或没有找到数据，使用硬编码列表作为备用
         # 手动定义所有支持的新闻源类型
         sources = [
-            "zhihu", "weibo", "baidu", "thepaper", "hacker_news", "bilibili", "douyin",
-            "toutiao", "ithome", "github_trending", "v2ex", "v2ex_selenium", "xueqiu",
+            "zhihu", "weibo", "baidu", "thepaper", "hackernews", "bilibili", "douyin",
+            "toutiao", "ithome", "github", "v2ex", "xueqiu",
             "tieba", "kuaishou", "jin10", "cankaoxiaoxi", "solidot", "zaobao",
-            "sputnik_cn", "producthunt", "linuxdo", "linuxdo_latest", "linuxdo_hot",
-            "kaopu", "gelonghui", "fastbull_express", "fastbull_general", "wallstreetcn_live",
-            "wallstreetcn", "wallstreetcn_hot", "36kr", "coolapk", "coolapk-feed",
-            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper_selenium",
-            "zhihu_daily", "bloomberg", "bloomberg_markets", "bloomberg_technology",
-            "bloomberg_china", "ifanr", "techcrunch", "the_verge"
+            "sputniknewscn", "producthunt", "linuxdo", "linuxdo-latest", "linuxdo-hot",
+            "kaopu", "gelonghui", "fastbull", "fastbull-express", "fastbull-news", "wallstreetcn",
+            "wallstreetcn-news", "wallstreetcn-hot", "36kr", "coolapk", "coolapk-feed",
+            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper-selenium",
+            "zhihu_daily", "bloomberg", "bloomberg-markets", "bloomberg-tech",
+            "bloomberg-china", "ifanr", "techcrunch", "the_verge"
         ]
         # 排除通用的"rss"类型，因为它需要额外的参数
         if "rss" in sources:

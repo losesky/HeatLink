@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     
+    # Timezone settings
+    TZ: Optional[str] = "UTC"
+    PGTZ: Optional[str] = "UTC"
+    
     @field_validator("DATABASE_URL")
     def validate_database_url(cls, v: Optional[str]) -> str:
         if not v:

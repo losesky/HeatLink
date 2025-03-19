@@ -5,10 +5,14 @@ WORKDIR /app
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV TZ=Asia/Shanghai
 
 # 安装系统依赖
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libpq-dev \
+    && apt-get install -y --no-install-recommends gcc libpq-dev tzdata \
+    && ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && dpkg-reconfigure --frontend noninteractive tzdata \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

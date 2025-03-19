@@ -8,10 +8,13 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: heatlink
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
     networks:
       - heatlink-network
     restart: unless-stopped
@@ -28,6 +31,8 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    environment:
+      - TZ=Asia/Shanghai
     networks:
       - heatlink-network
     restart: unless-stopped
@@ -57,6 +62,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - TZ=Asia/Shanghai
+      - PGTZ=Asia/Shanghai
     command: >
       bash -c "
         alembic upgrade head &&
@@ -82,6 +89,8 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - CELERY_CONCURRENCY=2
+      - TZ=Asia/Shanghai
+      - PGTZ=Asia/Shanghai
 
   beat:
     build:
@@ -99,6 +108,8 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - CELERY_BEAT=true
+      - TZ=Asia/Shanghai
+      - PGTZ=Asia/Shanghai
     command: python beat_start.py
 
 networks:

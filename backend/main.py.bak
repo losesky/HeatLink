@@ -11,9 +11,6 @@ import psutil
 
 # 添加当前目录到 Python 路径，确保可以正确导入模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# Add parent directory to path to ensure worker module is found
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, parent_dir)
 
 # 修改导入路径
 from app.api import api_router
@@ -123,13 +120,12 @@ async def startup_event():
         # 导入需要的模块
         from worker.sources.factory import NewsSourceFactory
         from worker.stats_wrapper import stats_updater
-        from worker.sources.manager import source_manager
         
         # 初始化统计信息更新器
-        # 每5分钟更新一次统计信息，以获得更及时的数据
+        # 每小时更新一次统计信息，避免频繁数据库操作
         stats_updater.enabled = True
-        stats_updater.update_interval = 300  # 设置为5分钟
-        logger.info("已初始化源统计信息自动更新器 (更新间隔: 5分钟)")
+        stats_updater.update_interval = 3600  # 设置为1小时
+        logger.info("已初始化源统计信息自动更新器")
         
         # 获取所有可用的数据源类型
         source_types = NewsSourceFactory.get_available_sources()
@@ -142,10 +138,6 @@ async def startup_event():
         for i in range(0, len(sorted_sources), 10):
             chunk = sorted_sources[i:i+10]
             logger.info(", ".join(chunk))
-        
-        # 初始化并注册所有新闻源
-        source_manager.register_default_sources()
-        logger.info(f"已注册 {len(source_manager.get_all_sources())} 个新闻源到 source_manager")
             
     except Exception as e:
         logger.error(f"初始化数据源时出错: {str(e)}")

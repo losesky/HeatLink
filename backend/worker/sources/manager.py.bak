@@ -42,19 +42,7 @@ class NewsSourceManager:
         """
         注册默认新闻源
         """
-        # 获取所有可用的源类型
-        source_types = NewsSourceFactory.get_available_sources()
-        
-        # 创建并注册源实例
-        sources = []
-        for source_type in source_types:
-            try:
-                source = NewsSourceFactory.create_source(source_type)
-                if source:
-                    sources.append(source)
-            except Exception as e:
-                logger.error(f"创建源 {source_type} 时出错: {str(e)}")
-        
+        sources = NewsSourceFactory.create_default_sources()
         self.register_sources(sources)
     
     def get_source(self, source_id: str) -> Optional[NewsSource]:
@@ -130,7 +118,6 @@ class NewsSourceManager:
         获取指定新闻源的新闻
         支持强制更新和缓存
         """
-        logger.info(f">>> NewsSourceManager.fetch_news called for {source_id}")
         source = self.get_source(source_id)
         if not source:
             logger.error(f"News source not found: {source_id}")
@@ -149,24 +136,17 @@ class NewsSourceManager:
         try:
             # 使用统计信息更新包装器包装源的get_news方法
             async def fetch_with_stats():
-                logger.info(f">>> fetch_with_stats called for {source_id}")
                 # 捕获源的fetch方法
                 original_fetch = source.fetch
-                logger.info(f">>> Original fetch method: {original_fetch}")
                 
                 try:
                     # 使用包装器替换原始fetch方法
-                    logger.info(f">>> Replacing fetch method with stats_updater.wrap_fetch for {source_id}")
                     source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source_id, original_fetch, *args, **kwargs)
                     
                     # 调用源的get_news方法，它会使用包装后的fetch方法
-                    logger.info(f">>> Calling source.get_news for {source_id}")
-                    result = await source.get_news(force_update=force_update)
-                    logger.info(f">>> source.get_news completed for {source_id}, received {len(result)} items")
-                    return result
+                    return await source.get_news(force_update=force_update)
                 finally:
                     # 恢复原始fetch方法
-                    logger.info(f">>> Restoring original fetch method for {source_id}")
                     source.fetch = original_fetch
             
             news_items = await fetch_with_stats()
@@ -191,34 +171,16 @@ class NewsSourceManager:
         """
         获取所有新闻源的新闻
         """
-        logger.info(f"开始获取所有新闻源新闻，强制更新：{force_update}，源数量：{len(self.sources)}")
         tasks = []
-        source_ids = list(self.sources.keys())
-        
-        for source_id in source_ids:
+        for source_id in self.sources:
             tasks.append(self.fetch_news(source_id, force_update=force_update))
         
-        logger.info(f"创建了 {len(tasks)} 个获取新闻任务")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks)
         
         news_dict = {}
-        success_count = 0
-        total_news_count = 0
+        for i, source_id in enumerate(self.sources):
+            news_dict[source_id] = results[i]
         
-        for i, source_id in enumerate(source_ids):
-            result = results[i]
-            if isinstance(result, Exception):
-                logger.error(f"源 {source_id} 获取新闻失败: {str(result)}")
-                news_dict[source_id] = []
-            else:
-                news_count = len(result)
-                news_dict[source_id] = result
-                total_news_count += news_count
-                if news_count > 0:
-                    success_count += 1
-                    logger.info(f"源 {source_id} 获取到 {news_count} 条新闻")
-        
-        logger.info(f"获取所有新闻源完成: {success_count}/{len(source_ids)} 个源成功获取新闻，总计 {total_news_count} 条新闻")
         return news_dict
     
     async def fetch_news_by_category(self, category: str, force_update: bool = False) -> Dict[str, List[NewsItemModel]]:

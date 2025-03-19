@@ -52,12 +52,23 @@ class NewsCluster:
         now = datetime.datetime.now()
         time_decay = 1.0
         if self.main_news.published_at:
-            hours_diff = (now - self.main_news.published_at).total_seconds() / 3600
-            if hours_diff <= 24:
-                time_decay = 2.0 - (hours_diff / 24)  # 24小时内线性衰减
+            try:
+                # 确保使用无时区的时间
+                pub_time = self.main_news.published_at
+                if hasattr(pub_time, 'tzinfo') and pub_time.tzinfo is not None:
+                    # 如果有时区信息，转换为 UTC 无时区
+                    from datetime import timezone
+                    pub_time = pub_time.astimezone(timezone.utc).replace(tzinfo=None)
+                
+                hours_diff = (now - pub_time).total_seconds() / 3600
+                if hours_diff <= 24:
+                    time_decay = 2.0 - (hours_diff / 24)  # 24小时内线性衰减
+            except Exception as e:
+                logger.warning(f"计算时间衰减时出错: {e}")
         
         # 置顶加成
-        top_bonus = 1.5 if self.main_news.is_top else 1.0
+        is_top = self.main_news.extra.get("is_top", False)
+        top_bonus = 1.5 if is_top else 1.0
         
         # 最终分数
         self.score = base_score * time_decay * top_bonus
@@ -227,6 +238,144 @@ class NewsAggregator:
         # 返回前N个聚类
         return [cluster.to_dict() for cluster in category_clusters[:limit]]
     
+    async def get_aggregated_news(self, force_update: bool = False) -> Dict[str, Any]:
+        """
+        获取聚合后的新闻数据，包括热门新闻、推荐新闻和分类新闻
+        """
+        # 首先更新聚合器
+        logger.info(f"开始获取聚合新闻，强制更新：{force_update}，当前聚类数：{len(self.clusters)}")
+        await self.update(force=force_update)
+        logger.info(f"聚合器更新完成，当前聚类数：{len(self.clusters)}")
+        
+        # 获取热门话题/新闻
+        hot_topics = self.get_hot_topics(limit=20)
+        hot_news = []
+        logger.info(f"获取到 {len(hot_topics)} 个热门话题")
+        
+        # 将热门话题转换为新闻列表
+        for topic in hot_topics:
+            # 添加主要新闻
+            main_news = topic["main_news"]
+            if main_news:
+                hot_news.append(main_news)
+            
+            # 添加相关新闻（可选）
+            # for related in topic["related_news"]:
+            #     hot_news.append(related)
+        
+        logger.info(f"转换为 {len(hot_news)} 条热门新闻")
+        
+        # 获取推荐新闻（简单实现：从所有聚类中选取主要新闻，但不在热门新闻中）
+        recommended_news = []
+        for cluster in self.clusters:
+            news_dict = cluster.main_news.to_dict()
+            # 检查是否已在热门新闻中
+            if not any(news["id"] == news_dict["id"] for news in hot_news):
+                recommended_news.append(news_dict)
+            
+            # 限制数量
+            if len(recommended_news) >= 20:
+                break
+        
+        logger.info(f"获取到 {len(recommended_news)} 条推荐新闻")
+        
+        # 按分类获取新闻
+        categories = {}
+        # 获取所有可能的分类
+        all_categories = set()
+        for cluster in self.clusters:
+            category = cluster.main_news.extra.get("category")
+            if category:
+                all_categories.add(category)
+        
+        logger.info(f"发现 {len(all_categories)} 个分类: {', '.join(all_categories)}")
+        
+        # 为每个分类获取新闻
+        for category in all_categories:
+            topics = self.get_topics_by_category(category, limit=10)
+            category_news = []
+            
+            for topic in topics:
+                main_news = topic["main_news"]
+                if main_news:
+                    category_news.append(main_news)
+            
+            if category_news:
+                categories[category] = category_news
+                logger.info(f"分类 '{category}' 获取到 {len(category_news)} 条新闻")
+        
+        logger.info(f"聚合新闻数据统计: 热门新闻={len(hot_news)}, 推荐新闻={len(recommended_news)}, 分类数={len(categories)}")
+        return {
+            "hot_news": hot_news,
+            "recommended_news": recommended_news,
+            "categories": categories
+        }
+    
+    async def search_news(self, query: str, max_results: int = 100, category: Optional[str] = None, 
+                           country: Optional[str] = None, language: Optional[str] = None, 
+                           source_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        搜索新闻
+        支持按关键词、分类、国家、语言和源ID筛选
+        """
+        if not query:
+            return []
+        
+        # 将查询转为小写以便不区分大小写
+        query = query.lower()
+        
+        # 从所有聚类中搜索匹配的新闻
+        results = []
+        
+        for cluster in self.clusters:
+            # 检查主要新闻
+            main_news = cluster.main_news
+            if self._news_matches_criteria(main_news, query, category, country, language, source_id):
+                results.append(main_news.to_dict())
+                if len(results) >= max_results:
+                    return results
+            
+            # 检查相关新闻
+            for news in cluster.related_news:
+                if self._news_matches_criteria(news, query, category, country, language, source_id):
+                    results.append(news.to_dict())
+                    if len(results) >= max_results:
+                        return results
+        
+        return results
+    
+    def _news_matches_criteria(self, news: NewsItemModel, query: str, category: Optional[str], 
+                               country: Optional[str], language: Optional[str], 
+                               source_id: Optional[str]) -> bool:
+        """
+        检查新闻是否符合搜索条件
+        """
+        # 检查关键词
+        if query and not (
+            query in news.title.lower() or 
+            (news.summary and query in news.summary.lower()) or
+            (news.content and query in news.content.lower())
+        ):
+            return False
+        
+        # 检查分类
+        if category and news.extra.get("category") != category:
+            return False
+        
+        # 检查国家
+        if country and news.extra.get("country") != country:
+            return False
+        
+        # 检查语言
+        if language and news.extra.get("language") != language:
+            return False
+        
+        # 检查源ID
+        if source_id and news.source_id != source_id:
+            return False
+        
+        return True
+    
     async def update(self, force: bool = False) -> None:
         """
         更新聚合器
@@ -239,15 +388,24 @@ class NewsAggregator:
             logger.debug("Skipping update, last update was less than 1 hour ago")
             return
         
+        logger.info(f"开始更新聚合器，强制更新：{force}")
+        
         # 获取所有新闻
         all_news = await source_manager.fetch_all_news(force_update=force)
         
+        total_news_count = 0
+        sources_with_news = 0
+        
         # 聚合所有新闻
         for source_id, news_items in all_news.items():
-            self.add_news_batch(news_items)
+            if news_items:
+                total_news_count += len(news_items)
+                sources_with_news += 1
+                logger.info(f"源 {source_id} 获取到 {len(news_items)} 条新闻")
+                self.add_news_batch(news_items)
         
         self.last_update_time = current_time
-        logger.info(f"Updated aggregator, {len(self.clusters)} clusters")
+        logger.info(f"更新聚合器完成: 共有 {sources_with_news}/{len(all_news)} 个源返回了新闻，总计 {total_news_count} 条新闻，{len(self.clusters)} 个聚类")
 
 
 # 全局单例

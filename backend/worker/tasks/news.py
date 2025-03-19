@@ -284,8 +284,9 @@ async def _fetch_source_news(source: Any) -> List[Any]:
     获取单个新闻源的新闻
     """
     try:
-        # 获取新闻源的新闻
-        news_items = await source.get_news(force_update=True)
+        logger.info(f">>> _fetch_source_news: Fetching news from source {source.source_id} using manager")
+        # 使用source_manager获取新闻源的新闻，这样会触发统计更新包装器
+        news_items = await source_manager.fetch_news(source.source_id, force_update=True)
         logger.info(f"Fetched {len(news_items)} news items from source {source.source_id}")
         return news_items
     except Exception as e:

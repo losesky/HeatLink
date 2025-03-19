@@ -170,6 +170,93 @@ Celery 任务状态包括：
 3. 任务 ID 是否正确
 4. 任务是否已过期（默认结果保留时间为 1 天）
 
+## 源统计信息监控
+
+HeatLink 实现了一个自动化的源统计信息监控系统，用于跟踪和分析各新闻源的性能和可靠性。
+
+### 1. 统计更新器 (StatsUpdater)
+
+统计更新器是一个轻量级的包装器，自动跟踪新闻源调用的成功率、响应时间和错误信息。其主要特点包括：
+
+- **透明集成**：自动包装源适配器的 `fetch` 方法，无需修改现有源代码
+- **优化的数据库操作**：使用内存缓存聚合统计数据，按配置间隔批量更新数据库
+- **源ID规范化**：自动处理源ID格式不一致问题，确保数据库记录一致性
+- **详细日志**：提供全面的日志记录，便于调试和监控
+
+```python
+# 统计更新器全局配置示例
+from worker.stats_wrapper import stats_updater
+
+# 启用统计更新
+stats_updater.enabled = True
+
+# 设置数据库更新间隔（秒）
+stats_updater.update_interval = 300  # 5分钟
+```
+
+### 2. 使用源管理器触发统计更新
+
+统计更新器与 `NewsSourceManager` 紧密集成，当通过源管理器调用源的 `fetch` 方法时，会自动触发统计更新：
+
+```python
+# 通过源管理器获取新闻，会自动更新统计信息
+from worker.sources.manager import source_manager
+
+# 获取指定源的新闻
+news_items = await source_manager.fetch_news('thepaper-selenium')
+```
+
+### 3. 统计数据模型
+
+系统使用 `SourceStats` 数据库模型存储统计信息，包含以下关键指标：
+
+- `source_id`: 新闻源标识符
+- `success_rate`: 成功率（0-1范围内的浮点数）
+- `avg_response_time`: 平均响应时间（毫秒）
+- `total_requests`: 总请求次数
+- `error_count`: 错误次数
+- `last_error`: 最近一次错误信息
+- `created_at`: 记录创建时间
+- `updated_at`: 记录更新时间
+
+### 4. 查询统计数据
+
+可以通过以下方式查询统计数据：
+
+```python
+# 获取指定源的最新统计数据
+from app.db.session import SessionLocal
+from app.models.source_stats import SourceStats
+
+db = SessionLocal()
+latest_stats = db.query(SourceStats).filter(
+    SourceStats.source_id == 'thepaper-selenium'
+).order_by(SourceStats.created_at.desc()).first()
+db.close()
+
+print(f"成功率: {latest_stats.success_rate}")
+print(f"平均响应时间: {latest_stats.avg_response_time}ms")
+print(f"总请求数: {latest_stats.total_requests}")
+```
+
+### 5. API 访问
+
+系统会通过API提供源统计数据，可用于监控仪表板和性能分析：
+
+```
+GET /api/sources/stats
+GET /api/sources/stats/{source_id}
+```
+
+### 6. 故障排除
+
+如果统计更新不起作用：
+
+1. 确认 `stats_updater.enabled` 设置为 `True`
+2. 检查是否通过 `NewsSourceManager.fetch_news()` 方法调用源（直接调用源的 `fetch` 方法不会触发统计更新）
+3. 验证源ID在代码和数据库中的格式是否一致（统计更新器会尝试将下划线转换为连字符）
+4. 查看日志中是否有与 `StatsUpdater` 相关的错误信息
+
 ## API 文档
 
 启动服务后，可以通过以下地址访问 API 文档：
