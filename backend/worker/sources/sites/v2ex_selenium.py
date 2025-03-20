@@ -113,6 +113,7 @@ class V2EXSeleniumSource(WebNewsSource):
         )
         
         self._driver = None
+        self._driver_pid = None  # 添加记录chromedriver进程ID
         logger.info(f"Initialized {self.name} Selenium adapter with URL: {self.url}")
     
     def _create_driver(self):
@@ -198,6 +199,14 @@ class V2EXSeleniumSource(WebNewsSource):
             driver.set_script_timeout(self.config.get("selenium_timeout", 30))
             
             logger.info("Successfully created Chrome WebDriver")
+            
+            # 记录driver进程ID，用于后续清理
+            try:
+                self._driver_pid = driver.service.process.pid
+                logger.info(f"ChromeDriver process ID: {self._driver_pid}")
+            except Exception as pid_e:
+                logger.warning(f"Could not capture ChromeDriver PID: {str(pid_e)}")
+                
             return driver
             
         except Exception as e:
@@ -216,17 +225,56 @@ class V2EXSeleniumSource(WebNewsSource):
     
     async def _close_driver(self):
         """
-        关闭WebDriver
+        关闭WebDriver及其相关进程
         """
         if self._driver is not None:
             try:
+                logger.info("Closing Chrome WebDriver")
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._driver.quit)
-                logger.info("Successfully closed Chrome WebDriver")
-            except Exception as e:
-                logger.error(f"Error closing Chrome WebDriver: {str(e)}", exc_info=True)
+                
+                # 首先尝试正常关闭
+                try:
+                    await loop.run_in_executor(None, self._driver.quit)
+                    logger.info("Successfully closed Chrome WebDriver")
+                except Exception as e:
+                    logger.error(f"Error closing Chrome WebDriver normally: {str(e)}", exc_info=True)
+                    
+                    # 如果正常关闭失败，尝试强制关闭
+                    try:
+                        # 记录关联的Chrome进程
+                        chrome_processes = []
+                        if hasattr(self._driver, 'service') and hasattr(self._driver.service, 'process'):
+                            chrome_processes.append(self._driver.service.process)
+                        
+                        # 如果有记录进程ID，直接使用psutil强制终止
+                        if self._driver_pid:
+                            try:
+                                import psutil
+                                driver_process = psutil.Process(self._driver_pid)
+                                children = driver_process.children(recursive=True)
+                                
+                                # 先终止子进程
+                                for child in children:
+                                    try:
+                                        child.terminate()
+                                        logger.info(f"Terminated child process PID: {child.pid}")
+                                    except:
+                                        try:
+                                            child.kill()
+                                            logger.info(f"Killed child process PID: {child.pid}")
+                                        except:
+                                            pass
+                                
+                                # 然后终止driver进程
+                                driver_process.terminate()
+                                logger.info(f"Terminated ChromeDriver process PID: {self._driver_pid}")
+                            except Exception as kill_e:
+                                logger.error(f"Failed to kill ChromeDriver process: {str(kill_e)}")
+                    except Exception as force_e:
+                        logger.error(f"Error force closing Chrome processes: {str(force_e)}")
             finally:
                 self._driver = None
+                self._driver_pid = None
     
     async def close(self):
         """
@@ -445,246 +493,28 @@ class V2EXSeleniumSource(WebNewsSource):
             
             logger.info(f"Processing XML content, length: {len(xml_content)}")
             
-            # 尝试使用xml.etree.ElementTree解析XML
-            try:
-                # 定义命名空间
-                namespaces = {
-                    'atom': 'http://www.w3.org/2005/Atom',
-                    'dc': 'http://purl.org/dc/elements/1.1/'
-                }
-                
-                # 解析XML
-                root = ET.fromstring(xml_content)
-                
-                # 查找所有entry元素
-                entries = root.findall('.//atom:entry', namespaces) or root.findall('.//entry')
-                
-                if not entries:
-                    logger.warning("No entries found with ElementTree, falling back to BeautifulSoup")
-                else:
-                    logger.info(f"Found {len(entries)} entries with ElementTree")
-                    
-                    for entry in entries:
-                        try:
-                            # 提取标题
-                            title_elem = entry.find('.//atom:title', namespaces) or entry.find('.//title')
-                            if title_elem is None or not title_elem.text:
-                                logger.warning("Entry without title, skipping")
-                                continue
-                            
-                            title = title_elem.text.strip()
-                            logger.debug(f"Processing entry with title: {title}")
-                            
-                            # 提取链接
-                            link_elem = entry.find('.//atom:link[@rel="alternate"]', namespaces) or entry.find('.//link[@rel="alternate"]')
-                            url = ""
-                            if link_elem is not None and 'href' in link_elem.attrib:
-                                url = link_elem.attrib['href']
-                            else:
-                                # 尝试查找普通的link元素
-                                link_elem = entry.find('.//atom:link', namespaces) or entry.find('.//link')
-                                if link_elem is not None:
-                                    if 'href' in link_elem.attrib:
-                                        url = link_elem.attrib['href']
-                                    elif link_elem.text:
-                                        url = link_elem.text.strip()
-                            
-                            if not url:
-                                logger.warning(f"No URL found for entry: {title}")
-                                continue  # 如果没有URL，跳过此条目
-                            
-                            # 确保URL是完整的
-                            if url and not url.startswith('http'):
-                                url = f"https://www.v2ex.com{url}"
-                            
-                            # 提取ID
-                            id_elem = entry.find('.//atom:id', namespaces) or entry.find('.//id')
-                            topic_id = ""
-                            if id_elem is not None and id_elem.text:
-                                id_text = id_elem.text.strip()
-                                logger.debug(f"ID text: {id_text}")
-                                if '/t/' in id_text:
-                                    topic_id = id_text.split('/t/')[-1].split('#')[0]
-                            
-                            # 如果无法从ID中提取，则从URL中提取
-                            if not topic_id and url and '/t/' in url:
-                                topic_id = url.split('/t/')[-1].split('#')[0]
-                            
-                            # 如果仍然无法提取，则生成一个基于URL的哈希ID
-                            if not topic_id:
-                                topic_id = hashlib.md5(url.encode()).hexdigest()
-                            
-                            logger.debug(f"Topic ID: {topic_id}")
-                            
-                            # 提取发布时间
-                            published_at = datetime.datetime.now(datetime.timezone.utc)
-                            published_elem = entry.find('.//atom:published', namespaces) or entry.find('.//published')
-                            if published_elem is not None and published_elem.text:
-                                try:
-                                    date_text = published_elem.text.strip()
-                                    logger.debug(f"Published date text: {date_text}")
-                                    # 处理Z结尾的ISO日期
-                                    if date_text.endswith('Z'):
-                                        date_text = date_text.replace('Z', '+00:00')
-                                    published_at = datetime.datetime.fromisoformat(date_text)
-                                    logger.debug(f"Parsed published date: {published_at}")
-                                except ValueError as e:
-                                    logger.warning(f"Invalid published date format: {published_elem.text}, error: {str(e)}")
-                            
-                            # 提取更新时间（如果没有发布时间）
-                            if published_elem is None:
-                                updated_elem = entry.find('.//atom:updated', namespaces) or entry.find('.//updated')
-                                if updated_elem is not None and updated_elem.text:
-                                    try:
-                                        date_text = updated_elem.text.strip()
-                                        logger.debug(f"Updated date text: {date_text}")
-                                        if date_text.endswith('Z'):
-                                            date_text = date_text.replace('Z', '+00:00')
-                                        published_at = datetime.datetime.fromisoformat(date_text)
-                                        logger.debug(f"Parsed updated date: {published_at}")
-                                    except ValueError as e:
-                                        logger.warning(f"Invalid updated date format: {updated_elem.text}, error: {str(e)}")
-                            
-                            # 提取内容
-                            content = ""
-                            content_elem = entry.find('.//atom:content', namespaces) or entry.find('.//content')
-                            if content_elem is not None:
-                                if content_elem.text:
-                                    content = content_elem.text.strip()
-                                else:
-                                    # 尝试获取CDATA内容
-                                    for child in content_elem:
-                                        if child.tag == '{http://www.w3.org/2005/Atom}div' or child.tag == 'div':
-                                            content = ET.tostring(child, encoding='unicode')
-                                            break
-                            
-                            logger.debug(f"Raw content length: {len(content)}")
-                            
-                            # 检查是否包含CDATA
-                            if content.startswith('<![CDATA[') and content.endswith(']]>'):
-                                content = content[9:-3].strip()
-                                logger.debug("Extracted content from CDATA")
-                            
-                            # 清理HTML标签
-                            content_soup = BeautifulSoup(content, 'html.parser')
-                            content = content_soup.get_text(separator=' ', strip=True)
-                        
-                            # 如果没有content元素，尝试查找description元素（RSS格式）
-                            if not content:
-                                desc_elem = entry.find('.//description')
-                                if desc_elem is not None and desc_elem.text:
-                                    content = desc_elem.text.strip()
-                                    # 检查是否包含CDATA
-                                    if content.startswith('<![CDATA[') and content.endswith(']]>'):
-                                        content = content[9:-3].strip()
-                                    # 清理HTML标签
-                                    content_soup = BeautifulSoup(content, 'html.parser')
-                                    content = content_soup.get_text(separator=' ', strip=True)
-                            
-                            logger.debug(f"Final content length: {len(content)}")
-                            
-                            # 提取摘要
-                            summary = content[:200] if content else title
-                            
-                            # 提取作者
-                            author = ""
-                            author_elem = entry.find('.//atom:author', namespaces) or entry.find('.//author')
-                            if author_elem is not None:
-                                # 首先尝试查找标准的name元素
-                                name_elem = author_elem.find('.//atom:name', namespaces) or author_elem.find('.//name')
-                                if name_elem is not None and name_elem.text:
-                                    author = name_elem.text.strip()
-                                else:
-                                    # 尝试查找V2EX特有的n元素
-                                    n_elem = author_elem.find('.//n')
-                                    if n_elem and n_elem.text:
-                                        author = n_elem.text.strip()
-                                        logger.debug(f"Found author in <n> tag: {author}")
-                            
-                            # 如果没有author元素，尝试查找dc:creator元素（RSS格式）
-                            if not author:
-                                creator_elem = entry.find('.//dc:creator', namespaces)
-                                if creator_elem is not None and creator_elem.text:
-                                    author = creator_elem.text.strip()
-                            
-                            logger.debug(f"Author: {author}")
-                            
-                            # 从标题中提取节点信息（如果标题格式为 [节点] 标题）
-                            node = ""
-                            node_match = re.match(r'^\[(.*?)\]', title)
-                            if node_match:
-                                node = node_match.group(1)
-                                logger.debug(f"Extracted node from title: {node}")
-                            
-                            # 创建新闻项
-                            news_item = self.create_news_item(
-                                id=topic_id,
-                                title=title,
-                                url=url,
-                                content=content,
-                                summary=summary,
-                                image_url=None,  # XML feed中通常不包含图片
-                                published_at=published_at,
-                                extra={
-                                    "is_top": False, 
-                                    "mobile_url": url,
-                                    "node": node,
-                                    "author": author,
-                                    "source": "v2ex"
-                                }
-                            )
-                            
-                            news_items.append(news_item)
-                            logger.info(f"Added news item from XML: {title}")
-                            
-                        except Exception as e:
-                            logger.error(f"Error processing XML entry with ElementTree: {str(e)}", exc_info=True)
-                            continue
-                    
-                    # 如果成功解析到数据，直接返回
-                    if news_items:
-                        logger.info(f"Successfully parsed {len(news_items)} news items with ElementTree")
-                        return news_items
-            
-            except Exception as e:
-                logger.warning(f"Error parsing XML with ElementTree: {str(e)}")
-                # 继续使用BeautifulSoup解析
-            
-            # 使用BeautifulSoup解析XML（作为备用方法）
+            # 使用BeautifulSoup解析XML内容
+            # 这比ElementTree更容忍格式问题
             try:
                 soup = BeautifulSoup(xml_content, 'xml')
-                
-                # 查找feed元素
-                feed = soup.find('feed')
-                if not feed:
-                    logger.warning("No feed element found in XML, trying alternative parsing")
-                    # 尝试使用html.parser解析
-                    soup = BeautifulSoup(xml_content, 'html.parser')
-                    feed = soup.find('feed')
-                    if not feed:
-                        logger.error("No feed element found with alternative parser")
-                        return []
-                    logger.info("Found feed element with alternative parser")
-                else:
-                    logger.info("Found feed element in XML")
-                
-                # 查找所有entry元素
                 entries = soup.find_all('entry')
+                
                 if not entries:
-                    logger.warning("No entry elements found in XML feed")
-                    # 尝试查找item元素（RSS格式）
-                    entries = soup.find_all('item')
+                    logger.warning("No entries found with BeautifulSoup XML parser")
+                    # 尝试使用html.parser
+                    soup = BeautifulSoup(xml_content, 'html.parser')
+                    entries = soup.find_all('entry')
                     if not entries:
-                        logger.error("No entry or item elements found in feed")
+                        logger.error("No entries found with any parser")
                         return []
                 
-                logger.info(f"Found {len(entries)} entries in feed with BeautifulSoup")
+                logger.info(f"Found {len(entries)} entries with BeautifulSoup")
                 
                 for entry in entries:
                     try:
                         # 提取标题
                         title_elem = entry.find('title')
-                        if not title_elem or not title_elem.text:
+                        if title_elem is None or not title_elem.text:
                             logger.warning("Entry without title, skipping")
                             continue
                         
@@ -692,16 +522,13 @@ class V2EXSeleniumSource(WebNewsSource):
                         logger.debug(f"Processing entry with title: {title}")
                         
                         # 提取链接
-                        link_elem = entry.find('link', rel='alternate')
-                        if link_elem and link_elem.get('href'):
-                            url = link_elem.get('href')
-                        else:
-                            # 尝试查找普通的link元素（RSS格式）
-                            link_elem = entry.find('link')
-                            url = link_elem.text.strip() if link_elem and link_elem.text else ""
-                            # 如果link元素有href属性
-                            if not url and link_elem and link_elem.get('href'):
+                        link_elem = entry.find('link', rel="alternate") or entry.find('link')
+                        url = ""
+                        if link_elem is not None:
+                            if link_elem.get('href'):
                                 url = link_elem.get('href')
+                            elif link_elem.text:
+                                url = link_elem.text.strip()
                         
                         if not url:
                             logger.warning(f"No URL found for entry: {title}")
@@ -714,90 +541,74 @@ class V2EXSeleniumSource(WebNewsSource):
                         # 提取ID
                         id_elem = entry.find('id')
                         topic_id = ""
-                        if id_elem and id_elem.text:
+                        if id_elem is not None and id_elem.text:
                             id_text = id_elem.text.strip()
+                            logger.debug(f"ID text: {id_text}")
                             if '/t/' in id_text:
                                 topic_id = id_text.split('/t/')[-1].split('#')[0]
                         
                         # 如果无法从ID中提取，则从URL中提取
-                        if not topic_id and '/t/' in url:
+                        if not topic_id and url and '/t/' in url:
                             topic_id = url.split('/t/')[-1].split('#')[0]
                         
                         # 如果仍然无法提取，则生成一个基于URL的哈希ID
                         if not topic_id:
                             topic_id = hashlib.md5(url.encode()).hexdigest()
                         
+                        logger.debug(f"Topic ID: {topic_id}")
+                        
                         # 提取发布时间
                         published_at = datetime.datetime.now(datetime.timezone.utc)
                         published_elem = entry.find('published')
-                        if published_elem and published_elem.text:
+                        if published_elem is not None and published_elem.text:
                             try:
                                 date_text = published_elem.text.strip()
+                                logger.debug(f"Published date text: {date_text}")
                                 # 处理Z结尾的ISO日期
                                 if date_text.endswith('Z'):
                                     date_text = date_text.replace('Z', '+00:00')
                                 published_at = datetime.datetime.fromisoformat(date_text)
-                            except ValueError:
-                                logger.warning(f"Invalid published date format: {published_elem.text}")
+                                logger.debug(f"Parsed published date: {published_at}")
+                            except ValueError as e:
+                                logger.warning(f"Invalid published date format: {published_elem.text}, error: {str(e)}")
                         
-                        # 如果没有published元素，尝试查找updated元素
-                        if not published_elem:
+                        # 提取更新时间（如果没有发布时间）
+                        if published_elem is None:
                             updated_elem = entry.find('updated')
-                            if updated_elem and updated_elem.text:
+                            if updated_elem is not None and updated_elem.text:
                                 try:
                                     date_text = updated_elem.text.strip()
+                                    logger.debug(f"Updated date text: {date_text}")
                                     if date_text.endswith('Z'):
                                         date_text = date_text.replace('Z', '+00:00')
                                     published_at = datetime.datetime.fromisoformat(date_text)
-                                except ValueError:
-                                    logger.warning(f"Invalid updated date format: {updated_elem.text}")
+                                    logger.debug(f"Parsed updated date: {published_at}")
+                                except ValueError as e:
+                                    logger.warning(f"Invalid updated date format: {updated_elem.text}, error: {str(e)}")
                         
                         # 提取内容
                         content = ""
                         content_elem = entry.find('content')
-                        if content_elem:
-                            content = content_elem.text.strip()
-                            # 检查是否包含CDATA
-                            if content.startswith('<![CDATA[') and content.endswith(']]>'):
-                                content = content[9:-3].strip()
-                            # 清理HTML标签
-                            content_soup = BeautifulSoup(content, 'html.parser')
-                            content = content_soup.get_text(separator=' ', strip=True)
+                        if content_elem is not None:
+                            if content_elem.text:
+                                content = content_elem.text.strip()
+                        # 检查是否有HTML内容
+                        elif len(content_elem.contents) > 0:
+                            content = str(content_elem.contents[0])
                         
-                        # 如果没有content元素，尝试查找description元素（RSS格式）
+                        # 如果没有content，尝试获取summary
                         if not content:
-                            desc_elem = entry.find('description')
-                            if desc_elem and desc_elem.text:
-                                content = desc_elem.text.strip()
-                                # 检查是否包含CDATA
-                                if content.startswith('<![CDATA[') and content.endswith(']]>'):
-                                    content = content[9:-3].strip()
-                                # 清理HTML标签
-                                content_soup = BeautifulSoup(content, 'html.parser')
-                                content = content_soup.get_text(separator=' ', strip=True)
-                        
-                        # 提取摘要
-                        summary = content[:200] if content else title
+                            summary_elem = entry.find('summary')
+                            if summary_elem is not None and summary_elem.text:
+                                content = summary_elem.text.strip()
                         
                         # 提取作者
                         author = ""
                         author_elem = entry.find('author')
-                        if author_elem:
+                        if author_elem is not None:
                             name_elem = author_elem.find('name')
-                            if name_elem and name_elem.text:
+                            if name_elem is not None and name_elem.text:
                                 author = name_elem.text.strip()
-                        
-                        # 如果没有author元素，尝试查找creator元素（RSS格式）
-                        if not author:
-                            creator_elem = entry.find('creator')
-                            if creator_elem and creator_elem.text:
-                                author = creator_elem.text.strip()
-                        
-                        # 从标题中提取节点信息（如果标题格式为 [节点] 标题）
-                        node = ""
-                        node_match = re.match(r'^\[(.*?)\]', title)
-                        if node_match:
-                            node = node_match.group(1)
                         
                         # 创建新闻项
                         news_item = self.create_news_item(
@@ -805,31 +616,20 @@ class V2EXSeleniumSource(WebNewsSource):
                             title=title,
                             url=url,
                             content=content,
-                            summary=summary,
-                            image_url=None,
-                            published_at=published_at,
-                            extra={
-                                "is_top": False,
-                                "mobile_url": url,
-                                "node": node,
-                                "author": author,
-                                "source": "v2ex"
-                            }
+                            author=author,
+                            published_at=published_at
                         )
                         
                         news_items.append(news_item)
-                        logger.info(f"Added news item from XML with BeautifulSoup: {title}")
-                        
+                        logger.debug(f"Added news item: {title}")
                     except Exception as e:
-                        logger.error(f"Error processing XML entry with BeautifulSoup: {str(e)}", exc_info=True)
-                        continue
+                        logger.error(f"Error processing entry: {str(e)}")
                 
-                logger.info(f"Parsed {len(news_items)} news items from V2EX feed using BeautifulSoup")
+                logger.info(f"Processed {len(news_items)} news items from XML")
                 return news_items
                 
             except Exception as e:
                 logger.error(f"Error parsing XML with BeautifulSoup: {str(e)}", exc_info=True)
-                return []
             
         except Exception as e:
             logger.error(f"Error parsing XML: {str(e)}", exc_info=True)
@@ -957,131 +757,38 @@ class V2EXSeleniumSource(WebNewsSource):
             logger.error(f"Error parsing V2EX HTML: {str(e)}", exc_info=True)
             return []
     
-    async def fetch(self) -> List[NewsItemModel]:
-        """
-        从V2EX获取最新话题
-        """
-        logger.info(f"Fetching V2EX topics from {self.url}")
-        
-        # 检查是否存在本地XML文件
-        local_xml_path = self.config.get("local_xml_path", "")
-        if local_xml_path and os.path.exists(local_xml_path):
-            logger.info(f"Using local XML file: {local_xml_path}")
-            try:
-                with open(local_xml_path, 'r', encoding='utf-8') as f:
-                    xml_content = f.read()
-                logger.info(f"Successfully read local XML file, content length: {len(xml_content)}")
-                return await self._parse_xml(xml_content)
-            except Exception as e:
-                logger.error(f"Error reading local XML file: {str(e)}", exc_info=True)
-        
-        # 尝试使用Selenium获取内容
-        max_retries = self.config.get("max_retries", 3)
-        retry_delay = self.config.get("retry_delay", 5)
-        
-        for attempt in range(1, max_retries + 1):
-            try:
-                logger.info(f"Attempt {attempt}/{max_retries} to fetch V2EX topics with Selenium")
-                
-                html_content = await self._fetch_with_selenium()
-                if not html_content:
-                    logger.warning(f"Empty content returned on attempt {attempt}")
-                    if attempt < max_retries:
-                        logger.info(f"Retrying in {retry_delay} seconds...")
-                        await asyncio.sleep(retry_delay)
-                    continue
-                
-                logger.info(f"Successfully fetched content with Selenium on attempt {attempt}")
-                
-                # 保存内容到调试文件
-                debug_mode = self.config.get("debug_mode", False)
-                debug_file = self.config.get("debug_file", "v2ex_debug_content.xml")
-                
-                if debug_mode:
-                    try:
-                        with open(debug_file, 'w', encoding='utf-8') as f:
-                            f.write(html_content)
-                        logger.info(f"Saved content to debug file: {debug_file}")
-                    except Exception as e:
-                        logger.error(f"Error saving debug file: {str(e)}")
-                
-                # 检查内容是否为HTML格式
-                if "<html" in html_content.lower() or "<body" in html_content.lower():
-                    logger.info("Parsing content as HTML")
-                    # 尝试从HTML中提取XML内容
-                    soup = BeautifulSoup(html_content, 'html.parser')
-                    pre_tag = soup.find('pre')
-                    if pre_tag:
-                        xml_content = pre_tag.text.strip()
-                        logger.info(f"Extracted XML content from pre tag, length: {len(xml_content)}")
-                        # 保存提取的XML内容到调试文件
-                        if debug_mode:
-                            try:
-                                with open("v2ex_extracted_xml.xml", 'w', encoding='utf-8') as f:
-                                    f.write(xml_content)
-                                logger.info("Saved extracted XML to debug file: v2ex_extracted_xml.xml")
-                            except Exception as e:
-                                logger.error(f"Error saving extracted XML debug file: {str(e)}")
-                        
-                        # 解析提取的XML内容
-                        items = await self._parse_xml(xml_content)
-                        if items:
-                            logger.info(f"Successfully parsed {len(items)} items from extracted XML")
-                            return items
-                        else:
-                            logger.warning("Failed to parse items from extracted XML")
-                    else:
-                        logger.warning("No pre tag found in HTML content")
-                    
-                    # 如果无法从HTML中提取XML，尝试直接解析HTML
-                    items = await self._parse_html(html_content)
-                    if items:
-                        logger.info(f"Parsed {len(items)} news items from V2EX HTML")
-                        return items
-                    else:
-                        logger.warning("Failed to parse items from HTML content")
-                else:
-                    # 直接解析XML内容
-                    logger.info("Parsing content as XML")
-                    items = await self._parse_xml(html_content)
-                    if items:
-                        logger.info(f"Successfully parsed {len(items)} items from XML")
-                        return items
-                    else:
-                        logger.warning("Failed to parse items from XML content")
-                
-                # 如果所有解析方法都失败，尝试下一次获取
-                if attempt < max_retries:
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    await asyncio.sleep(retry_delay)
-            except Exception as e:
-                logger.error(f"Error on attempt {attempt}: {str(e)}", exc_info=True)
-                if attempt < max_retries:
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    await asyncio.sleep(retry_delay)
-            
-        # 如果所有尝试都失败，返回空列表
-        logger.error("Failed to fetch V2EX topics after all retries")
-        return []
-    
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """
-        实现抽象方法 parse_response
-        根据配置决定解析HTML还是XML
+        解析响应内容
         """
-        if not response or len(response.strip()) == 0:
-            logger.error("Empty response in parse_response")
-            return []
+        try:
+            # 检查响应是否为空
+            if not response or not response.strip():
+                logger.warning("Empty response received")
+                return []
             
-        logger.info(f"Parsing response in parse_response method, content length: {len(response)}")
-        
-        # 检查内容是否为XML格式
-        is_xml = response.strip().startswith('<?xml') or response.strip().startswith('<feed')
-        
-        # 根据内容类型或配置决定解析方式
-        if is_xml or self.config.get("parse_xml", False):
-            logger.info("Content appears to be XML, using _parse_xml method")
-            return await self._parse_xml(response)
-        else:
-            logger.info("Content appears to be HTML, using _parse_html method")
-            return await self._parse_html(response) 
+            # 检查内容类型
+            is_xml = response.strip().startswith('<?xml') or response.strip().startswith('<rss')
+            
+            # 根据内容类型或配置决定解析方式
+            if is_xml or self.config.get("parse_xml", False):
+                logger.info("Content appears to be XML, using _parse_xml method")
+                return await self._parse_xml(response)
+            else:
+                logger.info("Content appears to be HTML, using _parse_html method")
+                return await self._parse_html(response)
+        except Exception as e:
+            logger.error(f"Error parsing response: {str(e)}")
+            return []
+
+    async def fetch(self) -> List[NewsItemModel]:
+        """
+        获取V2EX热门话题
+        """
+        try:
+            # 现有代码
+            result = await super().fetch()
+            return result
+        finally:
+            # 确保每次fetch后都关闭driver，防止资源泄漏
+            await self._close_driver() 

@@ -17,6 +17,14 @@ def setup_periodic_tasks(sender, **kwargs):
     """
     Set up periodic tasks
     """
+    # 新增：单源调度任务 - 每5分钟检查一次需要更新的源
+    sender.add_periodic_task(
+        300.0,  # 5分钟
+        news.schedule_source_updates.s(),
+        name="schedule_source_updates",
+        queue="news-queue"
+    )
+    
     # 高频更新源（每10分钟更新一次）- 社交媒体热搜类
     sender.add_periodic_task(
         600.0,  # 10分钟
@@ -59,6 +67,15 @@ def setup_periodic_tasks(sender, **kwargs):
 
 # 也可以使用 beat_schedule 配置
 celery_app.conf.beat_schedule = {
+    # 新增：单源调度任务（每5分钟）
+    'schedule-source-updates': {
+        'task': 'news.schedule_source_updates',
+        'schedule': 300.0,  # 5分钟
+        'options': {
+            'queue': 'news-queue',
+        }
+    },
+    
     # 高频新闻源抓取任务（每10分钟）
     'fetch-high-frequency-sources': {
         'task': 'news.fetch_high_frequency_sources',

@@ -2,7 +2,6 @@
 from worker.sources.sites.zhihu import ZhihuHotNewsSource
 from worker.sources.sites.weibo import WeiboHotNewsSource
 from worker.sources.sites.baidu import BaiduHotNewsSource
-from worker.sources.sites.thepaper import ThePaperHotNewsSource
 from worker.sources.sites.hackernews import HackerNewsSource
 from worker.sources.sites.bilibili import BilibiliHotNewsSource
 from worker.sources.sites.douyin import DouyinHotNewsSource
@@ -53,7 +52,6 @@ __all__ = [
     "ZhihuHotNewsSource",
     "WeiboHotNewsSource",
     "BaiduHotNewsSource",
-    "ThePaperHotNewsSource",
     "HackerNewsSource",
     "BilibiliHotNewsSource",
     "DouyinHotNewsSource",

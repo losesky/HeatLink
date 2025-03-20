@@ -10,7 +10,9 @@ def create_source_stats(
     success_rate: float,
     avg_response_time: float,
     total_requests: int,
-    error_count: int
+    error_count: int,
+    news_count: int = 0,
+    last_response_time: float = 0.0
 ) -> SourceStats:
     """创建新的源统计数据"""
     db_stats = SourceStats(
@@ -18,7 +20,9 @@ def create_source_stats(
         success_rate=success_rate,
         avg_response_time=avg_response_time,
         total_requests=total_requests,
-        error_count=error_count
+        error_count=error_count,
+        news_count=news_count,
+        last_response_time=last_response_time
     )
     db.add(db_stats)
     db.commit()
@@ -50,7 +54,9 @@ def update_source_status(
     avg_response_time: float,
     total_requests: int,
     error_count: int,
-    last_error: Optional[str] = None
+    last_error: Optional[str] = None,
+    news_count: int = 0,
+    last_response_time: float = 0.0
 ) -> Source:
     """更新源状态和统计数据"""
     # 更新源状态
@@ -77,7 +83,9 @@ def update_source_status(
         success_rate=success_rate,
         avg_response_time=avg_response_time,
         total_requests=total_requests,
-        error_count=error_count
+        error_count=error_count,
+        news_count=news_count,
+        last_response_time=last_response_time
     )
     
     db.commit()

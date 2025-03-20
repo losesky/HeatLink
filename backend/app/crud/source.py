@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -74,14 +74,28 @@ def create_source(db: Session, source: SourceCreate) -> Source:
     return db_source
 
 
-def update_source(db: Session, db_obj: Source, obj_in: SourceUpdate) -> Optional[Source]:
+def update_source(db: Session, db_obj: Source, obj_in: Union[SourceUpdate, Dict[str, Any]]) -> Optional[Source]:
     """
     Update a source in the database using the provided data
     """
     if not db_obj:
         return None
     
-    update_data = obj_in.model_dump(exclude_unset=True)
+    # 支持 dict 和 Pydantic 模型两种输入
+    if isinstance(obj_in, dict):
+        update_data = obj_in
+    else:
+        # 兼容不同版本的Pydantic
+        try:
+            # Pydantic v2
+            update_data = obj_in.model_dump(exclude_unset=True)
+        except AttributeError:
+            try:
+                # Pydantic v1
+                update_data = obj_in.dict(exclude_unset=True)
+            except AttributeError:
+                # 如果都不可用，直接转换为dict
+                update_data = dict(obj_in)
     
     # Convert interval fields from seconds to timedelta
     if "update_interval" in update_data:

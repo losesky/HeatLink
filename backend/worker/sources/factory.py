@@ -7,7 +7,6 @@ from worker.sources.sites import (
     ZhihuHotNewsSource,
     WeiboHotNewsSource,
     BaiduHotNewsSource,
-    ThePaperHotNewsSource,
     HackerNewsSource,
     BilibiliHotNewsSource,
     DouyinHotNewsSource,
@@ -72,9 +71,7 @@ class NewsSourceFactory:
             return WeiboHotNewsSource(**kwargs)
         elif source_type == "baidu":
             return BaiduHotNewsSource(**kwargs)
-        elif source_type == "thepaper":
-            return ThePaperHotNewsSource(**kwargs)
-        elif source_type == "thepaper-selenium" or source_type == "thepaper_selenium":
+        elif source_type == "thepaper" or source_type == "thepaper-selenium" or source_type == "thepaper_selenium":
             return ThePaperSeleniumSource(**kwargs)
         elif source_type == "hackernews":
             return HackerNewsSource(**kwargs)
@@ -142,10 +139,6 @@ class NewsSourceFactory:
             return CLSNewsSource(**kwargs)
         elif source_type == "cls-article":
             return CLSArticleNewsSource(**kwargs)
-        elif source_type == "hacker_news":
-            return RSSSourceFactory.create_hacker_news(**kwargs)
-        elif source_type == "bbc_news":
-            return RSSSourceFactory.create_bbc_news(**kwargs)
         elif source_type == "bbc_world":
             return BBCWorldNewsSource(**kwargs)
         elif source_type == "bloomberg":
@@ -270,13 +263,13 @@ class NewsSourceFactory:
         # 如果从数据库获取失败或没有找到数据，使用硬编码列表作为备用
         # 手动定义所有支持的新闻源类型
         sources = [
-            "zhihu", "weibo", "baidu", "thepaper", "hackernews", "bilibili", "douyin",
+            "zhihu", "weibo", "baidu", "thepaper-selenium", "hackernews", "bilibili", "douyin",
             "toutiao", "ithome", "github", "v2ex", "xueqiu",
             "tieba", "kuaishou", "jin10", "cankaoxiaoxi", "solidot", "zaobao",
             "sputniknewscn", "producthunt", "linuxdo", "linuxdo-latest", "linuxdo-hot",
             "kaopu", "gelonghui", "fastbull", "fastbull-express", "fastbull-news", "wallstreetcn",
             "wallstreetcn-news", "wallstreetcn-hot", "36kr", "coolapk", "coolapk-feed",
-            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper-selenium",
+            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper_selenium",
             "zhihu_daily", "bloomberg", "bloomberg-markets", "bloomberg-tech",
             "bloomberg-china", "ifanr", "techcrunch", "the_verge"
         ]

@@ -4,8 +4,9 @@ import time
 import datetime
 from typing import Dict, List, Any, Optional, Set
 
-from worker.sources.base import NewsSource
-from worker.sources.factory import NewsSourceFactory
+# 引入接口而不是具体实现
+from worker.sources.interface import NewsSourceInterface  
+from worker.sources.provider import NewsSourceProvider
 from worker.cache import CacheManager
 
 logger = logging.getLogger(__name__)
@@ -19,20 +20,21 @@ class AdaptiveScheduler:
     
     def __init__(
         self,
+        source_provider: NewsSourceProvider,  # 使用提供者接口
         cache_manager: CacheManager,
         min_interval: int = 120,  # 最小抓取间隔，单位秒，默认2分钟
         max_interval: int = 3600,  # 最大抓取间隔，单位秒，默认1小时
         enable_adaptive: bool = True,  # 是否启用自适应调度
         enable_cache: bool = True,  # 是否启用缓存
+        api_base_url: str = None,  # API基础URL，如果设置，将通过API获取数据
     ):
+        self.source_provider = source_provider  # 保存提供者引用
         self.cache_manager = cache_manager
         self.min_interval = min_interval
         self.max_interval = max_interval
         self.enable_adaptive = enable_adaptive
         self.enable_cache = enable_cache
-        
-        # 存储所有数据源
-        self.sources: Dict[str, NewsSource] = {}
+        self.api_base_url = api_base_url  # 保存API基础URL
         
         # 存储数据源的最后抓取时间
         self.last_fetch_time: Dict[str, float] = {}
@@ -59,30 +61,22 @@ class AdaptiveScheduler:
         if self.initialized:
             return
         
-        # 获取所有可用的源类型
-        source_types = NewsSourceFactory.get_available_sources()
+        # 获取所有源，从提供者获取而不是自己创建
+        sources = self.source_provider.get_all_sources()
         
-        # 创建并注册源实例
-        for source_type in source_types:
-            try:
-                source = NewsSourceFactory.create_source(source_type)
-                if source:
-                    self.register_source(source)
-            except Exception as e:
-                logger.error(f"创建源 {source_type} 时出错: {str(e)}")
+        # 初始化每个源的状态
+        for source in sources:
+            self._initialize_source_state(source)
         
         # 初始化完成
         self.initialized = True
-        logger.info(f"Scheduler initialized with {len(self.sources)} sources")
+        logger.info(f"Scheduler initialized with {len(sources)} sources")
     
-    def register_source(self, source: NewsSource):
+    def _initialize_source_state(self, source: NewsSourceInterface):
         """
-        注册数据源
+        初始化新闻源状态
         """
         source_id = source.source_id
-        
-        # 存储数据源
-        self.sources[source_id] = source
         
         # 初始化最后抓取时间
         self.last_fetch_time[source_id] = 0
@@ -95,39 +89,16 @@ class AdaptiveScheduler:
         
         # 初始化更新频率评分
         self.update_frequency_scores[source_id] = 0.5  # 初始评分为中等
-        
-        logger.info(f"Registered source: {source_id}, update interval: {source.update_interval}s")
-    
-    def unregister_source(self, source_id: str):
-        """
-        注销数据源
-        """
-        if source_id in self.sources:
-            del self.sources[source_id]
-            del self.last_fetch_time[source_id]
-            del self.dynamic_intervals[source_id]
-            del self.success_rates[source_id]
-            del self.update_frequency_scores[source_id]
-            logger.info(f"Unregistered source: {source_id}")
-    
-    def get_source(self, source_id: str) -> Optional[NewsSource]:
-        """
-        获取数据源
-        """
-        return self.sources.get(source_id)
-    
-    def get_all_sources(self) -> List[NewsSource]:
-        """
-        获取所有数据源
-        """
-        return list(self.sources.values())
-    
+
     def should_fetch(self, source_id: str) -> bool:
         """
         判断是否应该抓取数据源
         """
+        # 获取源
+        source = self.source_provider.get_source(source_id)
+        
         # 如果数据源不存在，则不抓取
-        if source_id not in self.sources:
+        if not source:
             return False
         
         # 如果数据源正在抓取，则不重复抓取
@@ -141,113 +112,149 @@ class AdaptiveScheduler:
         last_time = self.last_fetch_time.get(source_id, 0)
         
         # 获取动态调整后的抓取间隔
-        interval = self.dynamic_intervals.get(source_id, self.sources[source_id].update_interval)
+        interval = self.dynamic_intervals.get(source_id, source.update_interval)
         
         # 判断是否应该抓取
         return current_time - last_time >= interval
     
     async def fetch_source(self, source_id: str, force: bool = False) -> bool:
         """
-        抓取数据源
+        抓取单个数据源
+        
+        Args:
+            source_id: 数据源ID
+            force: 是否强制抓取，即使不满足抓取条件
+            
+        Returns:
+            是否成功抓取
         """
-        # 如果数据源不存在，则返回失败
-        if source_id not in self.sources:
-            logger.error(f"Source not found: {source_id}")
+        # 如果数据源不存在，则不抓取
+        source = self.source_provider.get_source(source_id)
+        if not source:
+            logger.warning(f"Source {source_id} not found")
             return False
         
-        # 如果数据源正在抓取，则返回失败
+        # 如果数据源正在抓取，则不重复抓取
         if source_id in self.running_tasks:
-            logger.warning(f"Source is already being fetched: {source_id}")
+            logger.warning(f"Source {source_id} is already being fetched")
             return False
-        
-        # 如果不是强制抓取，且不应该抓取，则返回失败
+            
+        # 如果不是强制抓取，且不满足抓取条件，则不抓取
         if not force and not self.should_fetch(source_id):
             return False
         
-        # 标记数据源正在抓取
+        # 标记为正在抓取
         self.running_tasks.add(source_id)
         
         try:
-            # 获取数据源
-            source = self.sources[source_id]
-            
             # 记录开始时间
             start_time = time.time()
             
-            # 尝试从缓存获取数据
-            cache_key = f"source:{source_id}"
-            cached_data = None
-            
-            if self.enable_cache and not force:
-                cached_data = await self.cache_manager.get(cache_key)
-            
-            # 如果缓存中有数据，则直接返回
-            if cached_data:
-                logger.info(f"Using cached data for source: {source_id}")
-                # 更新最后抓取时间
-                self.last_fetch_time[source_id] = start_time
-                return True
-            
-            # 抓取数据
-            logger.info(f"Fetching data from source: {source_id}")
-            news_items = await source.fetch()
+            # 通过API抓取数据或直接从源抓取
+            try:
+                # 尝试通过API获取数据
+                if hasattr(self, 'api_base_url') and self.api_base_url:
+                    news_items = await self._fetch_source_via_api(source_id, force)
+                    logger.info(f"Fetched source {source_id} via API")
+                else:
+                    # 如果没有设置API基础URL，则直接从源获取
+                    news_items = await source.get_news(force_update=force)
+                    logger.info(f"Fetched source {source_id} directly from source")
+                success = True
+                error = None
+            except Exception as e:
+                logger.exception(f"Error fetching source {source_id}: {str(e)}")
+                news_items = []
+                success = False
+                error = e
             
             # 记录结束时间
             end_time = time.time()
             
-            # 计算抓取耗时
-            fetch_time = end_time - start_time
-            
             # 更新最后抓取时间
             self.last_fetch_time[source_id] = end_time
             
-            # 如果抓取成功
-            if news_items:
-                # 更新抓取成功率
-                self.success_rates[source_id] = 0.9 * self.success_rates[source_id] + 0.1
-                
-                # 如果启用缓存，则将数据存入缓存
-                if self.enable_cache:
-                    # 使用数据源的缓存TTL
-                    ttl = source.cache_ttl
-                    await self.cache_manager.set(cache_key, news_items, ttl)
-                
-                # 如果启用自适应调度，则调整抓取间隔
-                if self.enable_adaptive:
-                    self._adjust_interval(source_id, news_items, fetch_time)
-                
-                logger.info(f"Successfully fetched {len(news_items)} items from source: {source_id}, time: {fetch_time:.2f}s")
-                return True
-            else:
-                # 更新抓取成功率
-                self.success_rates[source_id] = 0.9 * self.success_rates[source_id]
-                
-                # 如果启用自适应调度，则增加抓取间隔
-                if self.enable_adaptive:
-                    self._increase_interval(source_id)
-                
-                logger.warning(f"No data fetched from source: {source_id}, time: {fetch_time:.2f}s")
-                return False
-        except Exception as e:
-            # 更新抓取成功率
-            self.success_rates[source_id] = 0.9 * self.success_rates[source_id]
+            # 更新源的指标
+            source.update_metrics(len(news_items), success, error)
             
-            # 如果启用自适应调度，则增加抓取间隔
+            # 调整抓取间隔
             if self.enable_adaptive:
-                self._increase_interval(source_id)
+                self._adjust_interval(source_id, news_items, end_time - start_time)
             
-            logger.error(f"Error fetching data from source: {source_id}, error: {str(e)}")
-            return False
+            if success:
+                logger.info(f"Successfully fetched {len(news_items)} items from {source_id} in {end_time - start_time:.2f}s")
+            else:
+                logger.error(f"Failed to fetch from {source_id} after {end_time - start_time:.2f}s")
+                
+            return success
         finally:
-            # 标记数据源抓取完成
+            # 移除正在抓取标记
             self.running_tasks.remove(source_id)
+    
+    async def _fetch_source_via_api(self, source_id: str, force: bool = False) -> List[Any]:
+        """
+        通过API抓取数据源
+        
+        Args:
+            source_id: 数据源ID
+            force: 是否强制抓取
+            
+        Returns:
+            新闻列表
+        """
+        import aiohttp
+        from worker.sources.base import NewsItemModel
+        
+        # 构建API URL
+        url = f"{self.api_base_url}/api/sources/external/{source_id}/news"
+        if force:
+            url += "?force_update=true"
+        
+        # 发送请求
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"API error: {response.status} - {error_text}")
+                
+                # 解析响应
+                data = await response.json()
+                
+                # 将JSON数据转换为NewsItemModel对象
+                news_items = []
+                for item_data in data:
+                    news_item = NewsItemModel.from_dict(item_data)
+                    news_items.append(news_item)
+                
+                return news_items
+    
+    def get_all_sources(self) -> List[NewsSourceInterface]:
+        """
+        获取所有数据源
+        
+        Returns:
+            所有数据源列表
+        """
+        return self.source_provider.get_all_sources()
+    
+    def get_source(self, source_id: str) -> Optional[NewsSourceInterface]:
+        """
+        获取数据源
+        
+        Args:
+            source_id: 数据源ID
+            
+        Returns:
+            数据源对象
+        """
+        return self.source_provider.get_source(source_id)
     
     def _adjust_interval(self, source_id: str, news_items: List[Any], fetch_time: float):
         """
         调整抓取间隔
         """
         # 获取数据源
-        source = self.sources[source_id]
+        source = self.source_provider.get_source(source_id)
         
         # 获取当前动态间隔
         current_interval = self.dynamic_intervals[source_id]

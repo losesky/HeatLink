@@ -44,6 +44,7 @@ class Source(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     status = Column(SQLEnum(SourceStatus), default=SourceStatus.INACTIVE)
     last_update = Column(DateTime)
+    news_count = Column(Integer, default=0)  # 新闻数量
     
     # Relationships
     news = relationship("News", back_populates="source")

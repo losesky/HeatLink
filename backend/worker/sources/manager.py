@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from worker.sources.base import NewsSource, NewsItemModel
 from worker.sources.factory import NewsSourceFactory
 from worker.stats_wrapper import stats_updater
+from worker.sources.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class NewsSourceManager:
         注册新闻源
         """
         self.sources[source.source_id] = source
-        logger.info(f"Registered news source: {source.source_id} ({source.name})")
+        settings.log_info(f"Registered news source: {source.source_id} ({source.name})")
     
     def register_sources(self, sources: List[NewsSource]) -> None:
         """
@@ -56,6 +57,9 @@ class NewsSourceManager:
                 logger.error(f"创建源 {source_type} 时出错: {str(e)}")
         
         self.register_sources(sources)
+        
+        # 只记录源总数，而不是每个源的详细信息
+        logger.info(f"注册了 {len(self.sources)} 个新闻源")
     
     def get_source(self, source_id: str) -> Optional[NewsSource]:
         """
@@ -130,7 +134,7 @@ class NewsSourceManager:
         获取指定新闻源的新闻
         支持强制更新和缓存
         """
-        logger.info(f">>> NewsSourceManager.fetch_news called for {source_id}")
+        settings.log_info(f">>> NewsSourceManager.fetch_news called for {source_id}")
         source = self.get_source(source_id)
         if not source:
             logger.error(f"News source not found: {source_id}")
@@ -149,24 +153,24 @@ class NewsSourceManager:
         try:
             # 使用统计信息更新包装器包装源的get_news方法
             async def fetch_with_stats():
-                logger.info(f">>> fetch_with_stats called for {source_id}")
+                settings.log_info(f">>> fetch_with_stats called for {source_id}")
                 # 捕获源的fetch方法
                 original_fetch = source.fetch
-                logger.info(f">>> Original fetch method: {original_fetch}")
+                settings.log_info(f">>> Original fetch method: {original_fetch}")
                 
                 try:
                     # 使用包装器替换原始fetch方法
-                    logger.info(f">>> Replacing fetch method with stats_updater.wrap_fetch for {source_id}")
+                    settings.log_info(f">>> Replacing fetch method with stats_updater.wrap_fetch for {source_id}")
                     source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source_id, original_fetch, *args, **kwargs)
                     
                     # 调用源的get_news方法，它会使用包装后的fetch方法
-                    logger.info(f">>> Calling source.get_news for {source_id}")
+                    settings.log_info(f">>> Calling source.get_news for {source_id}")
                     result = await source.get_news(force_update=force_update)
-                    logger.info(f">>> source.get_news completed for {source_id}, received {len(result)} items")
+                    settings.log_info(f">>> source.get_news completed for {source_id}, received {len(result)} items")
                     return result
                 finally:
                     # 恢复原始fetch方法
-                    logger.info(f">>> Restoring original fetch method for {source_id}")
+                    settings.log_info(f">>> Restoring original fetch method for {source_id}")
                     source.fetch = original_fetch
             
             news_items = await fetch_with_stats()
@@ -181,7 +185,7 @@ class NewsSourceManager:
             self.news_cache[source_id] = unique_news
             self.last_fetch_time[source_id] = current_time
             
-            logger.info(f"Fetched {len(news_items)} news items from {source_id}, {len(unique_news)} unique")
+            settings.log_info(f"Fetched {len(news_items)} news items from {source_id}, {len(unique_news)} unique")
             return unique_news
         except Exception as e:
             logger.error(f"Error fetching news from {source_id}: {str(e)}")
@@ -198,7 +202,7 @@ class NewsSourceManager:
         for source_id in source_ids:
             tasks.append(self.fetch_news(source_id, force_update=force_update))
         
-        logger.info(f"创建了 {len(tasks)} 个获取新闻任务")
+        settings.log_info(f"创建了 {len(tasks)} 个获取新闻任务")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         news_dict = {}
@@ -216,7 +220,7 @@ class NewsSourceManager:
                 total_news_count += news_count
                 if news_count > 0:
                     success_count += 1
-                    logger.info(f"源 {source_id} 获取到 {news_count} 条新闻")
+                    settings.log_info(f"源 {source_id} 获取到 {news_count} 条新闻")
         
         logger.info(f"获取所有新闻源完成: {success_count}/{len(source_ids)} 个源成功获取新闻，总计 {total_news_count} 条新闻")
         return news_dict

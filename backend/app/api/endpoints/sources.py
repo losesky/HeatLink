@@ -4,11 +4,11 @@ import logging
 from datetime import datetime
 import time
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Path, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Path, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_current_superuser, get_current_active_superuser, get_current_active_user
+from app.api.deps import get_db, get_current_superuser, get_current_active_superuser, get_current_active_user, get_news_source_provider
 from app.models.user import User
 from app.crud import source as crud
 from app.crud.source import (
@@ -20,8 +20,8 @@ from app.schemas.source import (
     Source, SourceCreate, SourceUpdate, SourceWithStats,
     SourceAlias, SourceAliasCreate
 )
-from worker.sources.factory import NewsSourceFactory
-from worker.sources.base import NewsSource, NewsItemModel
+from worker.sources.interface import NewsSourceInterface
+from worker.sources.provider import NewsSourceProvider
 
 # Configure logging
 logging.basicConfig(
@@ -133,360 +133,58 @@ def create_new_source(
     return source
 
 
-@router.get("/available", response_model=List[Source])
+@router.get("/available", response_model=List[Dict[str, Any]])
 async def read_available_sources(
-    db: Session = Depends(get_db),
+    source_provider: NewsSourceProvider = Depends(get_news_source_provider),
 ):
     """
-    Get available sources.
-    
-    返回系统中所有可用的新闻源适配器列表。这些是系统能够从中获取新闻的所有可能来源。
-    注意：这与/api/sources/不同，后者返回数据库中已配置的源。
+    获取所有可用的新闻源
     """
-    import traceback
-    import sys
+    # 从提供者获取所有新闻源
+    sources = source_provider.get_all_sources()
     
-    logger.info("开始执行read_available_sources函数 - 获取所有可用新闻源")
+    # 格式化返回数据
+    result = []
+    for source in sources:
+        result.append({
+            "source_id": source.source_id,
+            "name": source.name,
+            "category": source.category,
+            "country": getattr(source, "country", ""),
+            "language": getattr(source, "language", ""),
+            "update_interval": source.update_interval,
+        })
+    
+    return result
+
+
+@router.get("/external/{source_id}/news", response_model=List[Dict[str, Any]])
+async def get_source_news(
+    source_id: str,
+    force_update: bool = False,
+    source_provider: NewsSourceProvider = Depends(get_news_source_provider),
+):
+    """
+    从新闻源获取新闻
+    """
+    # 获取新闻源
+    source = source_provider.get_source(source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail=f"新闻源 {source_id} 不存在")
     
     try:
-        # 获取所有可用源类型
-        logger.info("正在获取所有可用源类型...")
-        source_types = NewsSourceFactory.get_available_sources()
-        logger.info(f"成功获取到 {len(source_types)} 个源类型: {source_types}")
+        # 获取新闻
+        news_items = await source.get_news(force_update=force_update)
         
-        # 硬编码的源类型列表作为备用
-        hardcoded_source_types = [
-            "zhihu", "baidu", "weibo", "bilibili", "toutiao", "douyin", "hacker_news", 
-            "bbc_news", "bbc_world", "bloomberg", "bloomberg-markets", "bloomberg-tech", 
-            "bloomberg-china", "v2ex", "github", "ithome", "coolapk", "coolapk-app", 
-            "coolapk-feed", "cls", "cls-article", "jin10", "xueqiu", "tieba", "kuaishou", 
-            "solidot", "zaobao", "thepaper-selenium", "sputniknewscn", "producthunt", 
-            "linuxdo", "linuxdo-latest", "linuxdo-hot", "kaopu", "gelonghui", 
-            "fastbull-express", "fastbull-news", "wallstreetcn", "wallstreetcn-news", 
-            "wallstreetcn-hot", "36kr", "cankaoxiaoxi", "zhihu_daily", "ifanr", 
-            "techcrunch", "the_verge"
-        ]
+        # 格式化返回数据
+        result = []
+        for item in news_items:
+            result.append(item.to_dict())
         
-        # 如果从工厂获取的类型少于预期，使用硬编码列表
-        if len(source_types) < 45:
-            logger.warning(f"从工厂获取的源类型数量 ({len(source_types)}) 少于预期的46个，将使用硬编码列表")
-            if len(hardcoded_source_types) > len(source_types):
-                source_types = hardcoded_source_types
-                logger.info(f"切换到硬编码源类型列表，包含 {len(source_types)} 个源")
-        
-        # 创建一个列表存储Source对象
-        sources = []
-        
-        # 源类型映射到人类可读的名称
-        source_names = {
-            "zhihu": "知乎热榜",
-            "baidu": "百度热搜",
-            "weibo": "微博热搜",
-            "bilibili": "B站热搜",
-            "toutiao": "今日头条热搜",
-            "douyin": "抖音热搜",
-            "hacker_news": "Hacker News",
-            "bbc_news": "BBC News",
-            "bbc_world": "BBC World News",
-            "bloomberg": "彭博社",
-            "bloomberg-markets": "彭博社市场",
-            "bloomberg-tech": "彭博社科技",
-            "bloomberg-china": "彭博社中国",
-            "v2ex": "V2EX热门",
-            "github": "GitHub Trending",
-            "ithome": "IT之家",
-            "coolapk": "酷安",
-            "coolapk-app": "酷安应用",
-            "coolapk-feed": "酷安动态",
-            "cls": "财联社",
-            "cls-article": "财联社文章",
-            "jin10": "金十数据快讯",
-            "xueqiu": "雪球热门股票",
-            "tieba": "贴吧热门话题",
-            "kuaishou": "快手热搜",
-            "solidot": "奇客",
-            "zaobao": "早报",
-            "thepaper-selenium": "澎湃新闻热榜",
-            "sputniknewscn": "卫星通讯社",
-            "producthunt": "Product Hunt",
-            "linuxdo": "Linux迷",
-            "linuxdo-latest": "Linux迷最新",
-            "linuxdo-hot": "Linux迷热门",
-            "kaopu": "靠谱新闻",
-            "gelonghui": "格隆汇",
-            "fastbull-express": "快牛快讯",
-            "fastbull-news": "快牛新闻",
-            "wallstreetcn": "华尔街见闻快讯",
-            "wallstreetcn-news": "华尔街见闻文章",
-            "wallstreetcn-hot": "华尔街见闻热门",
-            "36kr": "36氪快讯",
-            "cankaoxiaoxi": "参考消息",
-            "zhihu_daily": "知乎日报",
-            "ifanr": "爱范儿",
-            "techcrunch": "TechCrunch",
-            "the_verge": "The Verge"
-        }
-        
-        # 源类型映射到分类
-        source_categories = {
-            "zhihu": "social",
-            "baidu": "social",
-            "weibo": "social",
-            "bilibili": "social",
-            "toutiao": "news",
-            "douyin": "social",
-            "hacker_news": "tech",
-            "bbc_news": "news",
-            "bbc_world": "news",
-            "bloomberg": "finance",
-            "bloomberg-markets": "finance",
-            "bloomberg-tech": "tech",
-            "bloomberg-china": "finance",
-            "v2ex": "forum",
-            "github": "dev",
-            "ithome": "tech",
-            "coolapk": "tech",
-            "coolapk-app": "tech",
-            "coolapk-feed": "tech",
-            "cls": "finance",
-            "cls-article": "finance",
-            "jin10": "finance",
-            "xueqiu": "finance",
-            "tieba": "forum",
-            "kuaishou": "social",
-            "solidot": "tech",
-            "zaobao": "news",
-            "thepaper-selenium": "news",
-            "sputniknewscn": "news",
-            "producthunt": "tech",
-            "linuxdo": "tech",
-            "linuxdo-latest": "tech",
-            "linuxdo-hot": "tech",
-            "kaopu": "news",
-            "gelonghui": "finance",
-            "fastbull-express": "finance",
-            "fastbull-news": "finance",
-            "wallstreetcn": "finance",
-            "wallstreetcn-news": "finance",
-            "wallstreetcn-hot": "finance",
-            "36kr": "tech",
-            "cankaoxiaoxi": "news",
-            "zhihu_daily": "knowledge",
-            "ifanr": "tech",
-            "techcrunch": "tech",
-            "the_verge": "tech"
-        }
-        
-        # 源类型映射到国家
-        source_countries = {
-            "zhihu": "CN",
-            "baidu": "CN",
-            "weibo": "CN",
-            "bilibili": "CN",
-            "toutiao": "CN",
-            "douyin": "CN",
-            "hacker_news": "US",
-            "bbc_news": "UK",
-            "bbc_world": "UK",
-            "bloomberg": "US",
-            "bloomberg-markets": "US",
-            "bloomberg-tech": "US",
-            "bloomberg-china": "CN",
-            "v2ex": "CN",
-            "github": "US",
-            "ithome": "CN",
-            "coolapk": "CN",
-            "coolapk-app": "CN",
-            "coolapk-feed": "CN",
-            "cls": "CN",
-            "cls-article": "CN",
-            "jin10": "CN",
-            "xueqiu": "CN",
-            "tieba": "CN",
-            "kuaishou": "CN",
-            "solidot": "CN",
-            "zaobao": "SG",
-            "thepaper-selenium": "CN",
-            "sputniknewscn": "RU",
-            "producthunt": "US",
-            "linuxdo": "CN",
-            "linuxdo-latest": "CN",
-            "linuxdo-hot": "CN",
-            "kaopu": "CN",
-            "gelonghui": "CN",
-            "fastbull-express": "CN",
-            "fastbull-news": "CN",
-            "wallstreetcn": "CN",
-            "wallstreetcn-news": "CN",
-            "wallstreetcn-hot": "CN",
-            "36kr": "CN",
-            "cankaoxiaoxi": "CN",
-            "zhihu_daily": "CN",
-            "ifanr": "CN",
-            "techcrunch": "US",
-            "the_verge": "US"
-        }
-        
-        # 源类型映射到语言
-        source_languages = {
-            "zhihu": "zh-CN",
-            "baidu": "zh-CN",
-            "weibo": "zh-CN",
-            "bilibili": "zh-CN",
-            "toutiao": "zh-CN",
-            "douyin": "zh-CN",
-            "hacker_news": "en",
-            "bbc_news": "en",
-            "bbc_world": "en",
-            "bloomberg": "en",
-            "bloomberg-markets": "en",
-            "bloomberg-tech": "en",
-            "bloomberg-china": "zh-CN",
-            "v2ex": "zh-CN",
-            "github": "en",
-            "ithome": "zh-CN",
-            "coolapk": "zh-CN",
-            "coolapk-app": "zh-CN",
-            "coolapk-feed": "zh-CN",
-            "cls": "zh-CN",
-            "cls-article": "zh-CN",
-            "jin10": "zh-CN",
-            "xueqiu": "zh-CN",
-            "tieba": "zh-CN",
-            "kuaishou": "zh-CN",
-            "solidot": "zh-CN",
-            "zaobao": "zh-CN",
-            "thepaper-selenium": "zh-CN",
-            "sputniknewscn": "zh-CN",
-            "producthunt": "en",
-            "linuxdo": "zh-CN",
-            "linuxdo-latest": "zh-CN",
-            "linuxdo-hot": "zh-CN",
-            "kaopu": "zh-CN",
-            "gelonghui": "zh-CN",
-            "fastbull-express": "zh-CN",
-            "fastbull-news": "zh-CN",
-            "wallstreetcn": "zh-CN",
-            "wallstreetcn-news": "zh-CN",
-            "wallstreetcn-hot": "zh-CN",
-            "36kr": "zh-CN",
-            "cankaoxiaoxi": "zh-CN",
-            "zhihu_daily": "zh-CN",
-            "ifanr": "zh-CN",
-            "techcrunch": "en",
-            "the_verge": "en"
-        }
-        
-        # 获取分类映射
-        categories_map = {
-            "news": 1,      # 新闻资讯
-            "tech": 2,      # 科技
-            "finance": 3,   # 财经
-            "social": 4,    # 社交媒体
-            "forum": 5,     # 论坛社区
-            "dev": 6,       # 开发者
-            "knowledge": 7  # 知识
-        }
-        logger.info(f"使用分类映射: {categories_map}")
-        
-        # 如果未获取到源类型，记录警告并返回一个测试源
-        if not source_types:
-            logger.warning("没有获取到任何源类型，这可能是因为代码中没有可用的新闻源适配器或获取过程出错")
-            return [create_test_source("test_source", "测试源 (无可用源)")]
-        
-        # 直接从硬编码信息创建源对象
-        current_time = datetime.utcnow()
-        
-        for source_type in source_types:
-            try:
-                # 从映射中获取源信息
-                name = source_names.get(source_type, source_type)
-                category_str = source_categories.get(source_type, "news")  # 默认使用news分类
-                category_id = categories_map.get(category_str, 1)  # 默认使用新闻资讯分类
-                country = source_countries.get(source_type, "unknown")
-                language = source_languages.get(source_type, "unknown")
-                
-                # 创建Source模型对象
-                source_info = Source(
-                    id=source_type,
-                    name=name,
-                    type=SourceType.WEB,  # 默认使用WEB类型
-                    description="",
-                    url="",
-                    logo="",
-                    active=True,
-                    priority=0,
-                    update_interval=3600,  # 默认1小时
-                    cache_ttl=1800,        # 默认30分钟
-                    error_count=0,
-                    category_id=category_id,
-                    country=country,
-                    language=language,
-                    news_count=0,
-                    created_at=current_time,
-                    updated_at=current_time,
-                    last_updated=None,
-                    last_error=None,
-                    config={"init": False}
-                )
-                
-                # 添加到源列表
-                sources.append(source_info)
-                logger.info(f"添加源: {source_type} ({name}), 分类: {category_str}")
-                
-            except Exception as e:
-                logger.error(f"创建源 {source_type} 时出错: {str(e)}")
-                logger.error(f"错误详情: {traceback.format_exc()}")
-        
-        # 按名称排序以保持一致性
-        logger.info(f"排序 {len(sources)} 个源...")
-        sources.sort(key=lambda x: x.name)
-        
-        # 添加结果日志
-        logger.info(f"将返回 {len(sources)} 个可用源")
-        
-        # 始终返回sources列表
-        return sources
-        
+        return result
     except Exception as e:
-        # 捕获整个函数的任何异常
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        logger.error(f"获取可用源时出现未处理异常: {str(e)}")
-        logger.error(f"异常类型: {exc_type}")
-        logger.error(f"异常值: {exc_value}")
-        logger.error(f"异常详情: {traceback.format_exc()}")
-        
-        # 返回测试源
-        logger.info("返回测试源作为异常情况的备选")
-        return [create_test_source("test_source", "测试源 (异常情况)")]
-
-
-# 辅助函数：创建测试源
-def create_test_source(source_id: str, name: str) -> Source:
-    """创建一个测试源对象"""
-    current_time = datetime.utcnow()
-    return Source(
-        id=source_id,
-        name=name,
-        type=SourceType.WEB,
-        description="为测试目的创建的源",
-        url="",
-        logo="",
-        active=True,
-        priority=0,
-        update_interval=3600,
-        cache_ttl=1800,
-        error_count=0,
-        category_id=1,
-        country="CN",
-        language="zh-CN",
-        news_count=0,
-        created_at=current_time,
-        updated_at=current_time,
-        last_updated=None,
-        last_error=None,
-        config={}
-    )
+        logger.error(f"从新闻源 {source_id} 获取新闻时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{source_id}", response_model=Source)

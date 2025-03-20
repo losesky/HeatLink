@@ -15,6 +15,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 from worker.sources.config import settings
+from worker.sources.interface import NewsSourceInterface
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -149,17 +150,25 @@ class NewsSource(ABC):
         self._http_client = None
         self._last_fetch_time = 0
         self._last_fetch_count = 0
-        self._fetch_count = 0
-        self._success_count = 0
-        self._error_count = 0
+        self.priority = 0  # 默认优先级为0
         
-        # 添加自适应更新频率相关属性
-        self.last_update_time = 0  # 上次更新时间戳
+        # 自适应调度相关属性
+        self.min_update_interval = 120  # 最小更新间隔(秒)，默认2分钟
+        self.max_update_interval = 7200  # 最大更新间隔(秒)，默认2小时
+        self.adaptive_interval = update_interval  # 当前的自适应间隔
+        self.last_update_time = 0  # 上次更新时间(时间戳)
         self.last_update_count = 0  # 上次更新获取的新闻数量
         self.update_history = []  # 更新历史记录
-        self.min_update_interval = 120  # 最小更新间隔（秒）
-        self.max_update_interval = 7200  # 最大更新间隔（秒）
-        self.adaptive_interval = update_interval  # 当前自适应间隔
+        self.max_history_size = 10  # 保存的历史记录数量
+        self.history_fingerprints = set()  # 用于去重的历史指纹
+        self.enable_adaptive = True  # 是否启用自适应调度
+        self.performance_metrics = {}  # 性能指标记录
+        
+        # 初始化重试相关属性
+        self.max_retries = 3  # 最大重试次数
+        self.retry_delay = 5  # 重试延迟(秒)
+        self.error_count = 0  # 连续错误计数
+        self.last_error = None  # 最后一次错误信息
         
         # 添加超时控制
         self.connect_timeout = self.config.get("connect_timeout", 10)  # 连接超时（秒）
@@ -181,10 +190,6 @@ class NewsSource(ABC):
         ])
         self.current_ua_index = 0
         
-        # 添加重试配置
-        self.max_retries = self.config.get("max_retries", 3)  # 最大重试次数
-        self.retry_delay = self.config.get("retry_delay", 2)  # 重试延迟（秒）
-        
         # 添加缓存配置
         self.use_memory_cache = self.config.get("use_memory_cache", True)
         self.use_persistent_cache = self.config.get("use_persistent_cache", False)
@@ -192,12 +197,6 @@ class NewsSource(ABC):
         # 添加日志配置
         self.log_requests = self.config.get("log_requests", False)
         self.log_responses = self.config.get("log_responses", False)
-        
-        # 添加性能监控
-        self.performance_metrics = []
-        
-        # 添加内容去重
-        self.title_hashes = set()  # 用于存储标题哈希值
     
     @property
     def http_client(self) -> aiohttp.ClientSession:
@@ -482,28 +481,38 @@ class NewsSource(ABC):
             return False
         
         title_hash = hashlib.md5(title.encode('utf-8')).hexdigest()
-        if title_hash in self.title_hashes:
+        if title_hash in self.history_fingerprints:
             return True
         
-        self.title_hashes.add(title_hash)
+        self.history_fingerprints.add(title_hash)
+        
+        # 如果历史记录过大，删除旧记录
+        if len(self.history_fingerprints) > 1000:
+            self.history_fingerprints = set(list(self.history_fingerprints)[-500:])
+        
         return False
     
     def record_performance(self, operation: str, start_time: float, end_time: float) -> None:
         """
         记录性能指标
         """
-        elapsed_time = end_time - start_time
-        self.performance_metrics.append({
-            "operation": operation,
-            "elapsed_time": elapsed_time,
-            "timestamp": time.time()
-        })
+        duration = end_time - start_time
         
-        # 保留最近100条记录
-        if len(self.performance_metrics) > 100:
-            self.performance_metrics = self.performance_metrics[-100:]
+        if operation not in self.performance_metrics:
+            self.performance_metrics[operation] = {
+                "count": 0,
+                "total_time": 0,
+                "min_time": float("inf"),
+                "max_time": 0,
+                "last_time": 0
+            }
         
-        logger.debug(f"Performance: {operation} took {elapsed_time:.2f}s")
+        metrics = self.performance_metrics[operation]
+        metrics["count"] += 1
+        metrics["total_time"] += duration
+        metrics["min_time"] = min(metrics["min_time"], duration)
+        metrics["max_time"] = max(metrics["max_time"], duration)
+        metrics["last_time"] = duration
     
     def get_cache_key(self, params: Dict[str, Any] = None) -> str:
         """
@@ -556,79 +565,84 @@ class NewsSource(ABC):
     def should_update(self) -> bool:
         """
         判断是否应该更新
-        基于自适应更新间隔
+        基于自适应间隔和最后更新时间
         """
         current_time = time.time()
-        time_since_last_update = current_time - self.last_update_time
         
-        # 如果从未更新过，或者已经超过自适应间隔，则应该更新
-        return self.last_update_time == 0 or time_since_last_update >= self.adaptive_interval
+        # 如果从未更新或强制更新，则应该更新
+        if self.last_update_time == 0:
+            return True
+        
+        # 计算更新间隔
+        interval = self.adaptive_interval if self.enable_adaptive else self.update_interval
+        
+        # 如果已经过了更新间隔，则应该更新
+        return (current_time - self.last_update_time) >= interval
     
     def update_adaptive_interval(self, news_count: int, success: bool = True) -> None:
         """
         更新自适应间隔
-        根据新闻数量动态调整更新频率
-        
-        策略：
-        1. 如果新闻数量增加，减少更新间隔
-        2. 如果新闻数量减少或不变，增加更新间隔
-        3. 保持在最小和最大间隔之间
-        4. 考虑成功率和一天中的时间
+        基于新闻数量、成功状态和更新频率计算
         """
+        if not self.enable_adaptive:
+            return
+        
         current_time = time.time()
         
-        # 记录本次更新
+        # 添加本次更新记录
+        if len(self.update_history) >= self.max_history_size:
+            self.update_history.pop(0)
+        
         self.update_history.append({
             "time": current_time,
             "count": news_count,
             "success": success
         })
         
-        # 保留最近10次更新记录
-        if len(self.update_history) > 10:
-            self.update_history = self.update_history[-10:]
+        # 如果历史记录少于2条，不进行调整
+        if len(self.update_history) < 2:
+            return
         
-        # 如果有足够的历史记录，计算自适应间隔
-        if len(self.update_history) >= 3:
-            # 计算平均新闻增长率
-            avg_growth_rate = 0
-            for i in range(1, len(self.update_history)):
-                prev = self.update_history[i-1]
-                curr = self.update_history[i]
-                time_diff = curr["time"] - prev["time"]
-                count_diff = curr["count"] - prev["count"]
-                
-                # 避免除以零
-                if time_diff > 0:
-                    growth_rate = count_diff / time_diff
-                    avg_growth_rate += growth_rate
+        # 计算平均增长率
+        avg_growth_rate = 0
+        for i in range(1, len(self.update_history)):
+            prev_record = self.update_history[i-1]
+            curr_record = self.update_history[i]
             
-            avg_growth_rate /= (len(self.update_history) - 1)
+            time_diff = curr_record["time"] - prev_record["time"]
+            count_diff = curr_record["count"] - prev_record["count"]
             
-            # 计算成功率
-            success_count = sum(1 for record in self.update_history if record.get("success", True))
-            success_rate = success_count / len(self.update_history)
-            
-            # 根据多种因素调整间隔
-            if avg_growth_rate > 0.1:  # 快速增长
-                # 减少间隔，但考虑成功率
-                factor = 0.8 if success_rate > 0.8 else 0.9
-                self.adaptive_interval = max(self.min_update_interval, self.adaptive_interval * factor)
-            elif avg_growth_rate < 0:  # 减少或不变
-                # 增加间隔，但考虑成功率
-                factor = 1.2 if success_rate > 0.8 else 1.1
-                self.adaptive_interval = min(self.max_update_interval, self.adaptive_interval * factor)
-            
-            # 考虑一天中的时间
-            hour = datetime.datetime.now().hour
-            if 8 <= hour <= 22:  # 白天
-                # 白天更频繁更新
-                self.adaptive_interval = max(self.min_update_interval, self.adaptive_interval * 0.9)
-            else:  # 夜间
-                # 夜间减少更新频率
-                self.adaptive_interval = min(self.max_update_interval, self.adaptive_interval * 1.1)
-            
-            logger.debug(f"Source {self.source_id} adaptive interval updated to {self.adaptive_interval:.2f}s")
+            # 避免除以零
+            if time_diff > 0:
+                growth_rate = count_diff / time_diff
+                avg_growth_rate += growth_rate
+        
+        avg_growth_rate /= (len(self.update_history) - 1)
+        
+        # 计算成功率
+        success_count = sum(1 for record in self.update_history if record.get("success", True))
+        success_rate = success_count / len(self.update_history)
+        
+        # 根据多种因素调整间隔
+        if avg_growth_rate > 0.1:  # 快速增长
+            # 减少间隔，但考虑成功率
+            factor = 0.8 if success_rate > 0.8 else 0.9
+            self.adaptive_interval = max(self.min_update_interval, self.adaptive_interval * factor)
+        elif avg_growth_rate < 0:  # 减少或不变
+            # 增加间隔，但考虑成功率
+            factor = 1.2 if success_rate > 0.8 else 1.1
+            self.adaptive_interval = min(self.max_update_interval, self.adaptive_interval * factor)
+        
+        # 考虑一天中的时间
+        hour = datetime.datetime.now().hour
+        if 8 <= hour <= 22:  # 白天
+            # 白天更频繁更新
+            self.adaptive_interval = max(self.min_update_interval, self.adaptive_interval * 0.9)
+        else:  # 夜间
+            # 夜间减少更新频率
+            self.adaptive_interval = min(self.max_update_interval, self.adaptive_interval * 1.1)
+        
+        logger.debug(f"Source {self.source_id} adaptive interval updated to {self.adaptive_interval:.2f}s")
         
         # 更新最后更新时间和数量
         self.last_update_time = current_time
@@ -653,6 +667,10 @@ class NewsSource(ABC):
                 # 更新自适应间隔
                 self.update_adaptive_interval(len(unique_items), success=True)
                 
+                # 重置错误计数
+                self.error_count = 0
+                self.last_error = None
+                
                 # 记录性能指标
                 end_time = time.time()
                 self.record_performance(f"get_news({self.source_id})", start_time, end_time)
@@ -660,6 +678,10 @@ class NewsSource(ABC):
                 return unique_items
             except Exception as e:
                 logger.error(f"Error fetching news from {self.source_id}: {str(e)}")
+                
+                # 更新错误信息
+                self.error_count += 1
+                self.last_error = str(e)
                 
                 # 更新自适应间隔（失败）
                 self.update_adaptive_interval(0, success=False)
@@ -671,4 +693,41 @@ class NewsSource(ABC):
                 return []
         else:
             logger.debug(f"Skipping update for {self.source_id}, next update in {self.adaptive_interval - (time.time() - self.last_update_time):.2f}s")
-            return [] 
+            return []
+    
+    # 实现接口中的方法
+    def update_metrics(self, news_count: int, success: bool = True, error: Optional[Exception] = None) -> None:
+        """
+        更新性能指标
+        
+        Args:
+            news_count: 获取的新闻数量
+            success: 是否成功
+            error: 错误信息
+        """
+        self.last_update_count = news_count
+        self.last_update_time = time.time()
+        
+        # 更新自适应间隔
+        if self.enable_adaptive:
+            self.update_adaptive_interval(news_count, success)
+        
+        # 记录错误
+        if not success and error:
+            self.error_count += 1
+            self.last_error = str(error)
+        else:
+            self.error_count = 0
+            self.last_error = None
+            
+        # 更新历史记录
+        self.update_history.append({
+            "time": self.last_update_time,
+            "count": news_count,
+            "success": success,
+            "error": str(error) if error else None
+        })
+        
+        # 保持历史记录大小
+        if len(self.update_history) > self.max_history_size:
+            self.update_history = self.update_history[-self.max_history_size:] 

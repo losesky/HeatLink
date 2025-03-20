@@ -11,6 +11,7 @@ import aiohttp_cors
 from worker.cache import CacheManager
 from worker.scheduler import AdaptiveScheduler
 from worker.sources.factory import NewsSourceFactory
+from worker.sources.provider import DefaultNewsSourceProvider, NewsSourceProvider
 
 # 配置日志
 logging.basicConfig(
@@ -39,7 +40,9 @@ class NewsWorker:
         max_interval: int = 3600,
         api_host: str = "0.0.0.0",
         api_port: int = 8000,
-        enable_cors: bool = True
+        enable_cors: bool = True,
+        use_api_for_data: bool = False,  # 是否使用API获取数据
+        api_base_url: str = "http://localhost:8000"  # API基础URL
     ):
         self.redis_url = redis_url
         self.enable_memory_cache = enable_memory_cache
@@ -49,6 +52,11 @@ class NewsWorker:
         self.api_host = api_host
         self.api_port = api_port
         self.enable_cors = enable_cors
+        self.use_api_for_data = use_api_for_data
+        self.api_base_url = api_base_url
+        
+        # 创建源提供者
+        self.source_provider = DefaultNewsSourceProvider()
         
         # 创建缓存管理器
         self.cache_manager = CacheManager(
@@ -58,10 +66,12 @@ class NewsWorker:
         
         # 创建调度器
         self.scheduler = AdaptiveScheduler(
+            source_provider=self.source_provider,  # 传递源提供者
             cache_manager=self.cache_manager,
             min_interval=min_interval,
             max_interval=max_interval,
-            enable_adaptive=enable_adaptive
+            enable_adaptive=enable_adaptive,
+            api_base_url=self.api_base_url if self.use_api_for_data else None
         )
         
         # 创建API服务
@@ -366,6 +376,8 @@ async def main():
     parser.add_argument("--host", help="API server host", default="0.0.0.0")
     parser.add_argument("--port", help="API server port", type=int, default=8000)
     parser.add_argument("--no-cors", help="Disable CORS", action="store_true")
+    parser.add_argument("--use-api", help="Use API to fetch data instead of direct fetch", action="store_true")
+    parser.add_argument("--api-base-url", help="API base URL", default="http://localhost:8000")
     
     args = parser.parse_args()
     
@@ -378,7 +390,9 @@ async def main():
         max_interval=args.max_interval,
         api_host=args.host,
         api_port=args.port,
-        enable_cors=not args.no_cors
+        enable_cors=not args.no_cors,
+        use_api_for_data=args.use_api,
+        api_base_url=args.api_base_url
     )
     
     # 启动工作器

@@ -4,6 +4,7 @@ import os
 from typing import List, Dict, Any, Optional
 import aiohttp
 import json
+import asyncio
 
 from worker.sources.base import NewsItemModel
 from worker.sources.rest_api import RESTNewsSource
@@ -19,10 +20,10 @@ class CLSNewsSource(RESTNewsSource):
     
     # 免费财经新闻API列表，按优先级排序
     FREE_API_URLS = [
-        "https://api.oioweb.cn/api/news/financial",
+        "https://api.vvhan.com/api/hotlist/zxnew", # 综合新闻，移到最前面尝试
         "https://api.apiopen.top/api/getWangYiNews?page=1&count=30",
-        "https://api.mcloc.cn/finance",
-        "https://api.vvhan.com/api/hotlist/zxnew" # 综合新闻，可能包含财经内容
+        "https://api.oioweb.cn/api/news/financial",
+        "https://api.mcloc.cn/finance"
     ]
     
     def __init__(
@@ -94,8 +95,8 @@ class CLSNewsSource(RESTNewsSource):
         try:
             # 创建会话
             async with aiohttp.ClientSession() as session:
-                # 发送GET请求
-                async with session.get(api_url, headers=self.headers, timeout=10) as response:
+                # 发送GET请求，减少超时时间
+                async with session.get(api_url, headers=self.headers, timeout=2) as response:
                     if response.status != 200:
                         logger.warning(f"API request failed with status: {response.status}")
                         try:
@@ -122,6 +123,18 @@ class CLSNewsSource(RESTNewsSource):
                         # 尝试通用解析
                         logger.info(f"Trying generic parser for {api_url}")
                         return self._parse_generic_data(data)
+        except aiohttp.ClientConnectorError as e:
+            logger.warning(f"连接错误 {api_url}: {str(e)}")
+            return []
+        except aiohttp.ClientError as e:
+            logger.warning(f"客户端错误 {api_url}: {str(e)}")
+            return []
+        except asyncio.TimeoutError:
+            logger.warning(f"请求超时 {api_url}")
+            return []
+        except json.JSONDecodeError:
+            logger.warning(f"JSON解析错误 {api_url}")
+            return []
         except Exception as e:
             logger.warning(f"Error fetching from API {api_url}: {str(e)}")
             return []
@@ -527,43 +540,72 @@ class CLSNewsSource(RESTNewsSource):
     
     def _create_mock_data(self) -> List[NewsItemModel]:
         """
-        创建模拟数据用于开发/测试
-        仅在所有API都失败时使用
+        生成模拟财经新闻数据，用于API失效时
         """
-        now = datetime.datetime.now()
+        news_items = []
+        current_time = datetime.datetime.now()
         
-        mock_items = [
+        # 生成模拟新闻
+        mock_news = [
             {
-                "id": f"mock-{i}",
-                "title": f"财联社模拟新闻 {i}: 市场分析与投资策略",
-                "content": f"这是一条模拟的财经新闻，用于测试适配器功能。内容包括市场分析、投资策略和财经动态。这条新闻的索引是 {i}。",
-                "url": "https://www.cls.cn/detail/mock",
-                "published_at": now - datetime.timedelta(hours=i),
-                "image_url": None
+                "title": "央行发布货币政策执行报告",
+                "summary": "报告指出，将继续实施稳健的货币政策，保持流动性合理充裕，促进经济高质量发展",
+                "url": "https://www.example.com/finance/1",
+                "published_at": current_time - datetime.timedelta(minutes=30)
+            },
+            {
+                "title": "IMF上调中国经济增长预期",
+                "summary": "国际货币基金组织上调对中国经济增长的预期，认为中国经济正展现强劲复苏势头",
+                "url": "https://www.example.com/finance/2",
+                "published_at": current_time - datetime.timedelta(hours=1)
+            },
+            {
+                "title": "A股三大指数全线上涨",
+                "summary": "今日A股市场表现强劲，三大指数全线上涨，科技股表现尤为亮眼，带动大盘走高",
+                "url": "https://www.example.com/finance/3",
+                "published_at": current_time - datetime.timedelta(hours=2)
+            },
+            {
+                "title": "美联储暗示可能降息",
+                "summary": "美联储主席暗示今年可能开始降息，美股市场迅速做出反应，三大指数集体上涨",
+                "url": "https://www.example.com/finance/4",
+                "published_at": current_time - datetime.timedelta(hours=3)
+            },
+            {
+                "title": "CPI同比上涨2.1%",
+                "summary": "最新数据显示，全国居民消费价格指数(CPI)同比上涨2.1%，工业生产者出厂价格指数(PPI)同比下降1.2%",
+                "url": "https://www.example.com/finance/5",
+                "published_at": current_time - datetime.timedelta(hours=4)
+            },
+            {
+                "title": "央企年报营收利润双增长",
+                "summary": "多家央企发布年报，大部分企业营收和净利润实现双增长，显示出较强的发展韧性",
+                "url": "https://www.example.com/finance/6",
+                "published_at": current_time - datetime.timedelta(hours=5)
             }
-            for i in range(1, 11)  # 创建10条模拟新闻
         ]
         
-        news_items = []
-        for item in mock_items:
-            news_item = self.create_news_item(
-                id=item["id"],
-                title=item["title"],
-                url=item["url"],
-                content=item["content"],
-                summary=item["content"][:100] + "...",
-                image_url=item["image_url"],
-                published_at=item["published_at"],
+        # 创建新闻项
+        for i, news in enumerate(mock_news):
+            mock_id = f"mock_finance_{i+1}"
+            
+            item = self.create_news_item(
+                id=mock_id,
+                title=news["title"],
+                url=news["url"],
+                summary=news["summary"],
+                content=news["summary"],
+                published_at=news["published_at"],
                 extra={
                     "is_mock": True,
-                    "source_id": self.source_id,
-                    "source": "模拟财联社",
-                    "mobile_url": item["url"]
+                    "source": "财联社(模拟数据)",
+                    "type": "财经新闻"
                 }
             )
-            news_items.append(news_item)
+            
+            news_items.append(item)
         
-        logger.info(f"Created {len(news_items)} mock news items")
+        logger.info(f"Created {len(news_items)} mock financial news items")
         return news_items
 
 

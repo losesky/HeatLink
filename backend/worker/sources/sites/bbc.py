@@ -336,19 +336,26 @@ class BBCWorldNewsSource(WebNewsSource):
                                 method="GET",
                                 headers=headers,
                                 response_type="text",
-                                timeout=self.config.get("total_timeout", 60),
-                                cache=self.config.get("use_cache", True)
+                                timeout=self.config.get("total_timeout", 60)
                             )
                             
                             # 检查响应是否为空
-                            if not response or len(response.strip()) == 0:
+                            if isinstance(response, dict) and "error" in response:
+                                # 处理错误响应
+                                error_msg = response.get("error", "Unknown error")
+                                logger.warning(f"Received error response: {error_msg}")
+                                if retry < max_retries - 1:
+                                    continue
+                                else:
+                                    break
+                            elif not response or (isinstance(response, str) and len(response.strip()) == 0):
                                 logger.warning("Received empty response")
                                 if retry < max_retries - 1:
                                     continue
                                 else:
                                     break
                             
-                            logger.info(f"Successfully fetched from network, content length: {len(response)}")
+                            logger.info(f"Successfully fetched from network, content length: {len(response) if response else 0}")
                             break  # 成功获取数据，跳出重试循环
                         except Exception as e:
                             logger.warning(f"Error fetching from network (attempt {retry+1}/{max_retries}): {str(e)}")
@@ -364,12 +371,19 @@ class BBCWorldNewsSource(WebNewsSource):
                                 logger.error(f"Failed to fetch from URL {current_url} after {max_retries} attempts: {str(e)}", exc_info=True)
                     
                     # 如果成功获取到响应，跳出URL循环
-                    if response and len(response.strip()) > 0:
+                    if isinstance(response, dict) and "error" in response:
+                        # 这是一个错误响应，尝试下一个URL
+                        logger.warning(f"Error response from URL {current_url}: {response.get('error')}")
+                        continue
+                    elif response and (not isinstance(response, str) or len(response.strip()) > 0):
                         logger.info(f"Successfully fetched from URL: {current_url}")
                         break
                 
                 # 如果所有URL都尝试失败，使用模拟文件作为备用
-                if not response or len(response.strip()) == 0:
+                if isinstance(response, dict) and "error" in response:
+                    response = None  # 将错误响应转换为None，以便使用备用
+                
+                if not response or (isinstance(response, str) and len(response.strip()) == 0):
                     logger.warning("All URLs failed, trying mock file as fallback")
                     if self.config.get("use_mock_as_fallback", True):
                         mock_file = self.config.get("mock_file")

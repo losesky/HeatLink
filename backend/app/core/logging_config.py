@@ -25,26 +25,51 @@ def configure_logging():
     )
     
     # 设置特定模块的日志级别
+    # 级别说明:
+    # - DEBUG: 最详细的调试信息，适用于开发调试
+    # - INFO: 一般运行信息，如启动、初始化等
+    # - WARNING: 警告信息，表示可能有问题但程序仍能运行
+    # - ERROR: 错误信息，表示功能受到影响
+    # - CRITICAL: 严重错误，可能导致程序崩溃
     module_levels = {
-        # 源适配器日志 - 设置为WARNING以屏蔽初始化URL和配置的INFO消息
-        "worker.sources.sites": logging.WARNING,
+        # 源适配器日志级别
+        "worker.sources.sites": logging.WARNING,  # 初始化信息不显示
+        "worker.sources.factory": logging.WARNING,  # 工厂方法信息不显示
+        
+        # 保留worker.sources其他模块的INFO级别，如API请求、数据处理等
+        # "worker.sources": logging.WARNING,  # 所有源相关的日志（注释掉，保留INFO级别）
+        
+        # 特定源适配器的日志级别单独调整（只抑制警告信息过多的模块）
+        "worker.sources.sites.cls": logging.ERROR,  # 财联社只显示错误
+        "worker.sources.sites.fastbull": logging.ERROR,  # 快牛只显示错误
+        "worker.sources.sites.jin10": logging.ERROR,  # 金十只显示错误
+        "worker.sources.sites.thepaper_selenium": logging.ERROR,  # 澎湃新闻只显示错误
         
         # 网络请求日志 - 可选根据需要调整
         "httpx": logging.WARNING,
         "urllib3": logging.WARNING,
         "aiohttp": logging.WARNING,
+        "charset_normalizer": logging.WARNING,  # 字符编码检测库的日志
         
         # 数据库日志 - 可选根据需要调整
         "sqlalchemy": logging.WARNING,
         
-        # Web服务器日志 - 调整为WARNING以减少访问日志量
-        "uvicorn": logging.INFO,
-        "uvicorn.access": logging.WARNING,
+        # Web服务器日志 - 调整为INFO以便查看API请求
+        "uvicorn": logging.INFO,  # 保留服务器运行信息
+        "uvicorn.access": logging.INFO,  # 记录API访问
         
         # 其他库日志
         "aiocache": logging.WARNING,
         "aioredis": logging.WARNING,
         "passlib": logging.WARNING,
+        
+        # API相关日志 - 确保记录API请求信息
+        "app.api": logging.INFO,  # API端点日志
+        
+        # 主应用程序日志 - 保持INFO级别以记录重要操作
+        "app": logging.INFO,  # 应用核心
+        "worker": logging.INFO,  # 工作线程
+        "main": logging.INFO,  # 主程序
     }
     
     # 应用模块级别设置

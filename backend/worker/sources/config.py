@@ -26,6 +26,8 @@ class Settings:
         
         # 日志设置
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
+        # 控制详细日志输出
+        self.verbose_logging = self.log_level.upper() not in ["WARNING", "ERROR"]
         
         # Redis设置
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -52,7 +54,25 @@ class Settings:
         """
         log_level = getattr(logging, self.log_level.upper(), logging.INFO)
         logging.getLogger().setLevel(log_level)
-        logger.info(f"Log level set to {self.log_level}")
+        
+        # 设置第三方库的日志级别
+        if not self.verbose_logging:
+            # 减少第三方库的日志输出
+            logging.getLogger("celery").setLevel(logging.WARNING)
+            logging.getLogger("kombu").setLevel(logging.WARNING)
+            logging.getLogger("amqp").setLevel(logging.WARNING)
+            
+            # 只在verbose模式输出日志等级信息
+            logging.getLogger(__name__).debug(f"Log level set to {self.log_level}")
+        else:
+            logger.info(f"Log level set to {self.log_level}")
+    
+    def log_info(self, message):
+        """根据日志级别设置选择使用info或debug级别记录日志"""
+        if self.verbose_logging:
+            logger.info(message)
+        else:
+            logger.debug(message)
     
     def get_dict(self) -> Dict[str, Any]:
         """
@@ -63,6 +83,7 @@ class Settings:
             "app_version": self.app_version,
             "debug": self.debug,
             "log_level": self.log_level,
+            "verbose_logging": self.verbose_logging,
             "redis_url": self.redis_url,
             "redis_prefix": self.redis_prefix,
             "min_fetch_interval": self.min_fetch_interval,

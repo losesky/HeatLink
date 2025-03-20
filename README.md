@@ -277,6 +277,39 @@ Docker配置包括：
    - Redis Commander: http://localhost:8081
    - Flower 监控: http://localhost:5555
 
+### 使用启动脚本（非Docker环境）
+
+我们提供了一系列脚本，使您能够轻松启动所有必要的服务：
+
+1. 首先确保脚本具有执行权限：
+   ```bash
+   chmod +x *.sh
+   ```
+
+2. 依次启动服务：
+   ```bash
+   # 启动数据库和缓存服务
+   ./local-dev.sh
+   
+   # 启动后端API服务
+   ./run_server.sh
+   
+   # 启动Celery任务系统
+   ./run_celery.sh
+   ```
+
+3. 停止服务：
+   ```bash
+   # 停止Celery服务
+   ./stop_celery.sh
+   
+   # 停止API服务
+   pkill -f "python backend/start_server.py"
+   
+   # 停止基础设施服务
+   docker-compose -f docker-compose.local.yml down
+   ```
+
 ### 开发环境
 
 如果您希望在本地运行后端服务以便更方便地调试，我们也提供了本地开发环境配置。
@@ -297,16 +330,183 @@ Docker配置包括：
    启动后端API服务：
    ```bash
    cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   # 或使用封装脚本
+   ./run_server.sh
    ```
 
-   启动Celery Worker：
+   启动Celery任务系统：
    ```bash
-   cd backend && python worker_start.py
+   # 使用封装脚本启动Celery Worker和Beat
+   ./run_celery.sh
+   
+   # 查看日志
+   tail -f celery_worker.log
+   tail -f celery_beat.log
    ```
    
    启动Flower监控：
    ```bash
    cd backend && celery -A worker.celery_app flower --port=5555
+   ```
+
+## 任务调度系统启动脚本
+
+项目提供了专用的脚本来管理Celery任务调度系统，让您可以轻松启动和停止所有任务处理服务。
+
+### run_celery.sh
+
+`run_celery.sh` 脚本用于启动Celery的Worker和Beat进程，负责执行和调度所有后台任务。
+
+#### 功能特点
+
+- 自动检测已运行的Celery进程，避免重复启动
+- 提供交互式选项，可选择终止已有进程并重新启动
+- 自动激活虚拟环境(如果存在)
+- 将日志输出到单独的文件(`celery_worker.log`和`celery_beat.log`)
+- 记录进程PID到`celery.pid`文件，便于后续管理
+
+#### 使用方法
+
+```bash
+chmod +x run_celery.sh  # 确保脚本有执行权限
+./run_celery.sh
+```
+
+启动后，可以通过以下命令查看日志：
+```bash
+tail -f celery_worker.log  # 查看Worker日志
+tail -f celery_beat.log    # 查看Beat日志
+```
+
+### stop_celery.sh
+
+`stop_celery.sh` 脚本用于安全地停止所有Celery相关进程。
+
+#### 功能特点
+
+- 显示当前运行的Celery进程以便确认
+- 先尝试优雅终止，然后在必要时强制终止顽固进程
+- 自动清理`celery.pid`文件
+
+#### 使用方法
+
+```bash
+chmod +x stop_celery.sh  # 确保脚本有执行权限
+./stop_celery.sh
+```
+
+### 完整系统启动流程
+
+要启动HeatLink的所有必要服务，请按照以下顺序操作：
+
+1. **启动基础设施服务**
+   ```bash
+   ./local-dev.sh  # 开发环境
+   # 或
+   docker-compose up -d  # 生产环境
+   ```
+
+2. **启动后端API服务**
+   ```bash
+   ./run_server.sh
+   # 或(开发环境)
+   cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+3. **启动Celery任务系统**
+   ```bash
+   ./run_celery.sh
+   ```
+
+4. **验证服务状态**
+   ```bash
+   # 使用健康检查脚本
+   chmod +x health_check.sh
+   ./health_check.sh
+   
+   # 或手动检查各个组件
+   # 检查API服务
+   curl http://localhost:8000/health
+   curl http://localhost:8000/api/health  # 详细状态
+   
+   # 检查Celery进程
+   ps aux | grep "[c]elery -A worker.celery_app" | grep -v grep
+   
+   # 查看日志
+   tail -f server_log.txt
+   tail -f celery_worker.log
+   tail -f celery_beat.log
+   ```
+
+5. **停止所有服务(完成后)**
+   ```bash
+   # 停止Celery
+   ./stop_celery.sh
+   
+   # 停止API服务
+   pkill -f "python backend/start_server.py"
+   
+   # 停止基础设施服务
+   docker-compose down  # 生产环境
+   # 或
+   docker-compose -f docker-compose.local.yml down  # 开发环境
+   ```
+
+### 任务调度系统监控
+
+启动Celery后，您可以通过以下方式监控任务：
+
+1. **查看任务日志**
+   ```bash
+   tail -f logs/celery_worker.log
+   tail -f logs/celery_news_worker.log
+   ```
+
+2. **使用Flower监控界面**
+   ```bash
+   cd backend && celery -A worker.celery_app flower --port=5555
+   ```
+   然后访问 http://localhost:5555
+
+3. **通过API查询任务状态**
+   ```
+   GET /api/tasks/status/{task_id}
+   GET /api/tasks/active
+   ```
+
+### 任务调度系统故障排除
+
+如果您在运行Celery任务时遇到问题，可以使用以下步骤进行故障排除：
+
+1. **检查Celery进程是否正在运行**
+   ```bash
+   ps aux | grep celery
+   ```
+
+2. **运行综合修复脚本**
+   ```bash
+   python fix_celery_and_db.py
+   ```
+   此脚本会:
+   - 修复数据库Schema问题
+   - 修复stats_wrapper.py中的函数调用
+   - 应用异步循环修复
+   - 重启Celery服务
+   - 测试Celery任务执行
+
+3. **检查常见错误**
+   - "Event loop is closed"错误: 这是由于在Celery任务中使用async/await代码引起的，可以通过应用asyncio_fix解决
+   - "AttributeError: 'Source' object has no attribute 'news_count'"错误: 数据库Schema不匹配，运行数据库迁移
+   - Redis连接问题: 确保Redis服务器正在运行，并且您的配置正确
+
+4. **手动测试任务**
+   ```bash
+   python test_celery.py
+   ```
+
+5. **检查任务执行结果**
+   ```bash
+   python check_database.py
    ```
 
 ## 后端服务启动脚本

@@ -12,11 +12,13 @@ from app.api.endpoints import (
     tags, 
     categories, 
     external, 
-    monitor
+    monitor,
+    health
 )
 
 # 注册路由
 api_router.include_router(monitor.router, prefix="/monitor", tags=["monitor"])
+api_router.include_router(health.router, prefix="/health", tags=["system"])
 
 # 注册endpoints目录下的路由
 api_router.include_router(news.router, prefix="/news", tags=["news"])
