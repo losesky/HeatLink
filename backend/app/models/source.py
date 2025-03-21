@@ -29,7 +29,8 @@ class Source(Base):
     description = Column(Text, nullable=True)
     url = Column(String(512), nullable=True)
     type = Column(SQLEnum(SourceType), nullable=False)  # API, WEB, RSS, MIXED
-    active = Column(Boolean, default=True)
+    # active 字段已移除，使用 status 字段代替
+    # active = Column(Boolean, default=True)
     update_interval = Column(Interval, default=datetime.timedelta(minutes=10))
     cache_ttl = Column(Interval, default=datetime.timedelta(minutes=5))
     last_updated = Column(DateTime, nullable=True)

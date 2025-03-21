@@ -241,7 +241,7 @@ class NewsSourceFactory:
             db = SessionLocal()
             try:
                 # 查询数据库中的所有源类型
-                result = db.execute(text("SELECT id FROM sources WHERE active = true"))
+                result = db.execute(text("SELECT id FROM sources WHERE status = 'ACTIVE'"))
                 db_sources = [row[0] for row in result]
                 
                 # 排除通用的"rss"类型，因为它需要额外的参数

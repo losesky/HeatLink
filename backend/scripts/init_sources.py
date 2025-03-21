@@ -16,7 +16,7 @@ load_dotenv()
 
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
-from app.models.source import Source, SourceType
+from app.models.source import Source, SourceType, SourceStatus
 from app.models.category import Category
 
 # 新闻源分类
@@ -669,7 +669,7 @@ def init_db():
                     country=source_data["country"],
                     language=source_data["language"],
                     config=source_data["config"],
-                    active=True,
+                    status=SourceStatus.ACTIVE,
                     update_interval=datetime.timedelta(minutes=10),
                     cache_ttl=datetime.timedelta(minutes=5),
                     priority=SOURCES.index(source_data)

@@ -722,9 +722,9 @@ class SourceValidator:
             # 构建SQL插入语句，使用直接的JSON字符串而不是参数绑定
             sql_str = f"""
             INSERT INTO sources 
-            (id, name, description, url, type, active, update_interval, cache_ttl, country, language, config, created_at, updated_at) 
+            (id, name, description, url, type, status, update_interval, cache_ttl, country, language, config, created_at, updated_at) 
             VALUES 
-            (:id, :name, :description, :url, :type, :active, 
+            (:id, :name, :description, :url, :type, :status, 
             INTERVAL '{update_interval_seconds} seconds', 
             INTERVAL '{cache_ttl_seconds} seconds', 
             :country, :language, '{config_json}'::jsonb, now(), now())
@@ -740,7 +740,7 @@ class SourceValidator:
                 'description': adapter_info.get('description', ""),
                 'url': url,
                 'type': source_type.value if isinstance(source_type, enum.Enum) else source_type,
-                'active': True,
+                'status': 'ACTIVE',  # 默认设置为ACTIVE状态
                 'country': adapter_info.get('country', ""),
                 'language': adapter_info.get('language', "")
             }

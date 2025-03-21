@@ -430,9 +430,45 @@ class HTTPClient:
         retry_delay = kwargs.pop('retry_delay', 2)
         retry_count = 0
         last_error = None
+        thread_id = threading.get_ident()
         
         while retry_count <= max_retries:
             try:
+                # 每次重试前重置事件循环状态
+                if retry_count > 0:
+                    logger.info(f"第 {retry_count} 次重试获取数据: {url}")
+                    
+                    # 强制清理旧会话
+                    if hasattr(_thread_local, 'sessions') and thread_id in _thread_local.sessions:
+                        try:
+                            old_session = _thread_local.sessions[thread_id]
+                            if old_session and not old_session.closed:
+                                try:
+                                    await old_session.close()
+                                except RuntimeError as e:
+                                    if "Event loop is closed" not in str(e):
+                                        logger.warning(f"关闭旧会话出错: {str(e)}")
+                        except Exception as e:
+                            logger.warning(f"访问或关闭旧会话时出错: {str(e)}")
+                        
+                        # 移除旧会话
+                        _thread_local.sessions.pop(thread_id, None)
+                    
+                    # 如果有事件循环问题，尝试创建新的事件循环
+                    if isinstance(last_error, RuntimeError) and "Event loop is closed" in str(last_error):
+                        try:
+                            # 清理旧事件循环记录
+                            if thread_id in _thread_eventloops:
+                                _thread_eventloops.pop(thread_id, None)
+                            
+                            # 创建新事件循环
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            _thread_eventloops[thread_id] = loop
+                            logger.info(f"为线程 {thread_id} 创建了新的事件循环用于第{retry_count}次重试")
+                        except Exception as e:
+                            logger.error(f"创建新事件循环失败: {str(e)}")
+                
                 # 构建请求参数
                 request_kwargs = {}
                 
@@ -455,33 +491,27 @@ class HTTPClient:
                 request_kwargs["response_type"] = response_type
                 
                 # 发送请求
-                # 每次重试前重新获取会话，确保使用正确的事件循环
-                current_thread_id = threading.get_ident()
-                if retry_count > 0 and current_thread_id in _thread_local.sessions:
-                    # 关闭旧会话
-                    try:
-                        old_session = _thread_local.sessions[current_thread_id]
-                        if old_session and not old_session.closed:
-                            await old_session.close()
-                    except Exception as e:
-                        logger.warning(f"关闭旧会话出错: {str(e)}")
-                    # 移除旧会话
-                    _thread_local.sessions.pop(current_thread_id, None)
-                    
-                    # 如果有事件循环问题，创建新的事件循环
-                    if "Event loop is closed" in str(last_error) or "different loop" in str(last_error) or "Session and connector" in str(last_error):
+                try:
+                    response = await self.request(method, url, **request_kwargs)
+                except RuntimeError as e:
+                    if "Event loop is closed" in str(e):
+                        retry_count += 1
+                        last_error = e
+                        logger.warning(f"fetch请求失败 (事件循环已关闭): {url}, 将进行第 {retry_count} 次重试")
+                        # 创建新的事件循环
                         try:
-                            if current_thread_id in _thread_eventloops:
-                                _thread_eventloops.pop(current_thread_id, None)
+                            if thread_id in _thread_eventloops:
+                                _thread_eventloops.pop(thread_id, None)
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
-                            _thread_eventloops[current_thread_id] = loop
-                            logger.debug(f"为线程 {current_thread_id} 创建了新的事件循环用于第{retry_count}次重试")
-                        except Exception as e:
-                            logger.error(f"创建新事件循环失败: {str(e)}")
-                
-                # 发送请求 
-                response = await self.request(method, url, **request_kwargs)
+                            _thread_eventloops[thread_id] = loop
+                            logger.info(f"在请求中为线程 {thread_id} 创建了新的事件循环")
+                        except Exception as e2:
+                            logger.error(f"创建新事件循环失败: {str(e2)}")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        raise
                 
                 # 检查状态码
                 if response["status"] < 200 or response["status"] >= 300:
@@ -497,7 +527,7 @@ class HTTPClient:
                 # 根据响应类型返回适当的结果
                 return response["data"]
                     
-            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ConnectionError) as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
                 retry_count += 1
                 last_error = e
                 error_msg = str(e)
@@ -527,7 +557,16 @@ class HTTPClient:
                     return None
                 
             except Exception as e:
+                retry_count += 1
+                last_error = e
                 logger.error(f"Fetch请求未预期错误: {url}, 错误: {str(e)}")
+                
+                # 特别处理事件循环错误
+                if isinstance(e, RuntimeError) and "Event loop is closed" in str(e) and retry_count <= max_retries:
+                    logger.warning(f"检测到事件循环已关闭，将尝试第 {retry_count} 次重试")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                
                 # 返回适当的错误结果
                 if response_type == "json":
                     return {"error": f"未预期错误: {str(e)}"}
@@ -535,7 +574,7 @@ class HTTPClient:
                     return f"Error: {str(e)}"
                 else:
                     return None
-                    
+                
         # 所有重试都失败
         logger.error(f"Fetch请求经过{max_retries}次重试后仍然失败: {url}")
         if response_type == "json":

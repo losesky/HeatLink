@@ -140,7 +140,7 @@ async def update_all_sources(max_concurrent: int = 5) -> None:
     db = SessionLocal()
     try:
         # 获取所有活跃的新闻源
-        sources = db.query(Source).filter(Source.active == True).all()
+        sources = db.query(Source).filter(Source.status == SourceStatus.ACTIVE).all()
         logger.info(f"找到 {len(sources)} 个活跃的新闻源")
         
         # 使用信号量限制并发数量

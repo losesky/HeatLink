@@ -269,110 +269,127 @@ class NewsSource(ABC):
                               data: Any = None, params: Dict[str, Any] = None, 
                               response_type: str = "text", **kwargs) -> Any:
         """
-        带重试的请求
+        执行HTTP请求，自动重试
+        
+        Args:
+            url: 请求URL
+            method: 请求方法 (GET, POST等)
+            headers: 请求头
+            data: 请求数据
+            params: 请求参数
+            response_type: 响应类型 (text, json, bytes)
+            **kwargs: 其他参数
+            
+        Returns:
+            响应内容
         """
-        start_time = time.time()
-        
-        # 记录请求信息
-        if self.log_requests:
-            logger.debug(f"Request: {method} {url}")
-            if headers:
-                logger.debug(f"Headers: {headers}")
-            if params:
-                logger.debug(f"Params: {params}")
-            if data:
-                logger.debug(f"Data: {data}")
-        
-        # 创建HTTP客户端
-        client = await self.http_client
-        
-        # 重试逻辑
-        for retry in range(self.max_retries):
-            try:
-                # 发送请求
-                async with client.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    data=data,
-                    params=params,
-                    proxy=self.get_next_proxy(),  # 添加代理参数
-                    **kwargs
-                ) as response:
-                    # 记录响应信息
-                    if self.log_responses:
-                        logger.debug(f"Response: {response.status} {response.reason}")
-                        logger.debug(f"Response headers: {response.headers}")
-                    
-                    # 检查响应状态
-                    if not response.ok:
-                        # 特殊处理某些状态码
-                        if response.status == 429:  # Too Many Requests
-                            retry_after = int(response.headers.get('Retry-After', self.retry_delay * (retry + 1)))
-                            logger.warning(f"Rate limited, retrying after {retry_after}s")
-                            await asyncio.sleep(retry_after)
-                            continue
-                        
-                        if response.status == 403:  # Forbidden
-                            # 尝试更换代理和用户代理
-                            self._http_client = None  # 强制创建新的会话
-                            logger.warning(f"Forbidden, changing proxy and user agent")
-                            if retry < self.max_retries - 1:
-                                await asyncio.sleep(self.retry_delay * (retry + 1))
-                                continue
-                        
-                        # 其他错误状态码
-                        error_text = await response.text()
-                        logger.error(f"HTTP error: {response.status} {response.reason}, {error_text[:200]}")
-                        response.raise_for_status()
-                    
-                    # 处理不同类型的响应
-                    if response_type == "json":
-                        result = await response.json()
-                    elif response_type == "bytes":
-                        result = await response.read()
-                    else:  # 默认为text
-                        result = await response.text()
-                    
-                    # 记录性能指标
-                    end_time = time.time()
-                    self.record_performance(f"{method} {url}", start_time, end_time)
-                    
-                    return result
+        # 尝试导入安全HTTP请求模块
+        try:
+            from backend.worker.asyncio_fix.http_helper import safe_request
             
-            except aiohttp.ClientConnectorError as e:
-                logger.error(f"Connection error: {str(e)}")
-                if retry < self.max_retries - 1:
-                    # 尝试更换代理
-                    self._http_client = None  # 强制创建新的会话
-                    await asyncio.sleep(self.retry_delay * (retry + 1))
-                else:
-                    raise
+            # 使用安全HTTP请求函数
+            return_json = response_type.lower() == 'json'
+            timeout = kwargs.get('timeout', 30.0)
+            max_retries = kwargs.get('max_retries', 3)
+            retry_delay = kwargs.get('retry_delay', 1.0)
+            verify_ssl = kwargs.get('verify_ssl', True)
             
-            except aiohttp.ClientResponseError as e:
-                logger.error(f"Response error: {str(e)}")
-                if retry < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delay * (retry + 1))
-                else:
-                    raise
+            # 使用类中的代理和用户代理
+            proxy = self.get_next_proxy()
+            user_agent = self.get_next_user_agent()
             
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout error for {url}")
-                if retry < self.max_retries - 1:
-                    # 增加超时时间
-                    self.read_timeout = min(self.read_timeout * 1.5, 120)
-                    self.total_timeout = min(self.total_timeout * 1.5, 180)
-                    self._http_client = None  # 强制创建新的会话
-                    await asyncio.sleep(self.retry_delay * (retry + 1))
-                else:
-                    raise
+            # 执行请求
+            success, result, error_message = await safe_request(
+                url=url,
+                method=method,
+                headers=headers,
+                params=params,
+                data=data,
+                timeout=timeout,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                return_json=return_json,
+                verify_ssl=verify_ssl,
+                user_agent=user_agent,
+                proxy=proxy,
+                verbose=kwargs.get('verbose', False)
+            )
             
-            except Exception as e:
-                logger.error(f"Unexpected error: {str(e)}")
-                if retry < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delay * (retry + 1))
-                else:
-                    raise
+            if not success:
+                raise Exception(f"请求失败: {error_message}")
+            
+            # 根据response_type处理结果
+            if response_type.lower() == 'bytes' and isinstance(result, str):
+                return result.encode('utf-8')
+            
+            return result
+        except ImportError:
+            # 如果无法导入安全HTTP模块，使用原始实现
+            import aiohttp
+            import asyncio
+            
+            start_time = time.time()
+            max_retries = kwargs.get('max_retries', 3)
+            timeout = kwargs.get('timeout', 30)
+            retry_count = 0
+            last_exception = None
+            
+            while retry_count < max_retries:
+                try:
+                    # 设置超时
+                    timeout_obj = aiohttp.ClientTimeout(total=timeout)
+                    
+                    # 设置代理
+                    proxy = self.get_next_proxy()
+                    
+                    # 从用户代理池获取User-Agent
+                    user_agent = self.get_next_user_agent()
+                    
+                    # 如果没有提供headers，则创建一个
+                    if headers is None:
+                        headers = {}
+                    
+                    # 如果headers中没有User-Agent，则添加
+                    if 'User-Agent' not in headers:
+                        headers['User-Agent'] = user_agent
+                    
+                    # 执行请求
+                    async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+                        async with session.request(
+                            method, url, headers=headers, data=data, params=params, 
+                            proxy=proxy, ssl=kwargs.get('verify_ssl', True)
+                        ) as response:
+                            # 检查响应状态
+                            if response.status >= 400:
+                                error_text = await response.text()
+                                raise Exception(f"HTTP error {response.status}: {error_text[:500]}")
+                            
+                            # 根据response_type返回不同类型的响应
+                            if response_type.lower() == 'json':
+                                return await response.json()
+                            elif response_type.lower() == 'bytes':
+                                return await response.read()
+                            else:
+                                return await response.text()
+                
+                except (aiohttp.ClientError, asyncio.TimeoutError, Exception) as e:
+                    last_exception = e
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        # 计算等待时间（指数退避）
+                        wait_time = 2 ** retry_count + random.uniform(0, 1)
+                        logger.warning(f"请求 {url} 失败: {str(e)}. 将在 {wait_time:.2f} 秒后重试 ({retry_count}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        break
+            
+            # 记录性能数据
+            end_time = time.time()
+            operation_name = f"HTTP-{method}"
+            self.record_performance(operation_name, start_time, end_time)
+            
+            # 所有重试都失败了
+            raise Exception(f"请求 {url} 失败，已重试 {max_retries} 次: {str(last_exception)}")
     
     def generate_id(self, url: str, title: str = "", published_at: Optional[datetime.datetime] = None) -> str:
         """

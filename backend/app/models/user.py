@@ -32,7 +32,7 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(50), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)  # 用户是否激活，与源表中的active字段无关
     is_superuser = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

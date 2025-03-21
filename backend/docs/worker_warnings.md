@@ -75,6 +75,54 @@ python worker_start_prod.py
 celery -A worker.celery_app worker --loglevel=info --concurrency=4 --queues=main-queue --uid=1000 --gid=1000
 ```
 
+## 3. Celery 日志配置
+
+### 日志文件不写入问题
+
+如果 Celery worker 日志没有正确写入日志文件，可能有以下原因：
+
+1. **日志级别设置过高**：如果设置为 ERROR 级别，则只有错误信息会被记录。
+2. **日志重定向设置不正确**：需要启用 worker_redirect_stdouts 和 worker_hijack_root_logger。
+3. **相对路径问题**：使用 `../logs/` 这样的相对路径可能导致日志写入到意外位置。
+
+### 解决方案
+
+在 `worker/celery_app.py` 中，我们已经添加了正确的配置：
+
+```python
+celery_app.conf.update(
+    # 其他配置...
+    worker_hijack_root_logger=True,  # 劫持root logger
+    worker_redirect_stdouts=True,  # 重定向标准输出
+    # 其他配置...
+)
+```
+
+在启动脚本中，应该使用：
+
+```bash
+# 设置环境变量
+export CELERY_WORKER_REDIRECT_STDOUTS=true
+export CELERY_WORKER_HIJACK_ROOT_LOGGER=true
+export LOG_LEVEL=INFO
+
+# 启动worker时使用绝对路径
+CURRENT_DIR=$(pwd)
+celery -A worker.celery_app worker --loglevel=info --logfile=${CURRENT_DIR}/logs/celery_worker.log
+```
+
+### 验证日志配置
+
+要验证日志是否正确写入，可以执行以下命令：
+
+```bash
+# 检查日志文件
+ls -la logs/celery_worker.log
+
+# 查看日志内容
+tail -f logs/celery_worker.log
+```
+
 ## 注意事项
 
 - 在开发环境中，可以通过设置 `IGNORE_ROOT_WARNING=true` 来忽略超级用户警告，但在生产环境中应该解决它。

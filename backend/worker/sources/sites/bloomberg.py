@@ -520,90 +520,116 @@ class BloombergNewsSource(WebNewsSource):
     
     async def fetch(self) -> List[NewsItemModel]:
         """
-        从Bloomberg获取新闻，重写父类方法添加更多错误处理和重试逻辑
+        获取Bloomberg新闻内容
+        使用RSS feed获取最新新闻
         """
-        logger.info(f"Fetching news from Bloomberg: {self.url}")
-        
-        # 创建适当的会话选项，包括Brotli支持（如果可用）
-        session_kwargs = {
-            "headers": self.headers,
-            "timeout": aiohttp.ClientTimeout(
-                total=self.config.get("total_timeout", 30),
-                connect=self.config.get("connect_timeout", 10),
-                sock_read=self.config.get("read_timeout", 20)
-            )
-        }
-        
-        if HAS_BROTLI:
-            # 如果支持brotli，确保在请求中包含
-            session_kwargs["headers"]["Accept-Encoding"] = "gzip, deflate, br"
-        
-        # 主要URL和备用URL
-        urls_to_try = [self.url]
-        if self.config.get("use_backup_urls", True) and self.BACKUP_URLS:
-            urls_to_try.extend(self.BACKUP_URLS)
-        
         try:
-            # 创建一个aiohttp会话
-            async with aiohttp.ClientSession(**session_kwargs) as session:
-                # 尝试所有URL
-                for url in urls_to_try:
-                    news_items = await self._fetch_from_url(session, url)
-                    if news_items:
-                        logger.info(f"Successfully fetched {len(news_items)} news items from {url}")
-                        return news_items
-                
-                # 如果所有URL都失败，返回模拟数据
-                logger.warning("All URLs failed, returning mock data")
-                return self._create_mock_data()
-            
-        except Exception as e:
-            logger.error(f"Unexpected error in fetch: {str(e)}")
-            logger.error(traceback.format_exc())
-            return self._create_mock_data()
-            
-    async def _fetch_from_url(self, session: aiohttp.ClientSession, url: str) -> List[NewsItemModel]:
-        """从特定URL获取并处理数据，包含重试逻辑"""
-        max_retries = self.config.get("max_retries", 3)
-        retry_delay = self.config.get("retry_delay", 2)
-        
-        for attempt in range(1, max_retries + 1):
+            # 尝试导入安全HTTP助手
             try:
-                logger.info(f"Attempt {attempt}/{max_retries} to fetch from {url}")
-                
-                # 添加随机延迟避免请求过于频繁
-                if self.config.get("use_random_delay", True):
-                    min_delay = self.config.get("min_delay", 0.5)
-                    max_delay = self.config.get("max_delay", 2.0)
-                    delay = random.uniform(min_delay, max_delay)
-                    await asyncio.sleep(delay)
-                
-                # 发送请求
-                async with session.get(url, ssl=False) as response:
-                    if response.status == 200:
-                        text = await response.text()
-                        news_items = await self.parse_response(text)
-                        if news_items:
-                            return news_items
-                        else:
-                            logger.warning(f"No news items found in response from {url}")
-                    else:
-                        logger.error(f"Error response from {url}: {response.status}")
-                
-            except (ClientConnectorError, ClientResponseError, ClientError) as e:
-                logger.error(f"Error fetching from {url} (attempt {attempt}/{max_retries}): {e}")
-            except Exception as e:
-                logger.error(f"Unexpected error fetching from {url}: {e}")
-                logger.error(traceback.format_exc())
+                from backend.worker.asyncio_fix.http_helper import safe_request
+                have_safe_request = True
+            except ImportError:
+                try:
+                    from worker.asyncio_fix.http_helper import safe_request
+                    have_safe_request = True
+                except ImportError:
+                    have_safe_request = False
             
-            # 如果不是最后一次尝试，则等待后重试
-            if attempt < max_retries:
-                wait_time = retry_delay * (1.5 ** (attempt - 1))  # 指数退避策略
-                logger.info(f"Waiting {wait_time:.2f}s before retry...")
-                await asyncio.sleep(wait_time)
-        
-        # 所有尝试都失败了
-        return []
+            # 确保事件循环有效
+            try:
+                from backend.worker.asyncio_fix import get_or_create_eventloop, run_async
+                loop = get_or_create_eventloop()
+                logger.info(f"使用事件循环修复模块获取事件循环: {id(loop)}")
+            except ImportError:
+                try:
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    logger.info(f"使用标准asyncio获取事件循环: {id(loop)}")
+                except Exception as e:
+                    logger.error(f"获取事件循环失败: {str(e)}")
+                    return self._create_mock_data()  # 返回模拟数据
+            
+            # 使用安全的HTTP请求方法
+            if have_safe_request:
+                logger.info(f"使用安全HTTP请求获取 {self.feed_url}")
+                success, result, error_message = await safe_request(
+                    url=self.feed_url,
+                    timeout=30.0,
+                    max_retries=3,
+                    user_agent=random.choice(self.USER_AGENTS),
+                    verbose=True
+                )
+                
+                if not success:
+                    logger.error(f"获取RSS feed失败: {error_message}")
+                    # 尝试备用URL
+                    for backup_url in self.BACKUP_URLS:
+                        logger.info(f"尝试备用URL: {backup_url}")
+                        success, result, error_message = await safe_request(
+                            url=backup_url,
+                            timeout=30.0,
+                            max_retries=2,
+                            user_agent=random.choice(self.USER_AGENTS),
+                            verbose=True
+                        )
+                        if success:
+                            logger.info(f"成功获取备用URL: {backup_url}")
+                            break
+                    
+                    if not success:
+                        logger.error(f"所有URL获取失败，返回模拟数据")
+                        return self._create_mock_data()
+                
+                # 解析内容
+                try:
+                    return await self.parse_response(result)
+                except Exception as e:
+                    logger.error(f"解析响应时发生错误: {str(e)}")
+                    return self._create_mock_data()
+                
+            # 使用标准方法
+            else:
+                logger.info(f"使用标准HTTP请求获取 {self.feed_url}")
+                try:
+                    # 使用类自带的fetch_with_retry方法
+                    feed_content = await self.fetch_with_retry(
+                        url=self.feed_url,
+                        timeout=30.0,
+                        max_retries=3,
+                        headers={'User-Agent': random.choice(self.USER_AGENTS)}
+                    )
+                    
+                    # 解析响应
+                    return await self.parse_response(feed_content)
+                    
+                except Exception as e:
+                    logger.error(f"使用标准HTTP请求失败: {str(e)}")
+                    
+                    # 尝试备用URL
+                    for backup_url in self.BACKUP_URLS:
+                        try:
+                            logger.info(f"尝试备用URL: {backup_url}")
+                            feed_content = await self.fetch_with_retry(
+                                url=backup_url,
+                                timeout=30.0,
+                                max_retries=2,
+                                headers={'User-Agent': random.choice(self.USER_AGENTS)}
+                            )
+                            return await self.parse_response(feed_content)
+                        except Exception as backup_e:
+                            logger.error(f"备用URL {backup_url} 获取失败: {str(backup_e)}")
+                    
+                    # 所有URL失败，返回模拟数据
+                    logger.error(f"所有URL获取失败，返回模拟数据")
+                    return self._create_mock_data()
+                
+        except Exception as e:
+            logger.error(f"获取Bloomberg新闻时出错: {str(e)}")
+            return self._create_mock_data()
     
     def _create_mock_data(self) -> List[NewsItemModel]:
         """

@@ -4,6 +4,8 @@ import sys
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+import functools
+import inspect
 
 from sqlalchemy.orm import Session
 from celery import Task
@@ -21,25 +23,73 @@ from app.core.config import settings
 from worker.sources.manager import source_manager
 from worker.sources.interface import NewsSourceInterface
 from worker.sources.provider import NewsSourceProvider, DefaultNewsSourceProvider
+import random
+import time
+import traceback
+import uuid
 
-# 引入事件循环修复功能
+# 创建日志器
+logger = logging.getLogger(__name__)
+
+# 创建一个简单的ensure_event_loop装饰器，防止导入失败
+def get_or_create_eventloop():
+    """获取当前事件循环或创建新的事件循环"""
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError as ex:
+        if "There is no current event loop in thread" in str(ex):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+        raise
+
+def run_async(coro):
+    """安全地运行异步协程"""
+    loop = get_or_create_eventloop()
+    return loop.run_until_complete(coro)
+
+def ensure_event_loop(func):
+    """确保异步函数在有效的事件循环中执行"""
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        # 确保事件循环有效
+        get_or_create_eventloop()
+        try:
+            return await func(*args, **kwargs)
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                logger.warning(f"检测到事件循环已关闭，为函数 {func.__name__} 创建新循环")
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                return await func(*args, **kwargs)
+            raise
+    return wrapper
+
+# 尝试导入事件循环修复模块
 try:
-    from worker.asyncio_fix import ensure_event_loop, run_async, get_or_create_eventloop
+    from backend.worker.asyncio_fix import ensure_event_loop, run_async, get_or_create_eventloop
     have_asyncio_fix = True
-    logger = get_task_logger(__name__)
-    logger.info("成功导入事件循环修复模块")
+    logger.info("成功从 backend.worker.asyncio_fix 导入事件循环修复")
 except ImportError:
     try:
-        from backend.worker.asyncio_fix import ensure_event_loop, run_async, get_or_create_eventloop
+        from worker.asyncio_fix import ensure_event_loop, run_async, get_or_create_eventloop
         have_asyncio_fix = True
-        logger = get_task_logger(__name__)
-        logger.info("成功导入事件循环修复模块")
+        logger.info("成功从 worker.asyncio_fix 导入事件循环修复")
     except ImportError:
-        have_asyncio_fix = False
-        # 添加系统路径，确保可以导入根目录下的模块
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        logger = get_task_logger(__name__)
-        logger.warning("无法导入事件循环修复模块，将使用标准asyncio")
+        # 我们已经在上面定义了本地版本，所以继续使用它们
+        have_asyncio_fix = True
+        logger.warning("使用内置的事件循环修复函数")
+
+# 尝试导入任务日志助手
+try:
+    from backend.worker.asyncio_fix.task_logger import log_task_execution, log_async_task_execution, add_task_step, complete_task_step, add_task_error, add_task_warning
+    have_task_logger = True
+except ImportError:
+    try:
+        from worker.asyncio_fix.task_logger import log_task_execution, log_async_task_execution, add_task_step, complete_task_step, add_task_error, add_task_warning
+        have_task_logger = True
+    except ImportError:
+        have_task_logger = False
 
 # 定义清理Chrome进程的函数
 def cleanup_chrome_processes():
@@ -105,24 +155,25 @@ def schedule_source_updates(self: Task) -> Dict[str, Any]:
     try:
         logger.info("Starting source update scheduler")
         
-        # 获取所有源
-        sources = source_provider.get_all_sources()
-        
-        scheduled_sources = []
-        for source in sources:
-            # 检查是否应该更新
-            if source.should_update():
-                # 创建异步任务，使用send_task而不是delay
-                celery_app.send_task("news.fetch_source_news", args=[source.source_id])
-                scheduled_sources.append(source.source_id)
-        
-        logger.info(f"Scheduled updates for {len(scheduled_sources)} sources")
-        
-        return {
-            "status": "success",
-            "message": f"Scheduled updates for {len(scheduled_sources)} sources",
-            "sources": scheduled_sources
-        }
+        # 使用异步函数来处理这个任务
+        try:
+            if have_asyncio_fix:
+                # 使用安全的事件循环运行
+                coroutine = _async_schedule_source_updates()
+                results = run_async(coroutine)
+            else:
+                # 使用标准方法
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                coroutine = _async_schedule_source_updates()
+                results = loop.run_until_complete(coroutine)
+                loop.close()
+                
+            return results
+        except Exception as e:
+            logger.error(f"Error in async schedule source updates: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {"status": "error", "message": str(e)}
     except Exception as e:
         logger.error(f"Error in source update scheduler: {str(e)}")
         return {"status": "error", "message": str(e)}
@@ -130,6 +181,30 @@ def schedule_source_updates(self: Task) -> Dict[str, Any]:
         # 清理可能残留的Chrome进程
         cleanup_chrome_processes()
 
+# 异步版本的调度任务
+@ensure_event_loop
+async def _async_schedule_source_updates() -> Dict[str, Any]:
+    """
+    异步版本的源更新调度器
+    """
+    # 获取所有源
+    sources = source_provider.get_all_sources()
+    
+    scheduled_sources = []
+    for source in sources:
+        # 检查是否应该更新
+        if source.should_update():
+            # 创建异步任务，使用send_task而不是delay
+            celery_app.send_task("news.fetch_source_news", args=[source.source_id])
+            scheduled_sources.append(source.source_id)
+    
+    logger.info(f"Scheduled updates for {len(scheduled_sources)} sources")
+    
+    return {
+        "status": "success",
+        "message": f"Scheduled updates for {len(scheduled_sources)} sources",
+        "sources": scheduled_sources
+    }
 
 @celery_app.task(bind=True, name="news.fetch_high_frequency_sources")
 def fetch_high_frequency_sources(self: Task) -> Dict[str, Any]:
@@ -371,67 +446,166 @@ def fetch_source_news(self: Task, source_id: str) -> Dict[str, Any]:
     Args:
         source_id: 新闻源ID
     """
+    # 任务ID用于日志关联
+    task_uuid = str(uuid.uuid4())
+    
+    # 使用任务日志助手
+    if have_task_logger:
+        from backend.worker.asyncio_fix.task_logger import set_task_context
+        set_task_context(task_uuid, "news.fetch_source_news", {"source_id": source_id})
+        add_task_step("task_initialization")
+    
     try:
-        logger.info(f"Fetching news from source: {source_id}")
+        logger.info(f"[{task_uuid}] 开始获取新闻源 {source_id} 的新闻")
         
+        if have_task_logger:
+            add_task_step("get_source_from_provider")
+            
         # 从提供者获取新闻源
         source = source_provider.get_source(source_id)
         if not source:
-            logger.error(f"Source not found: {source_id}")
+            error_msg = f"未找到新闻源: {source_id}"
+            logger.error(f"[{task_uuid}] {error_msg}")
+            
+            if have_task_logger:
+                add_task_error(error_msg)
+                complete_task_step("get_source_from_provider", "error", error_msg)
+                
             return {
                 "status": "error",
-                "message": f"Source not found: {source_id}",
+                "message": error_msg,
                 "source_id": source_id,
-                "count": 0
+                "count": 0,
+                "task_id": task_uuid
             }
+        
+        if have_task_logger:
+            complete_task_step("get_source_from_provider")
+            add_task_step("fetch_news")
         
         # 获取新闻 - 使用运行异步函数的正确方式
         coroutine = _fetch_source_news(source)
-        if have_asyncio_fix:
-            # 使用安全的事件循环运行
-            news_items = run_async(coroutine)
-        else:
-            # 使用标准方法
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                news_items = loop.run_until_complete(coroutine)
-            finally:
-                loop.close()
+        
+        try:
+            if have_asyncio_fix:
+                # 使用安全的事件循环运行
+                try:
+                    news_items = run_async(coroutine)
+                except RuntimeError as e:
+                    # 特别处理事件循环已关闭错误
+                    if "Event loop is closed" in str(e):
+                        logger.warning(f"[{task_uuid}] 检测到事件循环已关闭，正在尝试重新创建...")
+                        # 强制创建新的事件循环
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        news_items = loop.run_until_complete(coroutine)
+                        loop.close()
+                    else:
+                        raise
+            else:
+                # 使用标准方法
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    news_items = loop.run_until_complete(coroutine)
+                finally:
+                    loop.close()
+        except Exception as e:
+            error_msg = f"获取新闻源 {source_id} 时出错: {str(e)}"
+            logger.error(f"[{task_uuid}] {error_msg}")
+            logger.error(traceback.format_exc())
+            
+            if have_task_logger:
+                add_task_error(error_msg, e)
+                complete_task_step("fetch_news", "error", error_msg)
+                
+            # 返回错误信息
+            return {
+                "status": "error",
+                "message": error_msg,
+                "source_id": source_id,
+                "count": 0,
+                "error": str(e),
+                "task_id": task_uuid
+            }
+        
+        if have_task_logger:
+            complete_task_step("fetch_news")
+            add_task_step("process_results")
         
         # 计算结果
         count = len(news_items) if news_items else 0
         
-        # 存储到数据库
-        saved_count = _save_news_to_db(news_items) if news_items else 0
+        if have_task_logger:
+            complete_task_step("process_results")
+            add_task_step("save_to_database")
         
-        logger.info(f"Fetched {count} news items from source: {source_id}, saved {saved_count} to database")
+        # 存储到数据库
+        try:
+            saved_count = _save_news_to_db(news_items) if news_items else 0
+        except Exception as e:
+            error_msg = f"保存新闻到数据库时出错: {str(e)}"
+            logger.error(f"[{task_uuid}] {error_msg}")
+            logger.error(traceback.format_exc())
+            
+            if have_task_logger:
+                add_task_error(error_msg, e)
+                complete_task_step("save_to_database", "error", error_msg)
+                
+            # 即使保存失败，也返回获取的新闻数量
+            return {
+                "status": "partial_success",
+                "message": f"获取了 {count} 条新闻，但保存到数据库时出错: {str(e)}",
+                "source_id": source_id,
+                "count": count,
+                "saved_count": 0,
+                "error": str(e),
+                "task_id": task_uuid
+            }
+        
+        if have_task_logger:
+            complete_task_step("save_to_database")
+            add_task_step("finalize")
+        
+        logger.info(f"[{task_uuid}] 从新闻源 {source_id} 获取了 {count} 条新闻，保存了 {saved_count} 条到数据库")
+        
+        if count > 0 and saved_count == 0:
+            warning_msg = f"获取了 {count} 条新闻，但没有保存任何数据"
+            logger.warning(f"[{task_uuid}] {warning_msg}")
+            
+            if have_task_logger:
+                add_task_warning(warning_msg)
+        
+        if have_task_logger:
+            complete_task_step("finalize")
+            complete_task_step("task_initialization")
         
         # 返回结果
         return {
             "status": "success",
-            "message": f"Fetched {count} news items from source: {source_id}, saved {saved_count} to database",
+            "message": f"从新闻源 {source_id} 获取了 {count} 条新闻，保存了 {saved_count} 条到数据库",
             "source_id": source_id,
             "count": count,
-            "saved_count": saved_count
+            "saved_count": saved_count,
+            "task_id": task_uuid
         }
+        
     except Exception as e:
-        logger.error(f"Error fetching news from source {source_id}: {str(e)}")
-        # 更新源指标以记录错误
-        source = source_provider.get_source(source_id)
-        if source:
-            source.update_metrics(0, False, e)
+        error_msg = f"处理新闻源 {source_id} 时发生未预期的错误: {str(e)}"
+        logger.error(f"[{task_uuid}] {error_msg}")
+        logger.error(traceback.format_exc())
+        
+        if have_task_logger:
+            add_task_error(error_msg, e)
         
         return {
             "status": "error",
-            "message": str(e),
+            "message": error_msg,
             "source_id": source_id,
             "count": 0,
-            "saved_count": 0
+            "error": str(e),
+            "task_id": task_uuid
         }
-    finally:
-        # 清理可能残留的Chrome进程
-        cleanup_chrome_processes()
 
 # 根据是否有asyncio修复模块，使用不同的实现
 if have_asyncio_fix:
@@ -666,6 +840,11 @@ def _save_news_to_db(news_items: List[Any]) -> int:
                 if hasattr(item, 'original_id'):
                     original_id = item.original_id
                 
+                # 检查source_id是否为空，如果为空则跳过该条新闻
+                if not item.source_id:
+                    logger.warning(f"跳过保存新闻: {item.title} - source_id为空")
+                    continue
+                
                 # 检查是否已存在 - 正确传递source_id和original_id两个参数
                 existing_news = get_news_by_original_id(db, item.source_id, original_id)
                 
@@ -699,6 +878,8 @@ def _save_news_to_db(news_items: List[Any]) -> int:
                     saved_count += 1
             except Exception as e:
                 logger.error(f"Error saving news item: {str(e)}")
+                # 如果出现异常，进行回滚以避免事务被挂起
+                db.rollback()
                 continue
         
         return saved_count

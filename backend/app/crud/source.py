@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.models.source import Source, SourceAlias, SourceType
+from app.models.source import Source, SourceAlias, SourceType, SourceStatus
 from app.schemas.source import SourceCreate, SourceUpdate
 
 
@@ -31,7 +31,10 @@ def get_sources(
     query = db.query(Source)
     
     if active_only is not None:
-        query = query.filter(Source.active == active_only)
+        if active_only:
+            query = query.filter(Source.status == SourceStatus.ACTIVE)
+        else:
+            query = query.filter(Source.status != SourceStatus.ACTIVE)
     
     if type_filter:
         query = query.filter(Source.type == type_filter)
@@ -49,7 +52,7 @@ def get_sources(
 
 
 def get_active_sources(db: Session) -> List[Source]:
-    return db.query(Source).filter(Source.active == True).order_by(Source.priority.desc()).all()
+    return db.query(Source).filter(Source.status == SourceStatus.ACTIVE).order_by(Source.priority.desc()).all()
 
 
 def create_source(db: Session, source: SourceCreate) -> Source:

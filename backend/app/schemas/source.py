@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 
-from app.models.source import SourceType
+from app.models.source import SourceType, SourceStatus
 
 
 class SourceBase(BaseModel):
@@ -10,7 +10,7 @@ class SourceBase(BaseModel):
     description: Optional[str] = None
     url: Optional[str] = None
     type: SourceType
-    active: bool = True
+    status: SourceStatus = SourceStatus.INACTIVE
     update_interval: int = 600  # in seconds
     cache_ttl: int = 300  # in seconds
     category_id: Optional[int] = None
@@ -29,7 +29,7 @@ class SourceUpdate(BaseModel):
     description: Optional[str] = None
     url: Optional[str] = None
     type: Optional[SourceType] = None
-    active: Optional[bool] = None
+    status: Optional[SourceStatus] = None
     update_interval: Optional[int] = None
     cache_ttl: Optional[int] = None
     category_id: Optional[int] = None

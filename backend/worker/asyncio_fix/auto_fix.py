@@ -192,10 +192,42 @@ def fix_aiohttp_session():
                     logger.debug("忽略ClientSession关闭时的'Event loop is closed'错误")
                 else:
                     raise
+            except Exception as e:
+                logger.error(f"ClientSession关闭时出现未预期的错误: {str(e)}")
         
         # 替换关闭方法
         aiohttp.ClientSession.close = safe_close
-        logger.info("已修复aiohttp.ClientSession.close方法")
+        
+        # 修复ClientSession的__aexit__方法，确保关闭时不会引发事件循环错误
+        if hasattr(aiohttp.ClientSession, '__aexit__'):
+            original_aexit = aiohttp.ClientSession.__aexit__
+            
+            @functools.wraps(original_aexit)
+            async def safe_aexit(self, exc_type, exc_val, exc_tb):
+                try:
+                    return await original_aexit(self, exc_type, exc_val, exc_tb)
+                except RuntimeError as e:
+                    if "Event loop is closed" in str(e):
+                        logger.debug("忽略ClientSession.__aexit__时的'Event loop is closed'错误")
+                        return False
+                    raise
+                except Exception as e:
+                    logger.error(f"ClientSession.__aexit__时出现未预期的错误: {str(e)}")
+                    return False
+            
+            aiohttp.ClientSession.__aexit__ = safe_aexit
+            
+        # 创建一个更安全的ClientSession工厂函数
+        def create_safe_session(*args, **kwargs):
+            """创建一个带有额外保护的ClientSession"""
+            session = aiohttp.ClientSession(*args, **kwargs)
+            return session
+            
+        # 导出安全的会话创建函数
+        current_module = sys.modules[__name__]
+        setattr(current_module, 'create_safe_session', create_safe_session)
+        
+        logger.info("已修复aiohttp.ClientSession方法")
         
     except (ImportError, AttributeError) as e:
         logger.warning(f"无法修复HTTP客户端: {str(e)}")
@@ -203,11 +235,63 @@ def fix_aiohttp_session():
         logger.error(f"修复HTTP客户端时发生错误: {str(e)}")
 
 
+def fix_asyncio_gather():
+    """
+    修复asyncio.gather函数，使其更健壮地处理任务错误
+    """
+    try:
+        original_gather = asyncio.gather
+        
+        @functools.wraps(original_gather)
+        async def safe_gather(*coros_or_futures, return_exceptions=False, **kwargs):
+            """更安全的gather版本，自动捕获并记录错误"""
+            # 确保有有效的事件循环
+            loop = get_or_create_eventloop()
+            
+            # 对协程/future进行包装，添加错误处理
+            wrapped_coros = []
+            for i, coro in enumerate(coros_or_futures):
+                if asyncio.iscoroutine(coro) or isinstance(coro, asyncio.Future):
+                    # 包装协程/future以捕获错误
+                    async def wrapped_coro(coro=coro, idx=i):
+                        try:
+                            return await coro
+                        except Exception as e:
+                            if not return_exceptions:
+                                logger.error(f"Task {idx} in gather failed: {str(e)}")
+                            raise
+                    wrapped_coros.append(wrapped_coro())
+                else:
+                    wrapped_coros.append(coro)
+            
+            try:
+                return await original_gather(*wrapped_coros, return_exceptions=return_exceptions, **kwargs)
+            except RuntimeError as e:
+                if "Event loop is closed" in str(e):
+                    logger.warning("检测到gather中的事件循环已关闭，创建新循环并重试")
+                    # 创建新循环并重试
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    _thread_local.loop = loop
+                    return await original_gather(*wrapped_coros, return_exceptions=return_exceptions, **kwargs)
+                raise
+        
+        # 替换asyncio.gather
+        asyncio.gather = safe_gather
+        logger.info("已修复asyncio.gather函数")
+        
+    except Exception as e:
+        logger.error(f"修复asyncio.gather时发生错误: {str(e)}")
+
+
 def apply_all_fixes():
     """应用所有的修复"""
     try:
         # 修复aiohttp会话
         fix_aiohttp_session()
+        
+        # 修复asyncio.gather
+        fix_asyncio_gather()
         
         # 导入任务模块
         try:

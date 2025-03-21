@@ -29,31 +29,36 @@ fi
 
 echo -e "${GREEN}设置环境变量...${NC}"
 export PYTHONPATH=$(pwd)
-# 设置环境变量以减少控制台输出
+# 将日志重定向设置为true
 export CELERY_WORKER_REDIRECT_STDOUTS=true
+export CELERY_WORKER_HIJACK_ROOT_LOGGER=true
 export PYTHONUNBUFFERED=1
-# 设置日志级别环境变量 - 使用ERROR来极大减少输出
-export LOG_LEVEL=ERROR
+# 设置日志级别环境变量 - 使用INFO来实现良好的日志输出
+export LOG_LEVEL=INFO
+
+# 获取当前目录的绝对路径
+CURRENT_DIR=$(pwd)
+echo -e "${GREEN}当前目录: ${CURRENT_DIR}${NC}"
+
+# 确保日志目录存在
+mkdir -p logs
 
 cd backend
 
-# 确保日志目录存在
-mkdir -p ../logs
-
 echo -e "${GREEN}启动 Celery Worker...${NC}"
-celery -A worker.celery_app worker --loglevel=error --concurrency=2 --logfile=../logs/celery_worker.log --detach
+celery -A worker.celery_app worker --loglevel=info --concurrency=2 --logfile=${CURRENT_DIR}/logs/celery_worker.log --detach
 
 echo -e "${GREEN}启动 Celery Beat...${NC}"
-celery -A worker.celery_app beat --loglevel=error --logfile=../logs/celery_beat.log --detach
+celery -A worker.celery_app beat --loglevel=info --logfile=${CURRENT_DIR}/logs/celery_beat.log --detach
 
 # 启动专门处理news-queue的Worker
 echo -e "${GREEN}启动 News Queue Worker...${NC}"
-celery -A worker.celery_app worker --loglevel=error --concurrency=1 --queues=news-queue --hostname=news_worker@%h --logfile=../logs/celery_news_worker.log --detach
+celery -A worker.celery_app worker --loglevel=info --concurrency=1 --queues=news-queue --hostname=news_worker@%h --logfile=${CURRENT_DIR}/logs/celery_news_worker.log --detach
 
 echo -e "${GREEN}Celery 服务已启动!${NC}"
 echo "查看日志:"
-echo "  - Worker: tail -f logs/celery_worker.log"
-echo "  - Beat: tail -f logs/celery_beat.log"
-echo "  - News Worker: tail -f logs/celery_news_worker.log"
+echo "  - Worker: tail -f ${CURRENT_DIR}/logs/celery_worker.log"
+echo "  - Beat: tail -f ${CURRENT_DIR}/logs/celery_beat.log"
+echo "  - News Worker: tail -f ${CURRENT_DIR}/logs/celery_news_worker.log"
 echo
 echo -e "${YELLOW}使用 ./stop_celery.sh 停止服务${NC}" 

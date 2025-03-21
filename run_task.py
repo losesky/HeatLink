@@ -59,6 +59,9 @@ def main():
     parser.add_argument("--use-api", action="store_true", help="使用API获取数据而不是直接从源获取")
     parser.add_argument("--api-base-url", default="http://localhost:8000", help="API基础URL")
     parser.add_argument("--timeout", type=int, default=30, help="任务监控超时时间（秒）")
+    parser.add_argument("--source", default="weibo", help="要抓取的新闻源ID")
+    parser.add_argument("--task", choices=["schedule", "fetch"], default="schedule",
+                      help="要执行的任务: schedule (更新调度器) 或 fetch (抓取指定源)")
     args = parser.parse_args()
     
     # 设置环境变量，使任务可以获取到这些参数
@@ -69,9 +72,16 @@ def main():
     
     print_header("运行并监控Celery任务")
     
-    print("提交任务: news.schedule_source_updates (队列: news-queue)")
-    # 使用apply_async并指定queue参数
-    result = schedule_source_updates.apply_async(queue='news-queue')
+    if args.task == "schedule":
+        print(f"提交任务: news.schedule_source_updates (队列: news-queue)")
+        # 使用apply_async并指定queue参数
+        result = schedule_source_updates.apply_async(queue='news-queue')
+    else:
+        print(f"提交任务: news.fetch_source_news 源: {args.source} (队列: news-queue)")
+        # 导入fetch_source_news任务
+        from worker.tasks.news import fetch_source_news
+        # 使用apply_async并指定queue参数和source_id
+        result = fetch_source_news.apply_async(args=[args.source], queue='news-queue')
     
     print(f"开始监控任务...")
     success = monitor_task(result, timeout=args.timeout)

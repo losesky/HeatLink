@@ -416,7 +416,7 @@ class SourceSynchronizer:
             return []
             
         try:
-            result = self.db.execute(text("SELECT id, name, description, url, type, active, category_id FROM sources"))
+            result = self.db.execute(text("SELECT id, name, description, url, type, status, category_id FROM sources"))
             sources = []
             for row in result:
                 sources.append({
@@ -425,7 +425,7 @@ class SourceSynchronizer:
                     "description": row[2] or '',
                     "url": row[3] or '',
                     "type": row[4],
-                    "active": row[5],
+                    "status": row[5],
                     "category_id": row[6]
                 })
             self.log(f"从数据库中获取了 {len(sources)} 个源记录")
@@ -778,7 +778,7 @@ class SourceSynchronizer:
                 # 构建更新SQL
                 sql = text("""
                 UPDATE sources
-                SET active = false, updated_at = CURRENT_TIMESTAMP
+                SET status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP
                 WHERE id = :id
                 """)
                 
@@ -821,7 +821,7 @@ class SourceSynchronizer:
                    s.priority, s.status, s.category_id, c.name as category_name, c.slug as category_slug
             FROM sources s
             LEFT JOIN categories c ON s.category_id = c.id
-            WHERE s.active = true
+            WHERE s.status = 'ACTIVE'
             ORDER BY s.priority DESC, s.name
             """)
             result = self.db.execute(sql)
@@ -908,7 +908,7 @@ class SourceSynchronizer:
                 ) latest
                 ON s.source_id = latest.source_id AND s.created_at = latest.max_created_at
             ) ss ON sources.id = ss.source_id
-            WHERE sources.active = true
+            WHERE sources.status = 'ACTIVE'
             """)
             result = self.db.execute(sql)
             
