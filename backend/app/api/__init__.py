@@ -13,7 +13,8 @@ from app.api.endpoints import (
     categories, 
     external, 
     monitor,
-    health
+    health,
+    source_test
 )
 
 # 注册路由
@@ -28,3 +29,4 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(tags.router, prefix="/tags", tags=["tags"])
 api_router.include_router(categories.router, prefix="/categories", tags=["categories"])
 api_router.include_router(external.router, prefix="/external", tags=["external"])
+api_router.include_router(source_test.router, prefix="/source-test", tags=["source-test"])
