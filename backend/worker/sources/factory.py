@@ -71,7 +71,10 @@ class NewsSourceFactory:
             return WeiboHotNewsSource(**kwargs)
         elif source_type == "baidu":
             return BaiduHotNewsSource(**kwargs)
-        elif source_type == "thepaper" or source_type == "thepaper-selenium" or source_type == "thepaper_selenium":
+        elif source_type in ["thepaper", "thepaper-selenium", "thepaper_selenium"]:
+            if "source_id" in kwargs and kwargs["source_id"] != "thepaper":
+                logger.warning(f"Overriding source_id from '{kwargs['source_id']}' to 'thepaper' for consistency")
+            kwargs["source_id"] = "thepaper"
             return ThePaperSeleniumSource(**kwargs)
         elif source_type == "hackernews":
             return HackerNewsSource(**kwargs)
@@ -240,7 +243,8 @@ class NewsSourceFactory:
             # 创建数据库会话
             db = SessionLocal()
             try:
-                # 查询数据库中的所有源类型
+                # 查询数据库中的所有源类型，不再限制状态为ACTIVE
+                                # 查询数据库中的所有源类型
                 result = db.execute(text("SELECT id FROM sources WHERE status = 'ACTIVE'"))
                 db_sources = [row[0] for row in result]
                 
@@ -252,7 +256,7 @@ class NewsSourceFactory:
                     logger.info(f"从数据库获取了 {len(db_sources)} 个新闻源类型")
                     return db_sources
                 else:
-                    logger.warning("数据库中没有找到活跃的新闻源，将使用硬编码列表")
+                    logger.warning("数据库中没有找到新闻源，将使用硬编码列表")
             except Exception as e:
                 logger.error(f"从数据库获取新闻源类型失败: {str(e)}")
             finally:

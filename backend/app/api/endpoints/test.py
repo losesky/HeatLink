@@ -17,8 +17,9 @@ async def test_source(
     """
     测试新闻源适配器
     直接使用DefaultNewsSourceProvider获取新闻，绕过API层的源提供者
+    确保使用最新的数据库配置
     """
-    # 创建源提供者
+    # 创建源提供者 - 重新初始化以确保使用最新的数据库配置
     source_provider = DefaultNewsSourceProvider()
     
     # 获取新闻源
@@ -27,6 +28,19 @@ async def test_source(
         raise HTTPException(status_code=404, detail=f"新闻源 {request.source_id} 不存在")
     
     try:
+        # 输出源配置信息（调试用）
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"测试源 {request.source_id} 的配置: {source.config}")
+        
+        # 如果是CLS源，特别记录其Selenium配置
+        if request.source_id.startswith('cls'):
+            logger.info(f"CLS源配置详情:")
+            logger.info(f"- use_selenium: {getattr(source, 'use_selenium', None)}")
+            logger.info(f"- use_direct_api: {getattr(source, 'use_direct_api', None)}")
+            logger.info(f"- use_scraping: {getattr(source, 'use_scraping', None)}")
+            logger.info(f"- use_backup_api: {getattr(source, 'use_backup_api', None)}")
+        
         # 获取新闻
         news_items = await source.get_news(force_update=request.force_update)
         

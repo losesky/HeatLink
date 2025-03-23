@@ -5,6 +5,7 @@ import asyncio
 import traceback
 import time
 import json
+import logging
 
 from worker.sources.factory import NewsSourceFactory
 from worker.sources.provider import DefaultNewsSourceProvider
@@ -47,13 +48,45 @@ async def test_source(
         Dict: 测试结果
     """
     try:
-        # Create a source instance
-        source = NewsSourceFactory.create_source(source_id)
+        logger = logging.getLogger(__name__)
+        
+        # 尝试从数据库获取源配置
+        db_config = None
+        try:
+            import psycopg2
+            conn = psycopg2.connect('postgresql://postgres:postgres@localhost:5432/heatlink_dev')
+            cur = conn.cursor()
+            cur.execute("SELECT config FROM sources WHERE id = %s", (source_id,))
+            row = cur.fetchone()
+            conn.close()
+            
+            if row and row[0]:
+                db_config = row[0]
+                logger.info(f"从数据库获取到源 {source_id} 的配置: {db_config}")
+        except Exception as e:
+            logger.error(f"从数据库获取源配置失败: {str(e)}")
+        
+        # Create a source instance with database config if available
+        if db_config:
+            source = NewsSourceFactory.create_source(source_id, config=db_config)
+            logger.info(f"使用数据库配置创建源 {source_id}")
+        else:
+            source = NewsSourceFactory.create_source(source_id)
+            logger.info(f"使用默认配置创建源 {source_id}")
+            
         if not source:
             raise HTTPException(
                 status_code=404,
                 detail=f"找不到源 {source_id}"
             )
+            
+        # 特别记录CLS源的配置（调试用）
+        if source_id.startswith('cls'):
+            logger.info(f"CLS源配置详情:")
+            logger.info(f"- use_selenium: {getattr(source, 'use_selenium', None)}")
+            logger.info(f"- use_direct_api: {getattr(source, 'use_direct_api', None)}")
+            logger.info(f"- use_scraping: {getattr(source, 'use_scraping', None)}")
+            logger.info(f"- use_backup_api: {getattr(source, 'use_backup_api', None)}")
             
         # Set a timeout for the test
         start_time = time.time()

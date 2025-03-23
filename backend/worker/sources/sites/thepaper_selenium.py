@@ -25,31 +25,42 @@ from webdriver_manager.chrome import ChromeDriverManager
 from worker.sources.web import WebNewsSource
 from worker.sources.base import NewsItemModel
 from worker.utils.http_client import http_client
+try:
+    # Import the custom logging configuration module
+    from worker.sources.sites.thepaper_log_config import configure_thepaper_logging
+    logger = configure_thepaper_logging()
+except ImportError:
+    # Fallback to standard logging if the config module is not available
+    logger = logging.getLogger(__name__)
+    # Set this logger to INFO to reduce output
+    logger.setLevel(logging.INFO)
+    # Set related loggers to WARNING
+    logging.getLogger("selenium").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-logger = logging.getLogger(__name__)
-
+# Global debug mode flag - set to False to reduce output
+DEBUG_MODE = False
 
 class ThePaperSeleniumSource(WebNewsSource):
     """
     澎湃新闻热榜适配器 - Selenium版本
-    !!!优先使用第三方API获取数据，遇到问题再尝试使用Selenium!!!
+    专门使用Selenium从澎湃新闻网站获取热榜数据
+    通过分析页面结构直接提取新闻列表
+    
+    特性:
+    - 使用桌面版浏览器配置访问网站，避免被重定向到移动版
+    - 监测并自动从移动版切换到桌面版，确保获取完整内容
+    - 使用大窗口尺寸和桌面版用户代理模拟真实桌面浏览器
     """
     
-    # 用户代理列表，模拟不同的浏览器
+    # 用户代理列表，仅包含桌面浏览器，避免重定向到移动版网站
+    # 明确使用桌面版用户代理，避免被重定向到移动版，确保获取完整桌面版内容
     USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
-    ]
-    
-    # 第三方API URL
-    THIRD_PARTY_API_URL = "https://api.vvhan.com/api/hotlist/pengPai"
-    # 备用API列表
-    BACKUP_API_URLS = [
-        "https://api.vvhan.com/api/hotlist/pengPai", 
-        "https://api.oioweb.cn/api/news/thepaper"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Edge/120.0.0.0"
     ]
     
     def __init__(
@@ -66,8 +77,16 @@ class ThePaperSeleniumSource(WebNewsSource):
     ):
         config = config or {}
         
-        # 随机选择一个用户代理
+        # 随机选择一个桌面版用户代理
         user_agent = random.choice(self.USER_AGENTS)
+        
+        # 确保URL是桌面版
+        if url and ("m.thepaper.cn" in url or "mobile.thepaper.cn" in url):
+            url = url.replace("m.thepaper.cn", "www.thepaper.cn").replace("mobile.thepaper.cn", "www.thepaper.cn")
+            logger.info(f"URL已转换为桌面版: {url}")
+        elif not url:
+            url = "https://www.thepaper.cn/"
+            logger.info(f"使用默认桌面版URL: {url}")
         
         config.update({
             "headers": {
@@ -85,12 +104,8 @@ class ThePaperSeleniumSource(WebNewsSource):
                 "Pragma": "no-cache",
                 "DNT": "1",  # Do Not Track
             },
-            # API配置
-            "use_api": False,  # 默认禁用API
-            "api_url": self.THIRD_PARTY_API_URL,
-            "api_timeout": 10,  # API请求超时时间（秒）
             # Selenium配置
-            "use_selenium": True,  # 默认启用Selenium
+            "use_selenium": True,  # 始终启用Selenium
             "selenium_timeout": 30,  # 页面加载超时时间（秒）
             "selenium_wait_time": 5,  # 等待元素出现的时间（秒）
             "headless": True,  # 无头模式（不显示浏览器窗口）
@@ -123,15 +138,12 @@ class ThePaperSeleniumSource(WebNewsSource):
         
         self._driver = None
         self._driver_pid = None  # 添加记录chromedriver进程ID
-        logger.info(f"初始化 {self.name} 适配器，URL: {self.url}，启用Selenium: {self.config.get('use_selenium', True)}，无头模式: {self.config.get('headless', True)}")
-        
-        # 设置API URL
-        self.api_url = config.get("api_url", self.THIRD_PARTY_API_URL)
-        logger.info(f"使用API URL: {self.api_url}")
+        logger.info(f"初始化 {self.name} 适配器，URL: {self.url}，无头模式: {self.config.get('headless', True)}")
     
     def _create_driver(self):
         """
         创建并配置Selenium WebDriver
+        确保使用桌面版浏览器配置，避免被重定向到移动版站点
         """
         try:
             logger.debug("开始创建Chrome WebDriver实例")
@@ -142,10 +154,20 @@ class ThePaperSeleniumSource(WebNewsSource):
                 logger.debug("启用无头模式")
                 chrome_options.add_argument("--headless=new")  # 使用新的无头模式
             
-            # 设置用户代理
+            # 设置桌面版用户代理
             user_agent = random.choice(self.USER_AGENTS)
-            logger.debug(f"使用用户代理: {user_agent}")
+            logger.debug(f"使用桌面版用户代理: {user_agent}")
             chrome_options.add_argument(f"--user-agent={user_agent}")
+            
+            # 设置桌面级别的窗口大小，确保网站认为这是桌面浏览器
+            chrome_options.add_argument("--window-size=1920,1080")
+            
+            # 禁用移动仿真
+            chrome_options.add_experimental_option("mobileEmulation", {})
+            
+            # 明确设置为桌面模式
+            chrome_options.add_argument("--disable-device-emulation")
+            chrome_options.add_argument("--start-maximized")
             
             # 禁用GPU加速（在无头模式下可能导致问题）
             chrome_options.add_argument("--disable-gpu")
@@ -174,9 +196,6 @@ class ThePaperSeleniumSource(WebNewsSource):
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option("useAutomationExtension", False)
             
-            # 设置窗口大小
-            chrome_options.add_argument("--window-size=1920,1080")
-            
             # 启用JavaScript
             chrome_options.add_argument("--enable-javascript")
             
@@ -186,64 +205,181 @@ class ThePaperSeleniumSource(WebNewsSource):
             # 设置接受Cookie
             chrome_options.add_argument("--enable-cookies")
             
-            # 使用webdriver-manager自动下载匹配的ChromeDriver
+            # 使用系统的ChromeDriver
             try:
-                # 尝试使用webdriver-manager自动下载匹配的ChromeDriver
-                logger.info("正在使用webdriver-manager下载匹配的ChromeDriver")
-                service = Service(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-                logger.info("成功使用webdriver-manager创建ChromeDriver")
-            except Exception as e:
-                logger.warning(f"使用webdriver-manager失败: {str(e)}")
-                # 尝试使用系统路径
-                logger.info("尝试使用系统ChromeDriver路径")
+                # 定义可能的ChromeDriver路径
                 system = platform.system()
+                logger.info(f"当前系统: {system}")
+                
                 if system == "Windows":
-                    executable_path = './resource/chromedriver.exe'
-                    logger.debug(f"Windows系统，使用路径: {executable_path}")
-                elif system == "Linux":
-                    # 尝试多个可能的路径
-                    possible_paths = [
-                        '/usr/bin/chromedriver',
-                        '/usr/local/bin/chromedriver',
-                        '/snap/bin/chromedriver'
+                    chromedriver_paths = [
+                        './resource/chromedriver.exe',
+                        'C:\\Program Files\\Google\\Chrome\\Application\\chromedriver.exe',
+                        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chromedriver.exe'
                     ]
-                    executable_path = None
-                    for path in possible_paths:
-                        logger.debug(f"检查Linux ChromeDriver路径: {path}")
-                        if os.path.exists(path):
-                            executable_path = path
-                            logger.debug(f"找到可用的ChromeDriver路径: {path}")
-                            break
-                    if not executable_path:
-                        logger.error("在常见Linux路径中未找到ChromeDriver")
-                        raise Exception("ChromeDriver not found in common Linux paths")
-                else:
-                    logger.error(f"不支持的系统: {system}")
-                    raise Exception("Unsupported system detected")
+                elif system == "Linux":
+                    chromedriver_paths = [
+                        '/usr/local/bin/chromedriver',
+                        '/usr/bin/chromedriver',
+                        '/snap/bin/chromedriver',
+                        '/home/losesky/HeatLink/chromedriver'
+                    ]
+                else:  # macOS or other
+                    chromedriver_paths = [
+                        '/usr/local/bin/chromedriver',
+                        '/usr/bin/chromedriver'
+                    ]
                 
-                logger.info(f"使用ChromeDriver路径: {executable_path}")
-                service = Service(executable_path=executable_path)
+                # 查找第一个存在的ChromeDriver路径
+                chromedriver_path = None
+                for path in chromedriver_paths:
+                    if os.path.exists(path):
+                        chromedriver_path = path
+                        logger.info(f"找到ChromeDriver路径: {path}")
+                        break
+                
+                if not chromedriver_path:
+                    # 如果没有找到，尝试直接使用默认的 'chromedriver'
+                    # 这会使用系统PATH中的ChromeDriver
+                    chromedriver_path = "chromedriver"
+                    logger.info("使用系统PATH中的ChromeDriver")
+                
+                # 创建服务和WebDriver
+                service = Service(executable_path=chromedriver_path)
                 driver = webdriver.Chrome(service=service, options=chrome_options)
-                logger.info("成功使用系统路径创建ChromeDriver")
-            
-            # 设置页面加载超时
-            driver.set_page_load_timeout(self.config.get("selenium_timeout", 30))
-            
-            # 设置脚本执行超时
-            driver.set_script_timeout(self.config.get("selenium_timeout", 30))
-            
-            logger.info("成功创建Chrome WebDriver")
-            
-            # 记录driver进程ID，用于后续清理
-            try:
-                self._driver_pid = driver.service.process.pid
-                logger.info(f"ChromeDriver进程ID: {self._driver_pid}")
-            except Exception as pid_e:
-                logger.warning(f"无法获取ChromeDriver PID: {str(pid_e)}")
+                logger.info("成功创建Chrome WebDriver实例")
                 
-            return driver
-            
+                # 记录driver进程ID，用于后续清理
+                try:
+                    self._driver_pid = driver.service.process.pid
+                    logger.info(f"ChromeDriver进程ID: {self._driver_pid}")
+                except Exception as pid_e:
+                    logger.warning(f"无法获取ChromeDriver PID: {str(pid_e)}")
+                
+                # 设置页面加载超时
+                driver.set_page_load_timeout(self.config.get("selenium_timeout", 30))
+                
+                # 设置脚本执行超时
+                driver.set_script_timeout(self.config.get("selenium_timeout", 30))
+                
+                return driver
+                
+            except Exception as driver_e:
+                logger.error(f"使用系统ChromeDriver失败: {str(driver_e)}", exc_info=True)
+                
+                # 尝试手动搜索Chrome和ChromeDriver可执行文件
+                try:
+                    logger.info("尝试搜索Chrome和ChromeDriver可执行文件...")
+                    
+                    # 运行命令以查找Chrome和ChromeDriver
+                    import subprocess
+                    
+                    # 查找Chrome
+                    chrome_paths = subprocess.run(
+                        "which google-chrome chromium-browser chromium chrome 2>/dev/null || echo ''", 
+                        shell=True, 
+                        capture_output=True, 
+                        text=True
+                    ).stdout.strip().split('\n')
+                    
+                    if chrome_paths and chrome_paths[0]:
+                        chrome_path = chrome_paths[0]
+                        logger.info(f"找到Chrome浏览器路径: {chrome_path}")
+                        
+                        # 设置Chrome路径
+                        chrome_options.binary_location = chrome_path
+                    
+                    # 查找ChromeDriver
+                    chromedriver_paths = subprocess.run(
+                        "which chromedriver 2>/dev/null || echo ''", 
+                        shell=True, 
+                        capture_output=True, 
+                        text=True
+                    ).stdout.strip().split('\n')
+                    
+                    if chromedriver_paths and chromedriver_paths[0]:
+                        chromedriver_path = chromedriver_paths[0]
+                        logger.info(f"找到ChromeDriver路径: {chromedriver_path}")
+                        
+                        # 创建服务和WebDriver
+                        service = Service(executable_path=chromedriver_path)
+                        driver = webdriver.Chrome(service=service, options=chrome_options)
+                        logger.info("成功使用搜索到的ChromeDriver创建WebDriver实例")
+                        
+                        # 设置页面加载超时
+                        driver.set_page_load_timeout(self.config.get("selenium_timeout", 30))
+                        
+                        # 设置脚本执行超时
+                        driver.set_script_timeout(self.config.get("selenium_timeout", 30))
+                        
+                        return driver
+                    else:
+                        logger.error("未找到ChromeDriver可执行文件")
+                        
+                except Exception as search_e:
+                    logger.error(f"搜索Chrome和ChromeDriver失败: {str(search_e)}", exc_info=True)
+                
+                # 如果所有方法都失败，尝试通过命令行安装ChromeDriver
+                try:
+                    logger.info("尝试通过命令行安装最新版本的ChromeDriver...")
+                    
+                    # 运行命令以安装/更新ChromeDriver
+                    import subprocess
+                    
+                    # 在Linux上尝试安装ChromeDriver
+                    if platform.system() == "Linux":
+                        # 创建安装目录
+                        os.makedirs('/home/losesky/HeatLink/chromedriver-install', exist_ok=True)
+                        
+                        # 下载最新的ChromeDriver
+                        install_cmd = """
+                        cd /home/losesky/HeatLink/chromedriver-install && 
+                        wget -q -O chromedriver_linux64.zip https://chromedriver.storage.googleapis.com/LATEST_RELEASE && 
+                        latest_version=$(cat LATEST_RELEASE) &&
+                        wget -q -O chromedriver_linux64.zip https://chromedriver.storage.googleapis.com/${latest_version}/chromedriver_linux64.zip && 
+                        unzip -o chromedriver_linux64.zip && 
+                        chmod +x chromedriver && 
+                        mv chromedriver /home/losesky/HeatLink/chromedriver
+                        """
+                        
+                        subprocess.run(install_cmd, shell=True, check=True)
+                        logger.info("成功下载并安装最新版本的ChromeDriver")
+                        
+                        # 使用新安装的ChromeDriver
+                        chromedriver_path = '/home/losesky/HeatLink/chromedriver'
+                        service = Service(executable_path=chromedriver_path)
+                        driver = webdriver.Chrome(service=service, options=chrome_options)
+                        logger.info("成功使用新安装的ChromeDriver创建WebDriver实例")
+                        
+                        # 设置页面加载超时和脚本执行超时
+                        driver.set_page_load_timeout(self.config.get("selenium_timeout", 30))
+                        driver.set_script_timeout(self.config.get("selenium_timeout", 30))
+                        
+                        return driver
+                
+                except Exception as install_e:
+                    logger.error(f"安装ChromeDriver失败: {str(install_e)}", exc_info=True)
+                
+                # 如果所有方法都失败，再次尝试使用webdriver_manager作为最后的手段
+                try:
+                    logger.info("最后尝试使用webdriver_manager...")
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    
+                    service = Service(ChromeDriverManager().install())
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                    logger.info("成功使用webdriver_manager创建WebDriver实例")
+                    
+                    # 设置页面加载超时和脚本执行超时
+                    driver.set_page_load_timeout(self.config.get("selenium_timeout", 30))
+                    driver.set_script_timeout(self.config.get("selenium_timeout", 30))
+                    
+                    return driver
+                    
+                except Exception as wdm_e:
+                    logger.error(f"使用webdriver_manager失败: {str(wdm_e)}", exc_info=True)
+                
+                raise Exception("无法创建Chrome WebDriver: 所有方法都失败")
+                
         except Exception as e:
             logger.error(f"创建Chrome WebDriver时出错: {str(e)}", exc_info=True)
             return None
@@ -253,16 +389,14 @@ class ThePaperSeleniumSource(WebNewsSource):
         获取WebDriver实例，如果不存在则创建
         """
         if self._driver is None:
-            logger.info("WebDriver不存在，开始创建新的WebDriver实例")
+            if DEBUG_MODE:
+                logger.debug("创建新的WebDriver实例")
             # 在事件循环中运行阻塞的WebDriver创建
             loop = asyncio.get_event_loop()
             self._driver = await loop.run_in_executor(None, self._create_driver)
-            if self._driver:
-                logger.info("成功创建并获取WebDriver实例")
-            else:
-                logger.error("创建WebDriver实例失败")
-        else:
-            logger.debug("重用现有WebDriver实例")
+            if not self._driver:
+                logger.error("WebDriver创建失败")
+        
         return self._driver
     
     async def _close_driver(self):
@@ -271,23 +405,21 @@ class ThePaperSeleniumSource(WebNewsSource):
         """
         if self._driver is not None:
             try:
-                logger.info("Closing Chrome WebDriver")
+                if DEBUG_MODE:
+                    logger.debug("正在关闭WebDriver")
                 loop = asyncio.get_event_loop()
                 
                 # 首先尝试正常关闭
                 try:
                     await loop.run_in_executor(None, self._driver.quit)
-                    logger.info("Successfully closed Chrome WebDriver")
+                    if DEBUG_MODE:
+                        logger.debug("WebDriver已关闭")
                 except Exception as e:
-                    logger.error(f"Error closing Chrome WebDriver normally: {str(e)}", exc_info=True)
+                    if DEBUG_MODE:
+                        logger.debug(f"正常关闭WebDriver失败: {str(e)}")
                     
                     # 如果正常关闭失败，尝试强制关闭
                     try:
-                        # 记录关联的Chrome进程
-                        chrome_processes = []
-                        if hasattr(self._driver, 'service') and hasattr(self._driver.service, 'process'):
-                            chrome_processes.append(self._driver.service.process)
-                        
                         # 如果有记录进程ID，直接使用psutil强制终止
                         if self._driver_pid:
                             try:
@@ -299,21 +431,20 @@ class ThePaperSeleniumSource(WebNewsSource):
                                 for child in children:
                                     try:
                                         child.terminate()
-                                        logger.info(f"Terminated child process PID: {child.pid}")
                                     except:
                                         try:
                                             child.kill()
-                                            logger.info(f"Killed child process PID: {child.pid}")
                                         except:
                                             pass
                                 
                                 # 然后终止driver进程
                                 driver_process.terminate()
-                                logger.info(f"Terminated ChromeDriver process PID: {self._driver_pid}")
-                            except Exception as kill_e:
-                                logger.error(f"Failed to kill ChromeDriver process: {str(kill_e)}")
-                    except Exception as force_e:
-                        logger.error(f"Error force closing Chrome processes: {str(force_e)}")
+                                if DEBUG_MODE:
+                                    logger.debug(f"强制终止WebDriver进程 (PID: {self._driver_pid})")
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
             finally:
                 self._driver = None
                 self._driver_pid = None
@@ -329,12 +460,12 @@ class ThePaperSeleniumSource(WebNewsSource):
         """
         使用Selenium从澎湃新闻获取数据
         
-        过程中直接收集新闻内容，减少中间转换步骤
+        确保访问桌面版网站，避免被重定向到移动版
         """
-        logger.info("开始使用Selenium获取澎湃新闻数据")
+        logger.info("获取澎湃新闻数据")
         driver = await self._get_driver()
         if driver is None:
-            logger.error("未能创建WebDriver，无法使用Selenium获取内容")
+            logger.error("WebDriver创建失败")
             raise RuntimeError("无法获取澎湃新闻数据：WebDriver创建失败")
         
         news_items = []
@@ -345,17 +476,17 @@ class ThePaperSeleniumSource(WebNewsSource):
                     self.config.get("min_delay", 1.0),
                     self.config.get("max_delay", 3.0)
                 )
-                logger.debug(f"请求前随机延迟: {delay:.2f} 秒")
+                if DEBUG_MODE:
+                    logger.debug(f"请求前随机延迟: {delay:.2f} 秒")
                 await asyncio.sleep(delay)
             
             # 访问页面
-            logger.info(f"正在打开URL: {self.url}")
+            logger.info(f"访问URL: {self.url}")
             loop = asyncio.get_event_loop()
             
             # 使用超时控制
             try:
                 page_load_timeout = self.config.get("selenium_timeout", 30)
-                logger.info(f"设置页面加载超时为 {page_load_timeout} 秒")
                 
                 # 设置超时
                 await loop.run_in_executor(
@@ -367,100 +498,275 @@ class ThePaperSeleniumSource(WebNewsSource):
                 start_time = time.time()
                 await loop.run_in_executor(None, lambda: driver.get(self.url))
                 end_time = time.time()
-                logger.info(f"成功导航到URL，耗时 {end_time - start_time:.2f} 秒")
+                if DEBUG_MODE:
+                    logger.debug(f"页面加载耗时: {end_time - start_time:.2f} 秒")
+                
+                # 强制使用桌面模式
+                switched = await self._force_desktop_mode(driver, loop)
+                if switched:
+                    logger.info("已切换到桌面模式")
+                
             except Exception as e:
-                logger.error(f"加载页面时出错: {str(e)}")
+                logger.warning(f"页面加载异常: {str(e)}")
                 
                 # 尝试使用JavaScript导航（可能绕过某些超时问题）
                 try:
                     logger.info("尝试使用JavaScript导航")
+                    # 确保使用www子域名而不是m子域名
+                    desktop_url = self.url.replace("m.thepaper.cn", "www.thepaper.cn")
                     await loop.run_in_executor(
                         None,
-                        lambda: driver.execute_script(f"window.location.href = '{self.url}';")
+                        lambda: driver.execute_script(f"window.location.href = '{desktop_url}';")
                     )
                     
                     # 等待页面加载
                     await asyncio.sleep(10)
-                    logger.info("成功使用JavaScript导航")
+                    
+                    # 强制使用桌面模式
+                    await self._force_desktop_mode(driver, loop)
                 except Exception as js_e:
-                    logger.error(f"使用JavaScript导航时出错: {str(js_e)}")
-                    raise RuntimeError(f"无法获取澎湃新闻数据：页面加载失败 - {str(js_e)}")
+                    logger.error(f"导航失败: {str(js_e)}")
+                    raise RuntimeError(f"无法获取澎湃新闻数据：页面加载失败")
             
             # 等待页面加载完成
-            logger.info("等待页面加载完成")
             await asyncio.sleep(5)
             
-            # 直接尝试获取新闻列表
+            # 使用等待确保页面完全加载
             try:
-                # 尝试获取页面上的所有新闻项
-                logger.info("尝试直接从页面提取新闻列表")
-                news_elements = []
+                await loop.run_in_executor(
+                    None,
+                    lambda: WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                )
+            except Exception as wait_e:
+                if DEBUG_MODE:
+                    logger.warning(f"等待页面加载超时: {str(wait_e)}")
+            
+            # 保存页面源码供调试
+            if DEBUG_MODE:
+                try:
+                    page_source = await loop.run_in_executor(None, lambda: driver.page_source)
+                    debug_file = self.config.get("debug_file", "/tmp/thepaper_selenium_debug.html")
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        f.write(page_source)
+                    logger.debug(f"页面源码已保存: {debug_file}")
+                except Exception as src_e:
+                    logger.warning(f"保存页面源码失败: {str(src_e)}")
+            
+            # 尝试根据用户提供的特定HTML结构获取新闻列表
+            logger.info("开始提取新闻数据")
+            try:
+                # 查找方法1: 直接查找热榜容器
+                news_items = await self._find_news_from_hot_container(driver, loop)
+                if news_items and len(news_items) > 0:
+                    logger.info(f"从热榜容器获取到 {len(news_items)} 条新闻")
+                    return news_items
                 
-                # 尝试不同的选择器找到新闻列表项
-                selectors = [
-                    "div.index_ppreport__slNZB a", 
-                    ".mdCard a",
-                    "ul a.index_inherit__A1ImK", 
-                    ".home_wrapper__H8fk4 a",
-                    ".content a",
-                    "div[class*=cardBox] a",
-                    "a[href*=newsDetail]"  # 查找链接到新闻详情的a标签
-                ]
+                # 查找方法2: 查找新闻卡片元素
+                news_items = await self._find_news_from_cards(driver, loop)
+                if news_items and len(news_items) > 0:
+                    logger.info(f"从新闻卡片获取到 {len(news_items)} 条新闻")
+                    return news_items
                 
-                for selector in selectors:
-                    try:
-                        logger.info(f"尝试选择器: {selector}")
-                        elements = await loop.run_in_executor(
-                            None, 
-                            lambda: driver.find_elements(By.CSS_SELECTOR, selector)
-                        )
-                        if elements and len(elements) >= 3:  # 至少找到3个元素才算有效
-                            logger.info(f"使用选择器 {selector} 找到 {len(elements)} 个元素")
-                            news_elements = elements
-                            break
-                    except Exception as elem_e:
-                        logger.warning(f"使用选择器 {selector} 查找元素时出错: {str(elem_e)}")
+                # 查找方法3: 尝试查找所有链接到新闻详情的元素
+                news_items = await self._find_news_from_all_links(driver, loop)
+                if news_items and len(news_items) > 0:
+                    logger.info(f"从链接获取到 {len(news_items)} 条新闻")
+                    return news_items
                 
-                if not news_elements:
-                    logger.warning("没有找到新闻元素，尝试截图以供分析")
+                # 如果以上方法都失败，尝试截图以供分析
+                if DEBUG_MODE:
                     try:
                         screenshot_path = "/tmp/thepaper_debug_screenshot.png"
                         await loop.run_in_executor(
                             None,
                             lambda: driver.save_screenshot(screenshot_path)
                         )
-                        logger.info(f"保存截图到 {screenshot_path}")
-                    except Exception as ss_e:
-                        logger.error(f"保存截图时出错: {str(ss_e)}")
-                    
-                    raise RuntimeError("无法获取澎湃新闻数据：未找到新闻元素")
+                        logger.debug(f"已保存截图: {screenshot_path}")
+                    except Exception:
+                        pass
                 
-                # 提取新闻数据
-                logger.info(f"开始从 {len(news_elements)} 个元素中提取新闻数据")
-                for index, element in enumerate(news_elements[:30]):  # 最多处理前30个
+                raise RuntimeError("未找到新闻元素")
+                
+            except Exception as extract_e:
+                logger.error(f"提取新闻失败: {str(extract_e)}")
+                raise RuntimeError(f"提取新闻失败: {str(extract_e)}")
+                
+        except Exception as e:
+            logger.error(f"获取数据失败: {str(e)}")
+            raise RuntimeError(f"获取数据失败: {str(e)}")
+        finally:
+            # 确保关闭driver
+            await self._close_driver()
+
+    async def _find_news_from_hot_container(self, driver, loop) -> List[NewsItemModel]:
+        """
+        通过热榜容器获取新闻数据
+        """
+        if DEBUG_MODE:
+            logger.debug("查找热榜容器")
+        news_items = []
+        
+        try:
+            # 1. 首先尝试找到热榜容器 - 使用用户提供的类名
+            try:
+                # 尝试查找热榜顶部容器
+                hot_news_containers = await loop.run_in_executor(
+                    None,
+                    lambda: driver.find_elements(By.CSS_SELECTOR, "div.index_rebangtop__tpSSj")
+                )
+                
+                if hot_news_containers:
+                    if DEBUG_MODE:
+                        logger.debug(f"找到热榜顶部容器: {len(hot_news_containers)} 个")
+                    
+                    # 2. 查找内容容器
+                    content_containers = await loop.run_in_executor(
+                        None,
+                        lambda: driver.find_elements(By.CSS_SELECTOR, "div.index_content___Uhtm")
+                    )
+                    
+                    if content_containers:
+                        if DEBUG_MODE:
+                            logger.debug(f"找到内容容器: {len(content_containers)} 个")
+                        content_container = content_containers[0]
+                        
+                        # 3. 从内容容器中获取新闻列表项
+                        news_links = await loop.run_in_executor(
+                            None,
+                            lambda: content_container.find_elements(By.CSS_SELECTOR, "li div.mdCard a")
+                        )
+                        
+                        if not news_links:
+                            # 尝试不同的选择器
+                            news_links = await loop.run_in_executor(
+                                None,
+                                lambda: content_container.find_elements(By.CSS_SELECTOR, "a.index_inherit__A1ImK")
+                            )
+                        
+                        if DEBUG_MODE:
+                            logger.debug(f"找到新闻链接: {len(news_links)} 个")
+                        
+                        # 4. 处理每个新闻项
+                        extracted_count = 0
+                        for index, link in enumerate(news_links[:30]):  # 最多处理前30个
+                            try:
+                                # 获取链接
+                                url = await loop.run_in_executor(
+                                    None,
+                                    lambda: link.get_attribute('href')
+                                )
+                                
+                                # 获取标题
+                                title = await loop.run_in_executor(
+                                    None,
+                                    lambda: link.text.strip()
+                                )
+                                
+                                # 如果没有标题文本，尝试获取title属性
+                                if not title:
+                                    title = await loop.run_in_executor(
+                                        None,
+                                        lambda: link.get_attribute('title')
+                                    )
+                                
+                                # 确保URL和标题不为空
+                                if not url or not title:
+                                    if DEBUG_MODE:
+                                        logger.debug(f"跳过无效项 #{index}: URL={url}, 标题={title}")
+                                    continue
+                                
+                                # 确保URL以http开头
+                                if not url.startswith('http'):
+                                    url = f"https://www.thepaper.cn{url}"
+                                
+                                # 生成唯一ID
+                                news_id = hashlib.md5(f"{url}_{title}".encode()).hexdigest()
+                                
+                                # 创建新闻项
+                                news_item = self.create_news_item(
+                                    id=news_id,
+                                    title=title,
+                                    url=url,
+                                    summary="",  # 没有摘要
+                                    image_url="",  # 没有图片URL
+                                    published_at=datetime.datetime.now(datetime.timezone.utc),  # 使用当前时间
+                                    extra={
+                                        "rank": index + 1,
+                                        "source": "thepaper",
+                                        "source_from": "selenium"
+                                    }
+                                )
+                                
+                                news_items.append(news_item)
+                                extracted_count += 1
+                                if DEBUG_MODE and index < 3:  # 仅记录前3个
+                                    logger.debug(f"提取新闻: {title}")
+                            except Exception as item_e:
+                                if DEBUG_MODE:
+                                    logger.debug(f"处理元素 {index} 失败: {str(item_e)}")
+                        
+                        if DEBUG_MODE and extracted_count > 0:
+                            logger.debug(f"共提取 {extracted_count} 条新闻")
+                                
+            except Exception as se_e:
+                if DEBUG_MODE:
+                    logger.debug(f"查找热榜容器异常: {str(se_e)}")
+        
+        except Exception as e:
+            if DEBUG_MODE:
+                logger.debug(f"提取热榜新闻异常: {str(e)}")
+        
+        return news_items
+
+    async def _find_news_from_cards(self, driver, loop) -> List[NewsItemModel]:
+        """
+        查找所有新闻卡片元素获取数据
+        """
+        logger.info("尝试查找所有新闻卡片元素")
+        news_items = []
+        
+        try:
+            # 尝试直接查找所有mdCard元素
+            card_elements = await loop.run_in_executor(
+                None,
+                lambda: driver.find_elements(By.CSS_SELECTOR, "div.mdCard")
+            )
+            
+            if card_elements:
+                logger.info(f"找到 {len(card_elements)} 个mdCard元素")
+                
+                for index, card in enumerate(card_elements[:30]):
                     try:
+                        # 在卡片中查找链接
+                        link = await loop.run_in_executor(
+                            None,
+                            lambda: card.find_element(By.TAG_NAME, "a")
+                        )
+                        
                         # 获取链接
                         url = await loop.run_in_executor(
                             None,
-                            lambda: element.get_attribute('href')
+                            lambda: link.get_attribute('href')
                         )
                         
                         # 获取标题
                         title = await loop.run_in_executor(
                             None,
-                            lambda: element.text.strip()
+                            lambda: link.text.strip()
                         )
                         
                         # 如果没有标题文本，尝试获取title属性
                         if not title:
                             title = await loop.run_in_executor(
                                 None,
-                                lambda: element.get_attribute('title')
+                                lambda: link.get_attribute('title')
                             )
                         
                         # 确保URL和标题不为空
                         if not url or not title:
-                            logger.warning(f"元素 {index} 缺少URL或标题: URL={url}, 标题={title}")
+                            logger.warning(f"卡片 {index} 缺少URL或标题: URL={url}, 标题={title}")
                             continue
                         
                         # 确保URL以http开头
@@ -488,25 +794,103 @@ class ThePaperSeleniumSource(WebNewsSource):
                         news_items.append(news_item)
                         logger.debug(f"提取到新闻项 {index + 1}: {title}")
                     except Exception as item_e:
-                        logger.error(f"处理元素 {index} 时出错: {str(item_e)}")
-                
-                logger.info(f"成功提取到 {len(news_items)} 个新闻项")
-                if not news_items:
-                    logger.warning("没有提取到新闻，返回模拟数据")
-                    return self._create_mock_data()
-                
-                return news_items
-                
-            except Exception as extract_e:
-                logger.error(f"提取新闻列表时出错: {str(extract_e)}")
-                raise RuntimeError(f"提取新闻列表时出错: {str(extract_e)}")
-                
+                        logger.error(f"处理卡片 {index} 时出错: {str(item_e)}")
+        
         except Exception as e:
-            logger.error(f"使用Selenium获取内容时出错: {str(e)}", exc_info=True)
-            raise RuntimeError(f"使用Selenium获取内容时出错: {str(e)}")
-        finally:
-            # 确保关闭driver
-            await self._close_driver()
+            logger.error(f"查找新闻卡片元素时出错: {str(e)}")
+        
+        return news_items
+
+    async def _find_news_from_all_links(self, driver, loop) -> List[NewsItemModel]:
+        """
+        查找所有新闻详情链接
+        """
+        logger.info("尝试查找所有新闻详情链接")
+        news_items = []
+        
+        try:
+            # 查找所有新闻详情链接
+            news_links = await loop.run_in_executor(
+                None,
+                lambda: driver.find_elements(By.CSS_SELECTOR, "a[href*='newsDetail']")
+            )
+            
+            if news_links:
+                logger.info(f"找到 {len(news_links)} 个新闻详情链接")
+                
+                # 按位置排序
+                def get_y_position(element):
+                    try:
+                        # 获取元素位置
+                        location = element.location
+                        return location['y']
+                    except:
+                        return 0
+                
+                # 尝试按垂直位置排序（可以帮助确定热榜顺序）
+                try:
+                    news_links.sort(key=get_y_position)
+                except Exception as sort_e:
+                    logger.warning(f"排序链接时出错: {str(sort_e)}")
+                
+                # 处理每个链接
+                for index, link in enumerate(news_links[:30]):
+                    try:
+                        # 获取链接
+                        url = await loop.run_in_executor(
+                            None,
+                            lambda: link.get_attribute('href')
+                        )
+                        
+                        # 获取标题
+                        title = await loop.run_in_executor(
+                            None,
+                            lambda: link.text.strip()
+                        )
+                        
+                        # 如果没有标题文本，尝试获取title属性
+                        if not title:
+                            title = await loop.run_in_executor(
+                                None,
+                                lambda: link.get_attribute('title')
+                            )
+                        
+                        # 确保URL和标题不为空
+                        if not url or not title:
+                            logger.warning(f"链接 {index} 缺少URL或标题: URL={url}, 标题={title}")
+                            continue
+                        
+                        # 确保URL以http开头
+                        if not url.startswith('http'):
+                            url = f"https://www.thepaper.cn{url}"
+                        
+                        # 生成唯一ID
+                        news_id = hashlib.md5(f"{url}_{title}".encode()).hexdigest()
+                        
+                        # 创建新闻项
+                        news_item = self.create_news_item(
+                            id=news_id,
+                            title=title,
+                            url=url,
+                            summary="",  # 没有摘要
+                            image_url="",  # 没有图片URL
+                            published_at=datetime.datetime.now(datetime.timezone.utc),  # 使用当前时间
+                            extra={
+                                "rank": index + 1,
+                                "source": "thepaper",
+                                "source_from": "selenium"
+                            }
+                        )
+                        
+                        news_items.append(news_item)
+                        logger.debug(f"提取到新闻项 {index + 1}: {title}")
+                    except Exception as item_e:
+                        logger.error(f"处理链接 {index} 时出错: {str(item_e)}")
+        
+        except Exception as e:
+            logger.error(f"查找新闻详情链接时出错: {str(e)}")
+        
+        return news_items
 
     async def fetch(self) -> List[NewsItemModel]:
         """
@@ -515,232 +899,164 @@ class ThePaperSeleniumSource(WebNewsSource):
         Returns:
             新闻列表
         """
-        logger.info("Fetching ThePaper hot news")
-        news_items = []
+        logger.info("获取澎湃新闻数据")
         
-        # 强制不使用API获取数据
         try:
-            # 直接使用Selenium
-            logger.info("配置禁用API，直接使用Selenium获取")
-            if self.config.get("use_selenium", True):
-                try:
-                    news_items = await self._fetch_with_selenium()
-                    if news_items:
-                        logger.info(f"成功使用Selenium获取到 {len(news_items)} 条新闻")
-                except Exception as se_e:
-                    logger.error(f"使用Selenium获取数据失败: {str(se_e)}", exc_info=True)
-            else:
-                logger.error("Selenium未启用，无法获取数据")
-                raise RuntimeError("Selenium未启用，无法获取数据")
+            # 直接使用Selenium获取数据
+            news_items = await self._fetch_with_selenium()
             
-            # 如果没有获取到数据，抛出异常
-            if not news_items:
-                logger.error("Selenium获取失败，无法获取澎湃新闻数据")
-                raise RuntimeError("无法获取澎湃新闻数据：Selenium获取失败")
+            if not news_items or len(news_items) == 0:
+                logger.error("未获取到新闻数据")
+                raise RuntimeError("未能获取到任何新闻数据")
             
+            logger.info(f"获取到 {len(news_items)} 条新闻")
             return news_items
+            
+        except Exception as e:
+            logger.error(f"获取数据失败: {str(e)}")
+            raise RuntimeError(f"获取数据失败: {str(e)}")
         finally:
             # 确保每次fetch后都关闭driver，防止资源泄漏
             try:
                 await self._close_driver()
-            except Exception as close_e:
-                logger.error(f"关闭WebDriver时出错: {str(close_e)}")
+            except Exception:
+                pass
 
-    def _create_mock_data(self) -> List[NewsItemModel]:
-        """
-        生成模拟澎湃新闻数据
-        """
-        news_items = []
-        current_time = datetime.datetime.now()
-        
-        # 生成模拟新闻
-        mock_news = [
-            {
-                "title": "国务院：加大对民营经济政策支持力度",
-                "url": "https://www.thepaper.cn/newsDetail_forward_123456",
-                "rank": 1
-            },
-            {
-                "title": "中共中央政治局召开会议，研究部署经济工作",
-                "url": "https://www.thepaper.cn/newsDetail_forward_234567",
-                "rank": 2
-            },
-            {
-                "title": "多部门联合发布数字经济发展新规划",
-                "url": "https://www.thepaper.cn/newsDetail_forward_345678",
-                "rank": 3
-            },
-            {
-                "title": "全国人大常委会审议多项法律草案",
-                "url": "https://www.thepaper.cn/newsDetail_forward_456789",
-                "rank": 4
-            },
-            {
-                "title": "教育部：进一步规范校外培训机构",
-                "url": "https://www.thepaper.cn/newsDetail_forward_567890",
-                "rank": 5
-            },
-            {
-                "title": "北京冬奥会筹备工作进入最后阶段",
-                "url": "https://www.thepaper.cn/newsDetail_forward_678901",
-                "rank": 6
-            },
-            {
-                "title": "上海进一步优化营商环境，出台新政策",
-                "url": "https://www.thepaper.cn/newsDetail_forward_789012",
-                "rank": 7
-            },
-            {
-                "title": "世卫组织：全球新冠疫情呈现新特点",
-                "url": "https://www.thepaper.cn/newsDetail_forward_890123",
-                "rank": 8
-            }
-        ]
-        
-        # 创建新闻项
-        for item in mock_news:
-            news_id = hashlib.md5(f"{item['url']}_{item['title']}".encode()).hexdigest()
-            
-            news_item = self.create_news_item(
-                id=news_id,
-                title=item["title"],
-                url=item["url"],
-                summary="(模拟数据)",
-                published_at=current_time - datetime.timedelta(hours=random.randint(1, 12)),
-                extra={
-                    "rank": item["rank"],
-                    "is_mock": True,
-                    "source": "澎湃新闻(模拟数据)"
-                }
-            )
-            
-            news_items.append(news_item)
-        
-        logger.info(f"Created {len(news_items)} mock ThePaper news items")
-        return news_items
-    
-    async def _fetch_from_api(self, api_url: str) -> List[NewsItemModel]:
-        """
-        从第三方API获取澎湃新闻热榜数据
-        """
-        try:
-            logger.info(f"Fetching hot news from API: {api_url}")
-            
-            # 随机用户代理
-            user_agent = random.choice(self.USER_AGENTS)
-            
-            # 设置请求头
-            headers = {
-                "User-Agent": user_agent,
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Accept-Encoding": "gzip, deflate, br",
-                "DNT": "1"  # Do Not Track
-            }
-            
-            # 从异步HTTP客户端获取数据
-            timeout = self.config.get("api_timeout", 10)
-            
-            # 使用http_client.fetch而不是http_client.get
-            data = await http_client.fetch(
-                url=api_url,
-                method="GET",
-                headers=headers,
-                response_type="json",
-                timeout=timeout
-            )
-            
-            # 检查返回的数据
-            if not data:
-                logger.error("Empty response from API")
-                return []
-                
-            # 检查API返回格式
-            if 'success' not in data or not data['success']:
-                logger.error(f"API returned error: {data.get('message', 'Unknown error')}")
-                return []
-            
-            # 获取热榜数据
-            hot_news_data = data.get('data', [])
-            
-            if not hot_news_data:
-                logger.error("No hot news data found in API response")
-                return []
-            
-            logger.info(f"Found {len(hot_news_data)} items in API response")
-            
-            # 处理提取到的数据
-            items = []
-            for index, item_data in enumerate(hot_news_data):
-                try:
-                    # 提取标题和URL
-                    title = item_data.get('title', '')
-                    url = item_data.get('url', '')
-                    
-                    if not title or not url:
-                        logger.warning(f"Missing title or URL in item {index}")
-                        continue
-                    
-                    # 获取排名
-                    rank = item_data.get('index', index + 1)
-                    if not isinstance(rank, int):
-                        try:
-                            rank = int(rank)
-                        except (ValueError, TypeError):
-                            rank = index + 1
-                    
-                    # 获取热度
-                    hot_value = item_data.get('hot', '')
-                    
-                    # 获取手机版URL（如果有）
-                    mobile_url = item_data.get('mobil_url', '')
-                    
-                    # 生成唯一ID
-                    news_id = hashlib.md5(f"{url}_{title}".encode()).hexdigest()
-                    
-                    # 创建新闻项
-                    news_item = self.create_news_item(
-                        id=news_id,
-                        title=title,
-                        url=url,
-                        summary="",  # API没有提供摘要
-                        image_url="",  # API没有提供图片
-                        published_at=datetime.datetime.now(datetime.timezone.utc),  # 使用当前时间
-                        extra={
-                            "rank": rank,
-                            "hot": hot_value,
-                            "mobile_url": mobile_url,
-                            "source": "thepaper",
-                            "source_from": "api"
-                        }
-                    )
-                    
-                    items.append(news_item)
-                    logger.debug(f"Processed API item {rank}: {title}")
-                except Exception as e:
-                    logger.error(f"Error processing API item at index {index}: {str(e)}")
-            
-            # 保存API响应到调试文件（可选）
-            debug_file = self.config.get("api_debug_file", "")
-            if debug_file:
-                try:
-                    import json
-                    with open(debug_file, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    logger.info(f"Saved API response to debug file: {debug_file}")
-                except Exception as e:
-                    logger.error(f"Error saving API debug file: {str(e)}")
-            
-            return items
-        
-        except Exception as e:
-            logger.error(f"Error fetching from API: {str(e)}", exc_info=True)
-            return []
-    
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """
         解析HTTP响应内容
         注意：这个方法是必须的，因为它是从WebNewsSource继承的抽象方法
+        但本适配器仅使用Selenium，不使用HTTP响应解析
         """
-        logger.info("Using parse_response method to process content")
-        return await self._extract_hot_news_from_html(response) 
+        logger.warning("ThePaperSeleniumSource 仅使用 Selenium 抓取，不支持 HTTP 响应解析")
+        return []  # 返回空列表，因为我们不会使用这个方法来获取数据 
+
+    def _find_news_from_section_tabs(self, driver):
+        """从页面的各个板块tab中获取热门新闻"""
+        news_items = []
+        try:
+            # 获取tab分类区域
+            tab_container = driver.find_element(By.CSS_SELECTOR, self.TAB_CONTAINER_SELECTOR)
+            if DEBUG_MODE:
+                logger.debug("找到tab分类区域")
+            
+            # 获取所有tab按钮
+            tab_buttons = tab_container.find_elements(By.CSS_SELECTOR, self.TAB_BUTTON_SELECTOR)
+            if not tab_buttons:
+                if DEBUG_MODE:
+                    logger.debug("未找到任何tab按钮")
+                return []
+            
+            if DEBUG_MODE:
+                logger.debug(f"找到 {len(tab_buttons)} 个tab分类")
+            
+            # 遍历点击每个tab，获取对应的新闻
+            for i, tab in enumerate(tab_buttons[:3]):  # 限制只处理前3个tab以提高效率
+                try:
+                    tab_name = tab.text.strip()
+                    if not tab_name:
+                        continue
+                    
+                    if DEBUG_MODE:
+                        logger.debug(f"点击'{tab_name}'tab")
+                    # 点击tab
+                    driver.execute_script("arguments[0].click();", tab)
+                    time.sleep(1)  # 等待内容加载
+                    
+                    # 获取当前tab下的新闻列表
+                    section_items = driver.find_elements(By.CSS_SELECTOR, self.SECTION_NEWS_SELECTOR)
+                    if not section_items:
+                        if DEBUG_MODE:
+                            logger.debug(f"'{tab_name}'tab下未找到新闻条目")
+                        continue
+                    
+                    if DEBUG_MODE:
+                        logger.debug(f"'{tab_name}'tab下找到 {len(section_items)} 条新闻")
+                    
+                    # 解析每条新闻
+                    for item in section_items[:5]:  # 每个tab仅获取前5条
+                        try:
+                            link_elem = item.find_element(By.CSS_SELECTOR, 'a')
+                            url = link_elem.get_attribute('href')
+                            title = link_elem.text.strip()
+                            
+                            if not url or not title:
+                                continue
+                            
+                            news_items.append({
+                                'title': title,
+                                'url': url,
+                                'source': self.SOURCE_NAME,
+                                'category': tab_name
+                            })
+                        except Exception as e:
+                            if DEBUG_MODE:
+                                logger.debug(f"解析tab新闻条目时出错: {str(e)}")
+                except Exception as e:
+                    if DEBUG_MODE:
+                        logger.debug(f"处理tab '{i+1}' 时出错: {str(e)}")
+            
+            if news_items:
+                logger.info(f"从tab分类中提取 {len(news_items)} 条新闻")
+        except Exception as e:
+            if DEBUG_MODE:
+                logger.debug(f"处理tab分类区域时出错: {str(e)}")
+        
+        return news_items 
+
+    async def _force_desktop_mode(self, driver, loop):
+        """
+        强制使用桌面模式，避免重定向到移动版
+        """
+        try:
+            # 检查当前URL
+            current_url = await loop.run_in_executor(None, lambda: driver.current_url)
+            
+            # 如果是移动版地址，转换回桌面版
+            if "m.thepaper.cn" in current_url:
+                logger.warning(f"检测到移动版地址: {current_url}")
+                
+                # 转换为桌面版URL
+                desktop_url = current_url.replace("m.thepaper.cn", "www.thepaper.cn")
+                logger.info(f"尝试切换到桌面版: {desktop_url}")
+                
+                # 设置强制使用桌面用户代理
+                desktop_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                await loop.run_in_executor(
+                    None,
+                    lambda: driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": desktop_agent})
+                )
+                
+                # 清除所有cookie（可能包含移动版偏好设置）
+                await loop.run_in_executor(None, lambda: driver.delete_all_cookies())
+                
+                # 访问桌面版URL
+                await loop.run_in_executor(None, lambda: driver.get(desktop_url))
+                
+                # 等待页面加载
+                await asyncio.sleep(3)
+                
+                # 再次检查URL
+                new_url = await loop.run_in_executor(None, lambda: driver.current_url)
+                if "m.thepaper.cn" in new_url:
+                    # 如果仍然是移动版，使用JavaScript强制导航
+                    logger.warning("仍处于移动版，尝试使用JavaScript强制导航")
+                    await loop.run_in_executor(
+                        None,
+                        lambda: driver.execute_script(f"window.location.href = '{desktop_url}';")
+                    )
+                    await asyncio.sleep(3)  # 再次等待加载
+                
+                # 设置大窗口尺寸，进一步确保桌面体验
+                await loop.run_in_executor(
+                    None,
+                    lambda: driver.set_window_size(1920, 1080)
+                )
+                
+                return True  # 表示进行了桌面模式切换
+            
+            return False  # 表示无需切换
+            
+        except Exception as e:
+            logger.warning(f"强制桌面模式失败: {str(e)}")
+            return False 

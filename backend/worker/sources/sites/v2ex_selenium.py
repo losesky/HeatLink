@@ -28,28 +28,34 @@ from worker.utils.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
+# Global debug mode flag - set to False to reduce output
+DEBUG_MODE = False
 
 class V2EXSeleniumSource(WebNewsSource):
     """
     V2EX话题适配器 - Selenium版本
-    通过Selenium模拟真实浏览器访问V2EX网站，绕过反爬虫措施
-    支持从热门话题页面或XML feed获取数据
+    
+    特性:
+    - 使用桌面版浏览器配置访问网站，避免被重定向到移动版
+    - 通过Selenium模拟真实浏览器访问V2EX网站，绕过反爬虫措施
+    - 支持从热门话题页面或XML feed获取数据
+    - 使用大窗口尺寸和桌面版用户代理模拟真实桌面浏览器
     """
     
-    # 用户代理列表，模拟不同的浏览器
+    # 用户代理列表，仅包含桌面浏览器，避免重定向到移动版网站
     USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Edge/120.0.0.0"
     ]
     
     def __init__(
         self,
         source_id: str = "v2ex",
         name: str = "V2EX热门",
-        url: str = "https://www.v2ex.com/index.xml",  # 热门话题页面
+        url: str = "https://www.v2ex.com/",  # 使用桌面版首页
         update_interval: int = 1800,  # 30分钟
         cache_ttl: int = 900,  # 15分钟
         category: str = "technology",
@@ -59,8 +65,18 @@ class V2EXSeleniumSource(WebNewsSource):
     ):
         config = config or {}
         
-        # 随机选择一个用户代理
+        # 随机选择一个桌面版用户代理
         user_agent = random.choice(self.USER_AGENTS)
+        
+        # 确保URL是桌面版
+        if url and "m.v2ex.com" in url:
+            url = url.replace("m.v2ex.com", "www.v2ex.com")
+            if DEBUG_MODE:
+                logger.debug(f"URL已转换为桌面版: {url}")
+        elif not url:
+            url = "https://www.v2ex.com/"
+            if DEBUG_MODE:
+                logger.debug(f"使用默认桌面版URL: {url}")
         
         config.update({
             "headers": {
@@ -96,8 +112,8 @@ class V2EXSeleniumSource(WebNewsSource):
             # 是否解析XML而不是HTML
             "parse_xml": False,
             # 调试配置
-            "debug_mode": False,  # 是否保存调试文件
-            "debug_file": "v2ex_debug_content.xml"  # 调试文件名称
+            "debug_file": "/tmp/v2ex_selenium_debug.html",  # 调试文件路径
+            "failed_debug_file": "/tmp/v2ex_selenium_failed.html",  # 失败时的调试文件路径
         })
         
         super().__init__(
@@ -114,21 +130,39 @@ class V2EXSeleniumSource(WebNewsSource):
         
         self._driver = None
         self._driver_pid = None  # 添加记录chromedriver进程ID
-        logger.info(f"Initialized {self.name} Selenium adapter with URL: {self.url}")
+        logger.info(f"初始化 {self.name} 适配器，URL: {self.url}")
     
     def _create_driver(self):
         """
         创建并配置Selenium WebDriver
+        确保使用桌面版浏览器配置，避免被识别为爬虫
         """
         try:
+            if DEBUG_MODE:
+                logger.debug("开始创建Chrome WebDriver实例")
             chrome_options = Options()
             
             # 设置无头模式（不显示浏览器窗口）
             if self.config.get("headless", False):
-                chrome_options.add_argument("--headless")
+                if DEBUG_MODE:
+                    logger.debug("启用无头模式")
+                chrome_options.add_argument("--headless=new")  # 使用新的无头模式
             
-            # 设置用户代理
-            chrome_options.add_argument(f"--user-agent={random.choice(self.USER_AGENTS)}")
+            # 设置桌面版用户代理
+            user_agent = random.choice(self.USER_AGENTS)
+            if DEBUG_MODE:
+                logger.debug(f"使用桌面版用户代理: {user_agent}")
+            chrome_options.add_argument(f"--user-agent={user_agent}")
+            
+            # 设置桌面级别的窗口大小，确保网站认为这是桌面浏览器
+            chrome_options.add_argument("--window-size=1920,1080")
+            
+            # 禁用移动仿真
+            chrome_options.add_experimental_option("mobileEmulation", {})
+            
+            # 明确设置为桌面模式
+            chrome_options.add_argument("--disable-device-emulation")
+            chrome_options.add_argument("--start-maximized")
             
             # 禁用GPU加速（在无头模式下可能导致问题）
             chrome_options.add_argument("--disable-gpu")
@@ -141,13 +175,21 @@ class V2EXSeleniumSource(WebNewsSource):
             
             # 禁用开发者工具
             chrome_options.add_argument("--disable-dev-shm-usage")
+
+            # 增加内存限制
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--memory-pressure-off")
+            chrome_options.add_argument("--disable-features=MemoryPressureHandling")
+            
+            # 关闭某些可能导致问题的功能
+            chrome_options.add_argument("--disable-web-security")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_argument("--disable-popup-blocking")
+            chrome_options.add_argument("--ignore-certificate-errors")
             
             # 禁用自动化控制提示
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option("useAutomationExtension", False)
-            
-            # 设置窗口大小
-            chrome_options.add_argument("--window-size=1920,1080")
             
             # 启用JavaScript
             chrome_options.add_argument("--enable-javascript")
@@ -161,36 +203,52 @@ class V2EXSeleniumSource(WebNewsSource):
             # 使用webdriver-manager自动下载匹配的ChromeDriver
             try:
                 # 尝试使用webdriver-manager自动下载匹配的ChromeDriver
-                logger.info("Using webdriver-manager to download matching ChromeDriver")
+                logger.info("使用webdriver-manager下载匹配的ChromeDriver")
                 service = Service(ChromeDriverManager().install())
                 driver = webdriver.Chrome(service=service, options=chrome_options)
+                logger.info("成功创建Chrome WebDriver实例")
             except Exception as e:
-                logger.warning(f"Failed to use webdriver-manager: {str(e)}")
+                logger.warning(f"使用webdriver-manager失败: {str(e)}")
+                
                 # 尝试使用系统路径
-                logger.info("Trying system ChromeDriver paths")
+                logger.info("尝试使用系统ChromeDriver路径")
                 system = platform.system()
                 if system == "Windows":
-                    executable_path = './resource/chromedriver.exe'
+                    possible_paths = [
+                        './resource/chromedriver.exe',
+                        'C:\\Program Files\\Google\\Chrome\\Application\\chromedriver.exe',
+                        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chromedriver.exe'
+                    ]
                 elif system == "Linux":
                     # 尝试多个可能的路径
                     possible_paths = [
                         '/usr/bin/chromedriver',
                         '/usr/local/bin/chromedriver',
-                        '/snap/bin/chromedriver'
+                        '/snap/bin/chromedriver',
+                        '/home/losesky/HeatLink/chromedriver'
                     ]
-                    executable_path = None
-                    for path in possible_paths:
-                        if os.path.exists(path):
-                            executable_path = path
-                            break
-                    if not executable_path:
-                        raise Exception("ChromeDriver not found in common Linux paths")
-                else:
-                    raise Exception("Unsupported system detected")
+                else:  # macOS or other
+                    possible_paths = [
+                        '/usr/local/bin/chromedriver',
+                        '/usr/bin/chromedriver'
+                    ]
                 
-                logger.info(f"Using ChromeDriver at: {executable_path}")
+                # 查找第一个存在的ChromeDriver路径
+                executable_path = None
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        executable_path = path
+                        logger.info(f"找到ChromeDriver路径: {path}")
+                        break
+                
+                if not executable_path:
+                    # 如果没有找到，尝试直接使用默认的 'chromedriver'
+                    executable_path = "chromedriver"
+                    logger.info("使用系统PATH中的ChromeDriver")
+                
                 service = Service(executable_path=executable_path)
                 driver = webdriver.Chrome(service=service, options=chrome_options)
+                logger.info("成功创建Chrome WebDriver实例")
             
             # 设置页面加载超时
             driver.set_page_load_timeout(self.config.get("selenium_timeout", 30))
@@ -198,19 +256,17 @@ class V2EXSeleniumSource(WebNewsSource):
             # 设置脚本执行超时
             driver.set_script_timeout(self.config.get("selenium_timeout", 30))
             
-            logger.info("Successfully created Chrome WebDriver")
-            
             # 记录driver进程ID，用于后续清理
             try:
                 self._driver_pid = driver.service.process.pid
-                logger.info(f"ChromeDriver process ID: {self._driver_pid}")
+                logger.info(f"ChromeDriver进程ID: {self._driver_pid}")
             except Exception as pid_e:
-                logger.warning(f"Could not capture ChromeDriver PID: {str(pid_e)}")
+                logger.warning(f"无法获取ChromeDriver PID: {str(pid_e)}")
                 
             return driver
             
         except Exception as e:
-            logger.error(f"Error creating Chrome WebDriver: {str(e)}", exc_info=True)
+            logger.error(f"创建Chrome WebDriver时出错: {str(e)}", exc_info=True)
             return None
     
     async def _get_driver(self):
@@ -218,9 +274,14 @@ class V2EXSeleniumSource(WebNewsSource):
         获取WebDriver实例，如果不存在则创建
         """
         if self._driver is None:
+            if DEBUG_MODE:
+                logger.debug("创建新的WebDriver实例")
             # 在事件循环中运行阻塞的WebDriver创建
             loop = asyncio.get_event_loop()
             self._driver = await loop.run_in_executor(None, self._create_driver)
+            if not self._driver:
+                logger.error("WebDriver创建失败")
+        
         return self._driver
     
     async def _close_driver(self):
@@ -229,23 +290,21 @@ class V2EXSeleniumSource(WebNewsSource):
         """
         if self._driver is not None:
             try:
-                logger.info("Closing Chrome WebDriver")
+                if DEBUG_MODE:
+                    logger.debug("正在关闭WebDriver")
                 loop = asyncio.get_event_loop()
                 
                 # 首先尝试正常关闭
                 try:
                     await loop.run_in_executor(None, self._driver.quit)
-                    logger.info("Successfully closed Chrome WebDriver")
+                    if DEBUG_MODE:
+                        logger.debug("WebDriver已正常关闭")
                 except Exception as e:
-                    logger.error(f"Error closing Chrome WebDriver normally: {str(e)}", exc_info=True)
+                    if DEBUG_MODE:
+                        logger.debug(f"正常关闭WebDriver失败: {str(e)}")
                     
                     # 如果正常关闭失败，尝试强制关闭
                     try:
-                        # 记录关联的Chrome进程
-                        chrome_processes = []
-                        if hasattr(self._driver, 'service') and hasattr(self._driver.service, 'process'):
-                            chrome_processes.append(self._driver.service.process)
-                        
                         # 如果有记录进程ID，直接使用psutil强制终止
                         if self._driver_pid:
                             try:
@@ -257,59 +316,101 @@ class V2EXSeleniumSource(WebNewsSource):
                                 for child in children:
                                     try:
                                         child.terminate()
-                                        logger.info(f"Terminated child process PID: {child.pid}")
                                     except:
                                         try:
                                             child.kill()
-                                            logger.info(f"Killed child process PID: {child.pid}")
                                         except:
                                             pass
                                 
                                 # 然后终止driver进程
                                 driver_process.terminate()
-                                logger.info(f"Terminated ChromeDriver process PID: {self._driver_pid}")
-                            except Exception as kill_e:
-                                logger.error(f"Failed to kill ChromeDriver process: {str(kill_e)}")
-                    except Exception as force_e:
-                        logger.error(f"Error force closing Chrome processes: {str(force_e)}")
+                                if DEBUG_MODE:
+                                    logger.debug(f"强制终止WebDriver进程 (PID: {self._driver_pid})")
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
             finally:
                 self._driver = None
                 self._driver_pid = None
     
     async def close(self):
         """
-        关闭资源
+        关闭桌面版浏览器资源
         """
-        # 清理临时XML文件
-        try:
-            debug_file = self.config.get("debug_file", "v2ex_debug_content.xml")
-            extracted_xml_file = "v2ex_extracted_xml.xml"
-            
-            # 清理debug_file
-            if os.path.exists(debug_file):
-                os.remove(debug_file)
-                logger.debug(f"Removed temporary debug file: {debug_file}")
-            
-            # 清理extracted_xml_file
-            if os.path.exists(extracted_xml_file):
-                os.remove(extracted_xml_file)
-                logger.debug(f"Removed temporary extracted XML file: {extracted_xml_file}")
-        except Exception as e:
-            logger.error(f"Error removing temporary XML files: {str(e)}")
-        
+        if DEBUG_MODE:
+            logger.debug("关闭V2EX桌面版抓取资源")
         await self._close_driver()
         await super().close()
     
+    async def _force_desktop_mode(self, driver, loop):
+        """
+        强制使用桌面模式，避免重定向到移动版
+        """
+        try:
+            # 检查当前URL
+            current_url = await loop.run_in_executor(None, lambda: driver.current_url)
+            
+            # 如果是移动版地址，转换回桌面版
+            if "m.v2ex.com" in current_url:
+                logger.warning(f"检测到移动版地址: {current_url}")
+                
+                # 转换为桌面版URL
+                desktop_url = current_url.replace("m.v2ex.com", "www.v2ex.com")
+                logger.info(f"尝试切换到桌面版: {desktop_url}")
+                
+                # 设置强制使用桌面用户代理
+                desktop_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                await loop.run_in_executor(
+                    None,
+                    lambda: driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": desktop_agent})
+                )
+                
+                # 清除所有cookie（可能包含移动版偏好设置）
+                await loop.run_in_executor(None, lambda: driver.delete_all_cookies())
+                
+                # 访问桌面版URL
+                await loop.run_in_executor(None, lambda: driver.get(desktop_url))
+                
+                # 等待页面加载
+                await asyncio.sleep(3)
+                
+                # 再次检查URL
+                new_url = await loop.run_in_executor(None, lambda: driver.current_url)
+                if "m.v2ex.com" in new_url:
+                    # 如果仍然是移动版，使用JavaScript强制导航
+                    logger.warning("仍处于移动版，尝试使用JavaScript强制导航")
+                    await loop.run_in_executor(
+                        None,
+                        lambda: driver.execute_script(f"window.location.href = '{desktop_url}';")
+                    )
+                    await asyncio.sleep(3)  # 再次等待加载
+                
+                # 设置大窗口尺寸，进一步确保桌面体验
+                await loop.run_in_executor(
+                    None,
+                    lambda: driver.set_window_size(1920, 1080)
+                )
+                
+                return True  # 表示进行了桌面模式切换
+            
+            return False  # 表示无需切换
+            
+        except Exception as e:
+            logger.warning(f"强制桌面模式失败: {str(e)}")
+            return False
+    
     async def _fetch_with_selenium(self) -> str:
         """
-        使用Selenium从V2EX获取页面内容
+        使用Selenium获取V2EX网页内容
+        确保访问桌面版网站，避免被识别为爬虫
         """
         driver = await self._get_driver()
         if driver is None:
-            logger.error("Failed to create WebDriver")
-            return ""
+            logger.error("WebDriver创建失败")
+            raise RuntimeError("无法获取V2EX数据：WebDriver创建失败")
         
-        html_content = ""
+        content = ""
         try:
             # 随机延迟，模拟人类行为
             if self.config.get("use_random_delay", True):
@@ -317,103 +418,115 @@ class V2EXSeleniumSource(WebNewsSource):
                     self.config.get("min_delay", 1.0),
                     self.config.get("max_delay", 3.0)
                 )
-                logger.debug(f"Random delay before request: {delay:.2f} seconds")
+                if DEBUG_MODE:
+                    logger.debug(f"请求前随机延迟: {delay:.2f} 秒")
                 await asyncio.sleep(delay)
             
             # 访问页面
-            logger.info(f"Opening URL: {self.url}")
+            logger.info(f"访问URL: {self.url}")
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: driver.get(self.url))
+            
+            # 设置超时控制
+            try:
+                page_load_timeout = self.config.get("selenium_timeout", 30)
+                
+                # 设置超时
+                await loop.run_in_executor(
+                    None, 
+                    lambda: driver.set_page_load_timeout(page_load_timeout)
+                )
+                
+                # 访问URL
+                start_time = time.time()
+                await loop.run_in_executor(None, lambda: driver.get(self.url))
+                end_time = time.time()
+                if DEBUG_MODE:
+                    logger.debug(f"页面加载耗时: {end_time - start_time:.2f} 秒")
+                
+                # 强制使用桌面模式
+                switched = await self._force_desktop_mode(driver, loop)
+                if switched:
+                    logger.info("已切换到桌面模式")
+                
+            except Exception as e:
+                logger.warning(f"页面加载异常: {str(e)}")
+                
+                # 尝试使用JavaScript导航
+                try:
+                    logger.info("尝试使用JavaScript导航")
+                    # 确保使用www子域名而不是m子域名
+                    desktop_url = self.url.replace("m.v2ex.com", "www.v2ex.com")
+                    await loop.run_in_executor(
+                        None,
+                        lambda: driver.execute_script(f"window.location.href = '{desktop_url}';")
+                    )
+                    
+                    # 等待页面加载
+                    await asyncio.sleep(10)
+                    
+                    # 强制使用桌面模式
+                    await self._force_desktop_mode(driver, loop)
+                except Exception as js_e:
+                    logger.error(f"JavaScript导航失败: {str(js_e)}")
+                    raise RuntimeError(f"无法获取V2EX数据：页面加载失败")
             
             # 等待页面加载完成
-            wait_time = self.config.get("selenium_wait_time", 5)
+            await asyncio.sleep(5)
             
-            # 如果是XML页面，等待pre元素（XML通常会在pre标签中显示）
-            if self.config.get("parse_xml", False):
-                try:
-                    # 先等待body元素
-                    await loop.run_in_executor(
-                        None,
-                        lambda: WebDriverWait(driver, wait_time).until(
-                            EC.presence_of_element_located((By.TAG_NAME, "body"))
-                        )
-                    )
-                    logger.debug("Body element loaded successfully")
-                    
-                    # 等待一段时间，确保页面完全加载
-                    await asyncio.sleep(2)
-                    
-                    # 直接获取页面源代码，不再尝试查找pre元素
-                    # 因为pre元素可能在页面源代码中，但不一定在DOM中
-                    html_content = await loop.run_in_executor(None, lambda: driver.page_source)
-                    logger.info(f"Successfully fetched page content with Selenium, content length: {len(html_content)}")
-                    
-                    # 随机滚动页面，模拟人类行为
-                    await loop.run_in_executor(
-                        None,
-                        lambda: driver.execute_script(
-                            "window.scrollTo(0, Math.floor(Math.random() * document.body.scrollHeight / 2));"
-                        )
-                    )
-                    await asyncio.sleep(1)
-                    await loop.run_in_executor(
-                        None,
-                        lambda: driver.execute_script(
-                            "window.scrollTo(0, Math.floor(Math.random() * document.body.scrollHeight));"
-                        )
-                    )
-                    
-                    return html_content
-                    
-                except TimeoutException:
-                    logger.warning(f"Timeout waiting for main content to load after {wait_time} seconds")
-                    # 即使超时，也尝试获取页面源代码
-                    html_content = await loop.run_in_executor(None, lambda: driver.page_source)
-                    return html_content
-            
-            # 如果不是XML页面，等待主要内容元素
-            else:
-                try:
-                    # 等待主要内容元素
-                    await loop.run_in_executor(
-                        None,
-                        lambda: WebDriverWait(driver, wait_time).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, ".topic-link"))
-                        )
-                    )
-                    logger.debug("Main content loaded successfully")
-                except TimeoutException:
-                    logger.warning(f"Timeout waiting for main content to load after {wait_time} seconds")
-                
-                # 获取页面源代码
-                html_content = await loop.run_in_executor(None, lambda: driver.page_source)
-                logger.info(f"Successfully fetched page content with Selenium, content length: {len(html_content)}")
-                
-                # 随机滚动页面，模拟人类行为
+            # 等待页面元素加载
+            try:
                 await loop.run_in_executor(
                     None,
-                    lambda: driver.execute_script(
-                        "window.scrollTo(0, Math.floor(Math.random() * document.body.scrollHeight / 2));"
+                    lambda: WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
                     )
                 )
-                await asyncio.sleep(1)
-                await loop.run_in_executor(
-                    None,
-                    lambda: driver.execute_script(
-                        "window.scrollTo(0, Math.floor(Math.random() * document.body.scrollHeight));"
-                    )
-                )
+            except Exception as wait_e:
+                if DEBUG_MODE:
+                    logger.debug(f"等待页面加载超时: {str(wait_e)}")
             
-            return html_content
+            # 获取页面内容
+            try:
+                content = await loop.run_in_executor(None, lambda: driver.page_source)
+                
+                # 保存页面源码供调试
+                if DEBUG_MODE:
+                    debug_file = self.config.get("debug_file", "/tmp/v2ex_selenium_debug.html")
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    logger.debug(f"页面源码已保存到: {debug_file}")
+                
+                # 检查是否是XML格式
+                if content.strip().startswith('<?xml'):
+                    logger.info("获取到XML内容")
+                else:
+                    logger.info("获取到HTML内容")
+                
+                # 检查是否有错误页面的特征
+                if "访问频率过快" in content or "Access Denied" in content:
+                    logger.warning("检测到访问限制页面，可能被认为是爬虫")
+                    # 保存错误页面供分析
+                    error_file = self.config.get("failed_debug_file", "/tmp/v2ex_selenium_failed.html")
+                    with open(error_file, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    logger.warning(f"错误页面已保存到: {error_file}")
+                
+            except Exception as e:
+                logger.error(f"获取页面内容失败: {str(e)}")
+                raise RuntimeError(f"获取V2EX数据失败: {str(e)}")
+            
+            return content
             
         except Exception as e:
-            logger.error(f"Error fetching with Selenium: {str(e)}", exc_info=True)
-            return ""
-    
+            logger.error(f"获取数据失败: {str(e)}")
+            raise RuntimeError(f"获取数据失败: {str(e)}")
+        finally:
+            # 确保关闭driver
+            await self._close_driver()
+
     def _unescape_content(self, content: str) -> str:
         """
-        处理内容中的转义字符
-        特别是处理Unicode转义序列，如\u003C（<）和\u003E（>）
+        解码HTML和Unicode转义序列
         """
         if not content:
             return ""
@@ -449,9 +562,7 @@ class V2EXSeleniumSource(WebNewsSource):
     
     async def _parse_xml(self, xml_content: str) -> List[NewsItemModel]:
         """
-        解析XML内容，提取话题信息
-        适用于从 https://www.v2ex.com/index.xml 获取的数据
-        XML内容可能直接来自pre标签
+        解析XML feed内容，提取新闻项
         """
         if not xml_content:
             logger.error("Empty XML content")
@@ -637,8 +748,7 @@ class V2EXSeleniumSource(WebNewsSource):
     
     async def _parse_html(self, html_content: str) -> List[NewsItemModel]:
         """
-        解析HTML内容，提取话题信息
-        适用于从热门话题页面获取的数据
+        解析HTML内容，提取热门话题
         """
         if not html_content:
             logger.error("Empty HTML content")
@@ -759,36 +869,49 @@ class V2EXSeleniumSource(WebNewsSource):
     
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """
-        解析响应内容
+        根据内容类型选择合适的解析方法
         """
-        try:
-            # 检查响应是否为空
-            if not response or not response.strip():
-                logger.warning("Empty response received")
-                return []
-            
-            # 检查内容类型
-            is_xml = response.strip().startswith('<?xml') or response.strip().startswith('<rss')
-            
-            # 根据内容类型或配置决定解析方式
-            if is_xml or self.config.get("parse_xml", False):
-                logger.info("Content appears to be XML, using _parse_xml method")
-                return await self._parse_xml(response)
-            else:
-                logger.info("Content appears to be HTML, using _parse_html method")
-                return await self._parse_html(response)
-        except Exception as e:
-            logger.error(f"Error parsing response: {str(e)}")
+        if not response or len(response.strip()) == 0:
+            logger.error("获取到空响应")
             return []
-
+        
+        # 检查是否是XML格式
+        if response.strip().startswith('<?xml') or self.config.get("parse_xml", False):
+            logger.info("解析XML内容")
+            return await self._parse_xml(response)
+        else:
+            logger.info("解析HTML内容")
+            return await self._parse_html(response)
+    
     async def fetch(self) -> List[NewsItemModel]:
         """
         获取V2EX热门话题
+        
+        Returns:
+            热门话题列表
         """
+        logger.info("获取V2EX数据")
+        
         try:
-            # 现有代码
-            result = await super().fetch()
-            return result
+            # 使用Selenium获取内容
+            content = await self._fetch_with_selenium()
+            
+            # 解析内容
+            news_items = await self.parse_response(content)
+            
+            if not news_items or len(news_items) == 0:
+                logger.error("未获取到话题数据")
+                raise RuntimeError("未获取到任何话题数据")
+            
+            logger.info(f"获取到 {len(news_items)} 条话题")
+            return news_items
+            
+        except Exception as e:
+            logger.error(f"获取数据失败: {str(e)}")
+            raise RuntimeError(f"获取数据失败: {str(e)}")
         finally:
             # 确保每次fetch后都关闭driver，防止资源泄漏
-            await self._close_driver() 
+            try:
+                await self._close_driver()
+            except Exception:
+                pass 

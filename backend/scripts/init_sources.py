@@ -312,17 +312,14 @@ SOURCES = [
     },
     {
         "id": "thepaper",
-        "name": "澎湃新闻",
+        "name": "澎湃新闻热榜",
         "description": "澎湃新闻热榜",
         "url": "https://www.thepaper.cn/",
-        "type": SourceType.API,
+        "type": SourceType.WEB,
         "category": "news",
         "country": "中国",
         "language": "zh-CN",
-        "config": {
-            "api_url": "https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar",
-            "data_path": "data.hotNews"
-        }
+        "config": {}
     },
     {
         "id": "tieba",
