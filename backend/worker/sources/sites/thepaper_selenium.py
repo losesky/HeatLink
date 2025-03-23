@@ -335,8 +335,7 @@ class ThePaperSeleniumSource(WebNewsSource):
         driver = await self._get_driver()
         if driver is None:
             logger.error("未能创建WebDriver，无法使用Selenium获取内容")
-            logger.info("返回模拟数据作为备用")
-            return self._create_mock_data()  # 直接返回模拟数据
+            raise RuntimeError("无法获取澎湃新闻数据：WebDriver创建失败")
         
         news_items = []
         try:
@@ -385,8 +384,7 @@ class ThePaperSeleniumSource(WebNewsSource):
                     logger.info("成功使用JavaScript导航")
                 except Exception as js_e:
                     logger.error(f"使用JavaScript导航时出错: {str(js_e)}")
-                    logger.info("返回模拟数据作为备用")
-                    return self._create_mock_data()
+                    raise RuntimeError(f"无法获取澎湃新闻数据：页面加载失败 - {str(js_e)}")
             
             # 等待页面加载完成
             logger.info("等待页面加载完成")
@@ -435,8 +433,7 @@ class ThePaperSeleniumSource(WebNewsSource):
                     except Exception as ss_e:
                         logger.error(f"保存截图时出错: {str(ss_e)}")
                     
-                    logger.info("返回模拟数据作为备用")
-                    return self._create_mock_data()
+                    raise RuntimeError("无法获取澎湃新闻数据：未找到新闻元素")
                 
                 # 提取新闻数据
                 logger.info(f"开始从 {len(news_elements)} 个元素中提取新闻数据")
@@ -502,13 +499,11 @@ class ThePaperSeleniumSource(WebNewsSource):
                 
             except Exception as extract_e:
                 logger.error(f"提取新闻列表时出错: {str(extract_e)}")
-                logger.info("返回模拟数据作为备用")
-                return self._create_mock_data()
+                raise RuntimeError(f"提取新闻列表时出错: {str(extract_e)}")
                 
         except Exception as e:
             logger.error(f"使用Selenium获取内容时出错: {str(e)}", exc_info=True)
-            logger.info("返回模拟数据作为备用")
-            return self._create_mock_data()
+            raise RuntimeError(f"使用Selenium获取内容时出错: {str(e)}")
         finally:
             # 确保关闭driver
             await self._close_driver()
@@ -536,11 +531,12 @@ class ThePaperSeleniumSource(WebNewsSource):
                     logger.error(f"使用Selenium获取数据失败: {str(se_e)}", exc_info=True)
             else:
                 logger.error("Selenium未启用，无法获取数据")
+                raise RuntimeError("Selenium未启用，无法获取数据")
             
-            # 如果没有获取到数据，使用模拟数据
+            # 如果没有获取到数据，抛出异常
             if not news_items:
-                logger.warning("Selenium获取失败或未启用，使用模拟数据")
-                news_items = self._create_mock_data()
+                logger.error("Selenium获取失败，无法获取澎湃新闻数据")
+                raise RuntimeError("无法获取澎湃新闻数据：Selenium获取失败")
             
             return news_items
         finally:

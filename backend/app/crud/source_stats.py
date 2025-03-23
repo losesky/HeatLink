@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from app.models.source_stats import SourceStats
+from app.models.source_stats import SourceStats, ApiCallType
 from app.models.source import Source, SourceStatus
 from datetime import datetime, timedelta
 
@@ -12,7 +12,8 @@ def create_source_stats(
     total_requests: int,
     error_count: int,
     news_count: int = 0,
-    last_response_time: float = 0.0
+    last_response_time: float = 0.0,
+    api_type: str = "internal"  # 默认为内部调用
 ) -> SourceStats:
     """创建新的源统计数据"""
     db_stats = SourceStats(
@@ -22,30 +23,40 @@ def create_source_stats(
         total_requests=total_requests,
         error_count=error_count,
         news_count=news_count,
-        last_response_time=last_response_time
+        last_response_time=last_response_time,
+        api_type=api_type
     )
     db.add(db_stats)
     db.commit()
     db.refresh(db_stats)
     return db_stats
 
-def get_latest_stats(db: Session, source_id: str) -> Optional[SourceStats]:
-    """获取最新的源统计数据"""
-    return db.query(SourceStats).filter(
-        SourceStats.source_id == source_id
-    ).order_by(SourceStats.created_at.desc()).first()
+def get_latest_stats(db: Session, source_id: str, api_type: Optional[str] = None) -> Optional[SourceStats]:
+    """获取最新的源统计数据，可以按api_type过滤"""
+    query = db.query(SourceStats).filter(SourceStats.source_id == source_id)
+    
+    if api_type:
+        query = query.filter(SourceStats.api_type == api_type)
+        
+    return query.order_by(SourceStats.created_at.desc()).first()
 
 def get_stats_history(
     db: Session,
     source_id: str,
-    hours: int = 24
+    hours: int = 24,
+    api_type: Optional[str] = None
 ) -> List[SourceStats]:
-    """获取历史统计数据"""
+    """获取历史统计数据，可以按api_type过滤"""
     cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-    return db.query(SourceStats).filter(
+    query = db.query(SourceStats).filter(
         SourceStats.source_id == source_id,
         SourceStats.created_at >= cutoff_time
-    ).order_by(SourceStats.created_at.asc()).all()
+    )
+    
+    if api_type:
+        query = query.filter(SourceStats.api_type == api_type)
+        
+    return query.order_by(SourceStats.created_at.asc()).all()
 
 def update_source_status(
     db: Session,
@@ -56,7 +67,8 @@ def update_source_status(
     error_count: int,
     last_error: Optional[str] = None,
     news_count: int = 0,
-    last_response_time: float = 0.0
+    last_response_time: float = 0.0,
+    api_type: str = "internal"  # 默认为内部调用
 ) -> Source:
     """更新源状态和统计数据"""
     # 更新源状态
@@ -85,7 +97,8 @@ def update_source_status(
         total_requests=total_requests,
         error_count=error_count,
         news_count=news_count,
-        last_response_time=last_response_time
+        last_response_time=last_response_time,
+        api_type=api_type
     )
     
     db.commit()

@@ -144,6 +144,25 @@
             </div>
         </div>
 
+        <!-- 内部/外部 API 调用统计 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">内部 API 响应时间</h3>
+                <p id="internalResponseTime" class="text-3xl font-bold text-indigo-600">-</p>
+                <p class="text-sm text-gray-500">调度任务访问</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">外部 API 响应时间</h3>
+                <p id="externalResponseTime" class="text-3xl font-bold text-purple-600">-</p>
+                <p class="text-sm text-gray-500">外部接口访问</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-2">内外响应时间比</h3>
+                <p id="responseTimeRatio" class="text-3xl font-bold text-amber-600">-</p>
+                <p class="text-sm text-gray-500">外部/内部</p>
+            </div>
+        </div>
+
         <!-- Charts -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div class="bg-white p-4 rounded-lg shadow">
@@ -157,6 +176,14 @@
                 <div class="h-64">
                     <canvas id="responseTimeChart"></canvas>
                 </div>
+            </div>
+        </div>
+
+        <!-- 内部/外部 API 对比图表 -->
+        <div class="bg-white p-4 rounded-lg shadow mb-8">
+            <h3 class="text-gray-700 text-lg font-medium mb-4">内部与外部 API 调用对比</h3>
+            <div class="h-64">
+                <canvas id="apiTypeComparisonChart"></canvas>
             </div>
         </div>
 
@@ -208,6 +235,7 @@
         let statusChart = null;
         let responseTimeChart = null;
         let historyChart = null;
+        let apiTypeComparisonChart = null;
 
         function initCharts() {
             // 状态分布图
@@ -254,6 +282,78 @@
                         scales: {
                             y: {
                                 beginAtZero: true
+                            }
+                        }
+                    }
+                }
+            );
+            
+            // 内部/外部API调用对比图
+            apiTypeComparisonChart = new Chart(
+                document.getElementById('apiTypeComparisonChart'),
+                {
+                    type: 'bar',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: '内部调用响应时间 (ms)',
+                                data: [],
+                                backgroundColor: 'rgba(79, 70, 229, 0.6)',
+                                borderColor: 'rgb(79, 70, 229)',
+                                borderWidth: 1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: '外部调用响应时间 (ms)',
+                                data: [],
+                                backgroundColor: 'rgba(168, 85, 247, 0.6)',
+                                borderColor: 'rgb(168, 85, 247)',
+                                borderWidth: 1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: '内部调用请求数',
+                                data: [],
+                                backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                                borderColor: 'rgb(16, 185, 129)',
+                                borderWidth: 1,
+                                type: 'line',
+                                yAxisID: 'y1'
+                            },
+                            {
+                                label: '外部调用请求数',
+                                data: [],
+                                backgroundColor: 'rgba(245, 158, 11, 0.6)',
+                                borderColor: 'rgb(245, 158, 11)',
+                                borderWidth: 1,
+                                type: 'line',
+                                yAxisID: 'y1'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: '响应时间 (ms)'
+                                }
+                            },
+                            y1: {
+                                beginAtZero: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: '请求数'
+                                },
+                                grid: {
+                                    drawOnChartArea: false
+                                }
                             }
                         }
                     }
@@ -329,6 +429,76 @@
             );
             responseTimeChart.data.datasets[0].data = data.historical_data.map(item => item.value);
             responseTimeChart.update();
+            
+            // 更新API类型对比图表
+            if (data.api_type_comparison) {
+                // 检查是否有任何有效数据
+                const hasData = data.api_type_comparison.some(item => 
+                    (item.internal && 
+                     (item.internal.avg_response_time > 0 || item.internal.total_requests > 0)) || 
+                    (item.external && 
+                     (item.external.avg_response_time > 0 || item.external.total_requests > 0))
+                );
+                
+                if (hasData) {
+                    apiTypeComparisonChart.data.labels = data.api_type_comparison.map(item => item.source_name);
+                    
+                    // 内部调用响应时间
+                    apiTypeComparisonChart.data.datasets[0].data = data.api_type_comparison.map(
+                        item => item.internal ? item.internal.avg_response_time : 0
+                    );
+                    
+                    // 外部调用响应时间
+                    apiTypeComparisonChart.data.datasets[1].data = data.api_type_comparison.map(
+                        item => item.external ? item.external.avg_response_time : 0
+                    );
+                    
+                    // 内部调用请求数
+                    apiTypeComparisonChart.data.datasets[2].data = data.api_type_comparison.map(
+                        item => item.internal ? item.internal.total_requests : 0
+                    );
+                    
+                    // 外部调用请求数
+                    apiTypeComparisonChart.data.datasets[3].data = data.api_type_comparison.map(
+                        item => item.external ? item.external.total_requests : 0
+                    );
+                    
+                    apiTypeComparisonChart.update();
+                } else {
+                    // 如果没有有效数据，显示提示信息
+                    // 清空图表数据
+                    apiTypeComparisonChart.data.labels = [];
+                    apiTypeComparisonChart.data.datasets.forEach(dataset => {
+                        dataset.data = [];
+                    });
+                    apiTypeComparisonChart.update();
+                    
+                    // 在图表区域显示提示信息
+                    const chartCanvas = document.getElementById('apiTypeComparisonChart');
+                    const ctx = chartCanvas.getContext('2d');
+                    ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+                    ctx.font = '14px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = '#6b7280';
+                    ctx.fillText('暂无数据可供展示，请等待API调用数据收集', chartCanvas.width / 2, chartCanvas.height / 2);
+                }
+            } else {
+                // 如果没有API对比数据，也显示提示信息
+                // 清空并显示提示
+                apiTypeComparisonChart.data.labels = [];
+                apiTypeComparisonChart.data.datasets.forEach(dataset => {
+                    dataset.data = [];
+                });
+                apiTypeComparisonChart.update();
+                
+                const chartCanvas = document.getElementById('apiTypeComparisonChart');
+                const ctx = chartCanvas.getContext('2d');
+                ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#6b7280';
+                ctx.fillText('无法获取API类型对比数据', chartCanvas.width / 2, chartCanvas.height / 2);
+            }
             
             // 更新源选择下拉菜单
             const sourceSelect = document.getElementById('sourceHistorySelect');
@@ -445,6 +615,20 @@
             document.getElementById('errorSources').textContent = data.error_sources;
             document.getElementById('avgResponseTime').textContent = 
                 `${Math.round(data.avg_response_time)}ms`;
+            
+            // 更新内部/外部API响应时间
+            if (data.api_type_metrics) {
+                document.getElementById('internalResponseTime').textContent = 
+                    `${Math.round(data.api_type_metrics.internal_avg_response_time)}ms`;
+                document.getElementById('externalResponseTime').textContent = 
+                    `${Math.round(data.api_type_metrics.external_avg_response_time)}ms`;
+                
+                // 计算比率
+                const ratio = data.api_type_metrics.external_avg_response_time / 
+                              data.api_type_metrics.internal_avg_response_time;
+                document.getElementById('responseTimeRatio').textContent = 
+                    ratio ? ratio.toFixed(2) + 'x' : '-';
+            }
         }
 
         function createSourceCard(source) {
@@ -454,6 +638,58 @@
                 warning: 'bg-yellow-100 text-yellow-800',
                 inactive: 'bg-gray-100 text-gray-800'
             };
+
+            // 添加内部/外部API调用的单独统计
+            const internalMetrics = source.api_type_metrics && source.api_type_metrics.internal;
+            const externalMetrics = source.api_type_metrics && source.api_type_metrics.external;
+            const apiTypeStats = internalMetrics || externalMetrics ? 
+                `<div class="mt-4 border-t pt-4">
+                    <h5 class="text-sm font-medium text-gray-900 mb-2">API类型统计</h5>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="border rounded p-2">
+                            <h6 class="text-xs font-medium text-indigo-800 mb-1">内部调用</h6>
+                            <div class="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                    <p class="text-gray-600">响应时间</p>
+                                    <p class="font-semibold">${internalMetrics ? Math.round(internalMetrics.avg_response_time) + 'ms' : '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-600">请求数</p>
+                                    <p class="font-semibold">${internalMetrics ? internalMetrics.total_requests : '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-600">成功率</p>
+                                    <p class="font-semibold">${internalMetrics ? (internalMetrics.success_rate * 100).toFixed(1) + '%' : '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-600">错误数</p>
+                                    <p class="font-semibold">${internalMetrics ? internalMetrics.error_count : '-'}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="border rounded p-2">
+                            <h6 class="text-xs font-medium text-purple-800 mb-1">外部调用</h6>
+                            <div class="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                    <p class="text-gray-600">响应时间</p>
+                                    <p class="font-semibold">${externalMetrics ? Math.round(externalMetrics.avg_response_time) + 'ms' : '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-600">请求数</p>
+                                    <p class="font-semibold">${externalMetrics ? externalMetrics.total_requests : '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-600">成功率</p>
+                                    <p class="font-semibold">${externalMetrics ? (externalMetrics.success_rate * 100).toFixed(1) + '%' : '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-600">错误数</p>
+                                    <p class="font-semibold">${externalMetrics ? externalMetrics.error_count : '-'}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>` : '';
 
             return `
                 <div class="border rounded-lg p-4 hover:shadow-md transition-shadow">
@@ -484,6 +720,7 @@
                             <p class="text-lg font-semibold">${source.metrics.error_count}</p>
                         </div>
                     </div>
+                    ${apiTypeStats}
                     ${source.metrics.last_error ? `
                         <div class="mt-4 p-3 bg-red-50 rounded-md">
                             <p class="text-sm text-red-700">Last Error: ${source.metrics.last_error}</p>

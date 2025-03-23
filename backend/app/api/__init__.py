@@ -14,7 +14,8 @@ from app.api.endpoints import (
     external, 
     monitor,
     health,
-    source_test
+    source_test,
+    test
 )
 
 # 注册路由
@@ -30,3 +31,4 @@ api_router.include_router(tags.router, prefix="/tags", tags=["tags"])
 api_router.include_router(categories.router, prefix="/categories", tags=["categories"])
 api_router.include_router(external.router, prefix="/external", tags=["external"])
 api_router.include_router(source_test.router, prefix="/source-test", tags=["source-test"])
+api_router.include_router(test.router, prefix="/test", tags=["test"])

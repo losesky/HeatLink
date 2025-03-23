@@ -891,22 +891,28 @@ class SourceSynchronizer:
             
             # 获取所有源的最新统计信息
             sql = text("""
-            SELECT sources.id as source_id, 
-                   COALESCE(ss.success_rate, 0) as success_rate, 
-                   COALESCE(ss.avg_response_time, 0) as avg_response_time, 
-                   COALESCE(ss.total_requests, 0) as total_requests, 
-                   COALESCE(ss.error_count, 0) as error_count, 
-                   ss.created_at
+            WITH latest_stats AS (
+                SELECT source_id, api_type, MAX(created_at) as max_created_at 
+                FROM source_stats 
+                GROUP BY source_id, api_type
+            )
+            SELECT 
+                sources.id, 
+                sources.name,
+                ss.api_type,
+                ss.success_rate, 
+                ss.avg_response_time, 
+                ss.total_requests, 
+                ss.error_count,
+                ss.created_at
             FROM sources
             LEFT JOIN (
-                SELECT s.source_id, s.success_rate, s.avg_response_time, s.total_requests, s.error_count, s.created_at
+                SELECT s.source_id, s.api_type, s.success_rate, s.avg_response_time, s.total_requests, s.error_count, s.created_at
                 FROM source_stats s
-                INNER JOIN (
-                    SELECT source_id, MAX(created_at) as max_created_at 
-                    FROM source_stats 
-                    GROUP BY source_id
-                ) latest
-                ON s.source_id = latest.source_id AND s.created_at = latest.max_created_at
+                INNER JOIN latest_stats
+                ON s.source_id = latest_stats.source_id 
+                AND s.api_type = latest_stats.api_type 
+                AND s.created_at = latest_stats.max_created_at
             ) ss ON sources.id = ss.source_id
             WHERE sources.status = 'ACTIVE'
             """)
@@ -918,19 +924,28 @@ class SourceSynchronizer:
             
             for row in result:
                 source_id = row[0]
-                has_stats = row[5] is not None  # 检查created_at是否为None来判断是否有统计记录
+                api_type = row[2]
+                has_stats = row[7] is not None  # 检查created_at是否为None来判断是否有统计记录
                 
-                stats[source_id] = {
-                    "source_id": source_id,
-                    "success_rate": row[1],
-                    "avg_response_time": row[2],
-                    "total_requests": row[3],
-                    "error_count": row[4],
-                    "last_update": row[5].isoformat() if row[5] else None,
-                    "has_stats": has_stats
-                }
+                if source_id not in stats:
+                    stats[source_id] = {
+                        "source_id": source_id,
+                        "name": row[1],
+                        "has_stats": False,
+                        "internal": None,
+                        "external": None
+                    }
                 
-                if has_stats:
+                # 按API类型存储统计数据
+                if has_stats and api_type:
+                    stats[source_id][api_type] = {
+                        "success_rate": row[3],
+                        "avg_response_time": row[4],
+                        "total_requests": row[5],
+                        "error_count": row[6],
+                        "last_update": row[7].isoformat() if row[7] else None
+                    }
+                    stats[source_id]["has_stats"] = True
                     sources_with_stats += 1
                 else:
                     sources_without_stats += 1

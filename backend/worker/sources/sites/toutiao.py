@@ -133,15 +133,14 @@ class ToutiaoHotNewsSource(APINewsSource):
                 except Exception as e:
                     logger.warning(f"Error fetching from third-party API {api_url}: {str(e)}")
             
-            # 如果所有API都失败，创建模拟数据作为最后的备用方案
-            logger.warning("All APIs failed, generating mock data as a last resort")
-            mock_items = self._create_mock_data()
-            logger.info(f"Generated {len(mock_items)} mock hot news items")
-            return mock_items
+            # 如果所有API都失败，抛出异常
+            logger.error("All APIs failed, unable to fetch Toutiao hot news")
+            raise RuntimeError("无法获取今日头条热搜数据：所有API请求均失败")
             
         except Exception as e:
             logger.error(f"Unexpected error during fetch: {str(e)}", exc_info=True)
-            return []
+            # 不再返回空列表，而是重新抛出异常
+            raise
     
     async def _fetch_from_original_api(self, timeout: int) -> List[NewsItemModel]:
         """
@@ -211,7 +210,8 @@ class ToutiaoHotNewsSource(APINewsSource):
             logger.error(f"Error fetching from third-party API {api_url}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-            return []
+            # 不再返回空列表，而是重新抛出异常
+            raise RuntimeError(f"第三方API {api_url} 请求失败: {str(e)}")
     
     def _parse_vvhan_api_response(self, data: Dict[str, Any]) -> List[NewsItemModel]:
         """解析vvhan API的响应"""

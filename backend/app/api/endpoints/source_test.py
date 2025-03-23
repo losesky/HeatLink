@@ -8,6 +8,7 @@ import json
 
 from worker.sources.factory import NewsSourceFactory
 from worker.sources.provider import DefaultNewsSourceProvider
+from worker.stats_wrapper import stats_updater
 from app.api import deps
 
 router = APIRouter()
@@ -58,8 +59,15 @@ async def test_source(
         start_time = time.time()
         
         try:
+            # 将源的fetch方法包装为external类型
+            original_fetch = source.fetch
+            source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source_id, original_fetch, api_type="external", *args, **kwargs)
+            
             # Fetch news with a timeout
             news_items = await asyncio.wait_for(source.get_news(force_update=True), timeout=timeout)
+            
+            # 恢复原始fetch方法
+            source.fetch = original_fetch
             
             # If we get here, the test was successful
             end_time = time.time()
@@ -127,6 +135,7 @@ async def test_all_sources(
         semaphore = asyncio.Semaphore(max_concurrent)
         
         async def test_source_with_semaphore(source_type):
+            """使用信号量限制并发测试数量，并确保调用被修改的test_source函数以正确统计外部API调用"""
             async with semaphore:
                 return {
                     "source_type": source_type,
@@ -212,6 +221,7 @@ async def compare_formats(
         semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent tests
         
         async def test_source_with_semaphore(source_type):
+            """使用信号量限制并发测试数量，并确保调用被修改的test_source函数以正确统计外部API调用"""
             async with semaphore:
                 return {
                     "source_type": source_type,

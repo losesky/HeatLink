@@ -3,6 +3,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 import time
+import traceback
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Path, Depends
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ from worker.sources.factory import NewsSourceFactory
 from worker.sources.base import NewsSource, NewsItemModel
 from worker.sources.aggregator import aggregator_manager
 from worker.sources.manager import source_manager
+from worker.stats_wrapper import stats_updater  # 导入统计更新器
 
 # Configure logging
 logging.basicConfig(
@@ -209,9 +211,17 @@ async def fetch_source_news(source_type: str, timeout: int = 60) -> Dict[str, An
         # 获取数据
         start_time = time.time()
         try:
+            # 包装源的fetch方法为external类型
+            original_fetch = source.fetch
+            source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source_type, original_fetch, api_type="external", *args, **kwargs)
+            
             # 设置超时
             fetch_task = asyncio.create_task(source.get_news(force_update=True))
             news_items = await asyncio.wait_for(fetch_task, timeout=timeout)
+            
+            # 恢复原始fetch方法
+            source.fetch = original_fetch
+            
             elapsed_time = time.time() - start_time
             
             # 记录结果
@@ -923,54 +933,110 @@ async def test_source(
     timeout: int = Query(60, description="超时时间（秒）")
 ):
     """
-    测试单个新闻源
+    测试单个新闻源的可用性和性能
     
-    测试指定新闻源是否可以正常获取数据，返回测试结果包括成功状态、获取到的新闻数量和耗时
-    
-    - **source_id**: 新闻源ID
-    - **timeout**: 超时时间（秒）
+    Args:
+        source_id: 新闻源ID
+        timeout: 超时时间（秒）
+        
+    Returns:
+        测试结果
     """
     source = None
+    start_time = time.time()
+    
     try:
-        start_time = time.time()
+        # 创建数据源
         source = NewsSourceFactory.create_source(source_id)
         
-        if not source:
-            raise HTTPException(status_code=404, detail=f"找不到新闻源: {source_id}")
+        if source is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"找不到新闻源: {source_id}"
+            )
         
-        # 设置超时
         try:
-            fetch_task = asyncio.create_task(source.fetch())
-            items = await asyncio.wait_for(fetch_task, timeout=timeout)
-            elapsed_time = time.time() - start_time
+            # 包装源的fetch方法为external类型
+            original_fetch = source.fetch
+            source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source_id, original_fetch, api_type="external", *args, **kwargs)
             
-            # 返回测试结果
+            # 获取数据
+            fetch_task = asyncio.create_task(source.get_news(force_update=True))
+            news_items = await asyncio.wait_for(fetch_task, timeout=timeout)
+            
+            # 恢复原始fetch方法
+            source.fetch = original_fetch
+            
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            
+            # 格式化样本
+            sample = None
+            if news_items and len(news_items) > 0:
+                sample = news_items[0].to_dict()
+            
+            # 获取字段类型
+            field_types = {}
+            if sample:
+                for field, value in sample.items():
+                    if value is not None:
+                        field_types[field] = type(value).__name__
+                    else:
+                        field_types[field] = "None"
+            
+            # 返回结果
             return {
                 "success": True,
                 "source_id": source_id,
-                "items_count": len(items) if items else 0,
-                "elapsed_time": elapsed_time
+                "elapsed_time": elapsed_time,
+                "items_count": len(news_items),
+                "source": {
+                    "id": source_id,
+                    "name": getattr(source, "name", "Unknown"),
+                    "category": getattr(source, "category", "Unknown"),
+                    "update_interval": getattr(source, "update_interval", 0),
+                    "cache_ttl": getattr(source, "cache_ttl", 0),
+                },
+                "sample": sample,
+                "field_types": field_types
             }
+            
         except asyncio.TimeoutError:
-            elapsed_time = time.time() - start_time
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            
             return {
                 "success": False,
                 "source_id": source_id,
-                "items_count": 0,
                 "elapsed_time": elapsed_time,
-                "error": f"获取超时，超过 {timeout} 秒"
+                "error": f"请求超时 (>{timeout}秒)"
             }
+            
+        except Exception as e:
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            
+            return {
+                "success": False,
+                "source_id": source_id,
+                "elapsed_time": elapsed_time,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+            
     except Exception as e:
-        elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        
         return {
             "success": False,
             "source_id": source_id,
-            "items_count": 0,
             "elapsed_time": elapsed_time,
             "error": str(e)
         }
+        
     finally:
-        # 确保源被正确关闭
+        # 关闭数据源
         if source:
             await close_source(source)
 
@@ -1000,6 +1066,7 @@ async def test_all_sources(
         
         # 定义带信号量的测试函数
         async def test_with_semaphore(source_id: str):
+            # 使用信号量限制并发数量，这不会绕过test_source函数中的stats_updater包装
             async with semaphore:
                 return await test_source(source_id, timeout)
         

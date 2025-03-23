@@ -22,6 +22,7 @@ from app.schemas.source import (
 )
 from worker.sources.interface import NewsSourceInterface
 from worker.sources.provider import NewsSourceProvider
+from worker.stats_wrapper import stats_updater
 
 # Configure logging
 logging.basicConfig(
@@ -165,7 +166,7 @@ async def get_source_news(
     source_provider: NewsSourceProvider = Depends(get_news_source_provider),
 ):
     """
-    从新闻源获取新闻
+    从新闻源获取新闻（外部API调用）
     """
     # 获取新闻源
     source = source_provider.get_source(source_id)
@@ -173,8 +174,15 @@ async def get_source_news(
         raise HTTPException(status_code=404, detail=f"新闻源 {source_id} 不存在")
     
     try:
+        # 将源的fetch方法包装为external类型
+        original_fetch = source.fetch
+        source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source_id, original_fetch, api_type="external", *args, **kwargs)
+        
         # 获取新闻
         news_items = await source.get_news(force_update=force_update)
+        
+        # 恢复原始fetch方法
+        source.fetch = original_fetch
         
         # 格式化返回数据
         result = []

@@ -123,15 +123,9 @@ class BilibiliHotNewsSource(APINewsSource):
                     except Exception as backup_error:
                         logger.error(f"从备用API获取数据也失败: {str(backup_error)}")
                     
-                    # 如果所有尝试都失败，生成模拟数据
-                    try:
-                        logger.warning("所有API都失败，生成模拟数据")
-                        mock_items = self._generate_mock_data()
-                        logger.info(f"生成了 {len(mock_items)} 条模拟B站热搜数据")
-                        return mock_items
-                    except Exception as mock_error:
-                        logger.error(f"生成模拟数据失败: {str(mock_error)}")
-                        return []
+                    # 如果所有尝试都失败，抛出异常
+                    logger.error("所有API都失败，无法获取B站热搜数据")
+                    raise RuntimeError("无法获取B站热搜数据：主API和备用API均失败")
                 
                 # 如果没到最大重试次数，等待后重试
                 logger.warning(f"将在 {retry_delay} 秒后进行第 {retry_count} 次重试")
@@ -140,7 +134,7 @@ class BilibiliHotNewsSource(APINewsSource):
         
         # 如果达到这里，说明所有重试都失败了
         logger.error(f"在 {max_retries} 次重试后仍然失败: {str(last_error)}")
-        return []
+        raise RuntimeError(f"无法获取B站热搜数据：重试失败 - {str(last_error)}")
     
     async def _parse_backup_response(self, response: Dict[str, Any]) -> List[NewsItemModel]:
         """

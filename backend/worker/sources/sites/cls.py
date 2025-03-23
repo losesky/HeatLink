@@ -83,10 +83,10 @@ class CLSNewsSource(RESTNewsSource):
                 if len(all_items) >= 10:
                     break
         
-        # 如果仍然没有数据，生成模拟数据（仅开发/测试环境）
+        # 如果仍然没有数据，抛出异常
         if not all_items:
-            logger.warning("All APIs failed, generating mock data")
-            all_items = self._create_mock_data()
+            logger.error("所有API都失败，无法获取财联社新闻数据")
+            raise RuntimeError("无法获取财联社新闻数据：所有API请求均失败")
         
         return all_items
     
@@ -125,19 +125,19 @@ class CLSNewsSource(RESTNewsSource):
                         return self._parse_generic_data(data)
         except aiohttp.ClientConnectorError as e:
             logger.warning(f"连接错误 {api_url}: {str(e)}")
-            return []
+            raise RuntimeError(f"连接错误 {api_url}: {str(e)}")
         except aiohttp.ClientError as e:
             logger.warning(f"客户端错误 {api_url}: {str(e)}")
-            return []
+            raise RuntimeError(f"客户端错误 {api_url}: {str(e)}")
         except asyncio.TimeoutError:
             logger.warning(f"请求超时 {api_url}")
-            return []
+            raise RuntimeError(f"请求超时 {api_url}")
         except json.JSONDecodeError:
             logger.warning(f"JSON解析错误 {api_url}")
-            return []
+            raise RuntimeError(f"JSON解析错误 {api_url}")
         except Exception as e:
             logger.warning(f"Error fetching from API {api_url}: {str(e)}")
-            return []
+            raise RuntimeError(f"从API获取数据失败 {api_url}: {str(e)}")
     
     def _parse_oioweb_data(self, data: Dict[str, Any]) -> List[NewsItemModel]:
         """解析OioWeb API的响应数据"""

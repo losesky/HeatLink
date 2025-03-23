@@ -245,6 +245,36 @@
             </div>
         </div>
 
+        <!-- 内部/外部 API 调用统计 -->
+        <div class="metrics" style="margin-top: 15px;">
+            <div class="metric-card" style="border-left: 4px solid #6366f1;">
+                <div class="metric-label">内部 API 响应时间</div>
+                <div id="internalResponseTime" class="metric-value" style="color: #6366f1;">-</div>
+                <div style="font-size: 12px; color: #6b7280;">调度任务访问</div>
+            </div>
+            <div class="metric-card" style="border-left: 4px solid #a855f7;">
+                <div class="metric-label">外部 API 响应时间</div>
+                <div id="externalResponseTime" class="metric-value" style="color: #a855f7;">-</div>
+                <div style="font-size: 12px; color: #6b7280;">外部接口访问</div>
+            </div>
+            <div class="metric-card" style="border-left: 4px solid #d97706;">
+                <div class="metric-label">内外响应时间比</div>
+                <div id="responseTimeRatio" class="metric-value" style="color: #d97706;">-</div>
+                <div style="font-size: 12px; color: #6b7280;">外部/内部</div>
+            </div>
+        </div>
+
+        <!-- API类型对比图表 -->
+        <div style="margin: 30px 0;">
+            <h2>API类型性能对比</h2>
+            <div class="section-card" style="height: 300px;">
+                <canvas id="apiTypeComparisonChart"></canvas>
+                <div id="apiTypeChartLoading" class="loading-overlay" style="display: none;">
+                    <div class="loading"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- History Data and Peak Times -->
         <div style="margin-bottom: 30px;">
             <h2>Access Statistics and Peak Times</h2>
@@ -296,6 +326,8 @@
         // Global variables for loading states
         let isLoadingData = false;
         let isLoadingHistory = false;
+        let historyChart;
+        let apiTypeComparisonChart;
         
         // Error handling
         function showError(message, duration = 5000) {
@@ -311,134 +343,14 @@
             }
         }
         
-        // Fetch data from API
-        async function fetchData() {
-            if (isLoadingData) return;
-            
-            isLoadingData = true;
-            
-            // Show loading states
-            document.getElementById('refreshLoading').style.display = 'inline-block';
-            document.getElementById('refreshBtn').disabled = true;
-            document.getElementById('sourceListLoading').style.display = 'block';
-            
-            try {
-                const response = await fetch('/api/monitor/sources');
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch monitoring data: ${response.status} ${response.statusText}`);
-                }
-                const data = await response.json();
-                updateDashboard(data);
-            } catch (error) {
-                console.error('Error fetching data:', error);
-                showError(`Failed to fetch monitoring data: ${error.message}`);
-            } finally {
-                // Hide loading states
-                document.getElementById('refreshLoading').style.display = 'none';
-                document.getElementById('refreshBtn').disabled = false;
-                document.getElementById('sourceListLoading').style.display = 'none';
-                isLoadingData = false;
-            }
-        }
-
-        // Update dashboard with new data
-        function updateDashboard(data) {
-            // Update metrics
-            document.getElementById('totalSources').textContent = data.total_sources;
-            document.getElementById('activeSources').textContent = data.active_sources;
-            document.getElementById('errorSources').textContent = data.error_sources;
-            document.getElementById('avgResponseTime').textContent = `${Math.round(data.avg_response_time)}ms`;
-
-            // Update source list
-            const sourceListEl = document.getElementById('sourceList');
-            
-            if (data.sources && data.sources.length > 0) {
-                sourceListEl.innerHTML = data.sources.map(source => createSourceCard(source)).join('');
-            } else {
-                sourceListEl.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #6c757d;">No sources available</div>';
-            }
-            
-            // Update source select dropdown
-            const sourceSelect = document.getElementById('sourceHistorySelect');
-            // Save current selection
-            const currentSelection = sourceSelect.value;
-            // Clear existing options (except the first one)
-            while (sourceSelect.options.length > 1) {
-                sourceSelect.remove(1);
-            }
-            
-            // Add source options
-            if (data.sources && data.sources.length > 0) {
-                data.sources.forEach(source => {
-                    const option = document.createElement('option');
-                    option.value = source.id;
-                    option.textContent = source.name;
-                    sourceSelect.appendChild(option);
-                });
-                
-                // Restore previous selection (if exists)
-                if (currentSelection && Array.from(sourceSelect.options).some(opt => opt.value === currentSelection)) {
-                    sourceSelect.value = currentSelection;
-                    fetchSourceHistory();
-                }
-            }
-        }
-
-        // Create HTML for a source card
-        function createSourceCard(source) {
-            // Get status class
-            const statusClass = {
-                'active': 'status-active',
-                'error': 'status-error',
-                'warning': 'status-warning',
-                'inactive': 'status-inactive'
-            }[source.status] || 'status-inactive';
-
-            // Format last update time
-            const lastUpdate = source.metrics.last_update
-                ? `${moment(source.metrics.last_update).fromNow()} (${moment(source.metrics.last_update).format('YYYY-MM-DD HH:mm:ss')})`
-                : 'Never';
-
-            return `
-                <div class="source-card">
-                    <div class="source-header">
-                        <div class="source-title">${source.name}</div>
-                        <span class="status-badge ${statusClass}" role="status">${source.status}</span>
-                    </div>
-                    <div>Category: ${source.category || 'N/A'}</div>
-                    <div class="source-stats">
-                        <div class="stat-item">
-                            <div class="stat-value">${(source.metrics.success_rate * 100).toFixed(1)}%</div>
-                            <div class="stat-label">Success Rate</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">${Math.round(source.metrics.avg_response_time)}ms</div>
-                            <div class="stat-label">Avg Response Time</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">${source.metrics.total_requests}</div>
-                            <div class="stat-label">Total Requests</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value">${source.metrics.error_count}</div>
-                            <div class="stat-label">Error Count</div>
-                        </div>
-                    </div>
-                    <div>Last Update: ${lastUpdate}</div>
-                    ${source.metrics.last_error ? 
-                        `<div class="error-message" role="alert">${source.metrics.last_error}</div>` : 
-                        ''}
-                </div>
-            `;
-        }
-
         // Initialize the page
         document.addEventListener('DOMContentLoaded', () => {
             // Load initial data
             fetchData();
             
-            // Initialize history chart
+            // Initialize charts
             initHistoryChart();
+            initApiTypeComparisonChart();
 
             // Add event listener for refresh button
             document.getElementById('refreshBtn').addEventListener('click', fetchData);
@@ -452,7 +364,6 @@
         });
         
         // Initialize history chart
-        let historyChart;
         function initHistoryChart() {
             historyChart = new Chart(
                 document.getElementById('historyChart'),
@@ -510,6 +421,84 @@
                         plugins: {
                             tooltip: {
                                 enabled: true
+                            }
+                        }
+                    }
+                }
+            );
+        }
+        
+        // Initialize API类型对比图表
+        function initApiTypeComparisonChart() {
+            apiTypeComparisonChart = new Chart(
+                document.getElementById('apiTypeComparisonChart'),
+                {
+                    type: 'bar',
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: '内部调用响应时间 (ms)',
+                                data: [],
+                                backgroundColor: 'rgba(99, 102, 241, 0.6)',
+                                borderColor: '#6366f1',
+                                borderWidth: 1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: '外部调用响应时间 (ms)',
+                                data: [],
+                                backgroundColor: 'rgba(168, 85, 247, 0.6)',
+                                borderColor: '#a855f7',
+                                borderWidth: 1,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: '内部调用请求数',
+                                data: [],
+                                backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                                borderColor: '#10b981',
+                                borderWidth: 1,
+                                type: 'line',
+                                yAxisID: 'y1'
+                            },
+                            {
+                                label: '外部调用请求数',
+                                data: [],
+                                backgroundColor: 'rgba(245, 158, 11, 0.6)',
+                                borderColor: '#f59e0b',
+                                borderWidth: 1,
+                                type: 'line',
+                                yAxisID: 'y1'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: '响应时间 (ms)'
+                                }
+                            },
+                            y1: {
+                                beginAtZero: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: '请求数'
+                                },
+                                grid: {
+                                    drawOnChartArea: false
+                                }
                             }
                         }
                     }
@@ -609,6 +598,273 @@
             } else {
                 peakTimeInfo.innerHTML = '<p style="color: #6c757d; margin: 0; font-size: 14px;">Not enough data to analyze peak times</p>';
             }
+        }
+
+        // Fetch data from API
+        async function fetchData() {
+            if (isLoadingData) return;
+            
+            isLoadingData = true;
+            
+            // Show loading states
+            document.getElementById('refreshLoading').style.display = 'inline-block';
+            document.getElementById('refreshBtn').disabled = true;
+            document.getElementById('sourceListLoading').style.display = 'block';
+            document.getElementById('apiTypeChartLoading').style.display = 'flex';
+            
+            try {
+                const response = await fetch('/api/monitor/sources');
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch monitoring data: ${response.status} ${response.statusText}`);
+                }
+                const data = await response.json();
+                updateDashboard(data);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                showError(`Failed to fetch monitoring data: ${error.message}`);
+            } finally {
+                // Hide loading states
+                document.getElementById('refreshLoading').style.display = 'none';
+                document.getElementById('refreshBtn').disabled = false;
+                document.getElementById('sourceListLoading').style.display = 'none';
+                document.getElementById('apiTypeChartLoading').style.display = 'none';
+                isLoadingData = false;
+            }
+        }
+
+        // Update dashboard with new data
+        function updateDashboard(data) {
+            // Update metrics
+            document.getElementById('totalSources').textContent = data.total_sources;
+            document.getElementById('activeSources').textContent = data.active_sources;
+            document.getElementById('errorSources').textContent = data.error_sources;
+            document.getElementById('avgResponseTime').textContent = `${Math.round(data.avg_response_time)}ms`;
+
+            // 更新内部/外部API响应时间
+            if (data.api_type_metrics) {
+                document.getElementById('internalResponseTime').textContent = 
+                    `${Math.round(data.api_type_metrics.internal_avg_response_time)}ms`;
+                document.getElementById('externalResponseTime').textContent = 
+                    `${Math.round(data.api_type_metrics.external_avg_response_time)}ms`;
+                
+                // 计算比率
+                const ratio = data.api_type_metrics.external_avg_response_time / 
+                            data.api_type_metrics.internal_avg_response_time;
+                document.getElementById('responseTimeRatio').textContent = 
+                    ratio ? ratio.toFixed(2) + 'x' : '-';
+            }
+
+            // 更新API类型对比图表
+            if (data.api_type_comparison) {
+                // 检查是否有任何有效数据
+                const hasData = data.api_type_comparison.some(item => 
+                    (item.internal && 
+                     (item.internal.avg_response_time > 0 || item.internal.total_requests > 0)) || 
+                    (item.external && 
+                     (item.external.avg_response_time > 0 || item.external.total_requests > 0))
+                );
+                
+                if (hasData) {
+                    // 隐藏加载状态
+                    document.getElementById('apiTypeChartLoading').style.display = 'none';
+                    
+                    // 如果有数据，正常更新图表
+                    apiTypeComparisonChart.data.labels = data.api_type_comparison.map(item => item.source_name);
+                    
+                    // 内部调用响应时间
+                    apiTypeComparisonChart.data.datasets[0].data = data.api_type_comparison.map(
+                        item => item.internal ? item.internal.avg_response_time : 0
+                    );
+                    
+                    // 外部调用响应时间
+                    apiTypeComparisonChart.data.datasets[1].data = data.api_type_comparison.map(
+                        item => item.external ? item.external.avg_response_time : 0
+                    );
+                    
+                    // 内部调用请求数
+                    apiTypeComparisonChart.data.datasets[2].data = data.api_type_comparison.map(
+                        item => item.internal ? item.internal.total_requests : 0
+                    );
+                    
+                    // 外部调用请求数
+                    apiTypeComparisonChart.data.datasets[3].data = data.api_type_comparison.map(
+                        item => item.external ? item.external.total_requests : 0
+                    );
+                    
+                    apiTypeComparisonChart.update();
+                } else {
+                    // 如果没有有效数据，显示提示信息
+                    document.getElementById('apiTypeChartLoading').style.display = 'none';
+                    
+                    // 清空图表数据
+                    apiTypeComparisonChart.data.labels = [];
+                    apiTypeComparisonChart.data.datasets.forEach(dataset => {
+                        dataset.data = [];
+                    });
+                    apiTypeComparisonChart.update();
+                    
+                    // 在图表区域显示提示信息
+                    const chartCanvas = document.getElementById('apiTypeComparisonChart');
+                    const ctx = chartCanvas.getContext('2d');
+                    ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+                    ctx.font = '14px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = '#6b7280';
+                    ctx.fillText('暂无数据可供展示，请等待API调用数据收集', chartCanvas.width / 2, chartCanvas.height / 2);
+                }
+            } else {
+                // 如果没有API对比数据，也显示提示信息
+                document.getElementById('apiTypeChartLoading').style.display = 'none';
+                // 清空并显示提示
+                apiTypeComparisonChart.data.labels = [];
+                apiTypeComparisonChart.data.datasets.forEach(dataset => {
+                    dataset.data = [];
+                });
+                apiTypeComparisonChart.update();
+                
+                const chartCanvas = document.getElementById('apiTypeComparisonChart');
+                const ctx = chartCanvas.getContext('2d');
+                ctx.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#6b7280';
+                ctx.fillText('无法获取API类型对比数据', chartCanvas.width / 2, chartCanvas.height / 2);
+            }
+
+            // Update source list
+            const sourceListEl = document.getElementById('sourceList');
+            
+            if (data.sources && data.sources.length > 0) {
+                sourceListEl.innerHTML = data.sources.map(source => createSourceCard(source)).join('');
+            } else {
+                sourceListEl.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #6c757d;">No sources available</div>';
+            }
+            
+            // Update source select dropdown
+            const sourceSelect = document.getElementById('sourceHistorySelect');
+            // Save current selection
+            const currentSelection = sourceSelect.value;
+            // Clear existing options (except the first one)
+            while (sourceSelect.options.length > 1) {
+                sourceSelect.remove(1);
+            }
+            
+            // Add source options
+            if (data.sources && data.sources.length > 0) {
+                data.sources.forEach(source => {
+                    const option = document.createElement('option');
+                    option.value = source.id;
+                    option.textContent = source.name;
+                    sourceSelect.appendChild(option);
+                });
+                
+                // Restore previous selection (if exists)
+                if (currentSelection && Array.from(sourceSelect.options).some(opt => opt.value === currentSelection)) {
+                    sourceSelect.value = currentSelection;
+                    fetchSourceHistory();
+                }
+            }
+        }
+
+        // Create HTML for a source card
+        function createSourceCard(source) {
+            // Get status class
+            const statusClass = {
+                'active': 'status-active',
+                'error': 'status-error',
+                'warning': 'status-warning',
+                'inactive': 'status-inactive'
+            }[source.status] || 'status-inactive';
+
+            // Format last update time
+            const lastUpdate = source.metrics.last_update
+                ? `${moment(source.metrics.last_update).fromNow()} (${moment(source.metrics.last_update).format('YYYY-MM-DD HH:mm:ss')})`
+                : 'Never';
+
+            // 创建API类型统计区域
+            const internalMetrics = source.api_type_metrics && source.api_type_metrics.internal;
+            const externalMetrics = source.api_type_metrics && source.api_type_metrics.external;
+            const apiTypeStats = internalMetrics || externalMetrics ?
+                `<div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee;">
+                    <div style="font-size: 13px; font-weight: 500; margin-bottom: 5px;">API类型统计</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div style="border: 1px solid #e5e7eb; border-radius: 4px; padding: 8px;">
+                            <div style="font-size: 12px; font-weight: 500; color: #6366f1; margin-bottom: 3px;">内部调用</div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; font-size: 11px; gap: 4px;">
+                                <div>
+                                    <div style="color: #6b7280;">响应时间</div>
+                                    <div style="font-weight: 600;">${internalMetrics ? Math.round(internalMetrics.avg_response_time) + 'ms' : '-'}</div>
+                                </div>
+                                <div>
+                                    <div style="color: #6b7280;">请求数</div>
+                                    <div style="font-weight: 600;">${internalMetrics ? internalMetrics.total_requests : '-'}</div>
+                                </div>
+                                <div>
+                                    <div style="color: #6b7280;">成功率</div>
+                                    <div style="font-weight: 600;">${internalMetrics ? (internalMetrics.success_rate * 100).toFixed(1) + '%' : '-'}</div>
+                                </div>
+                                <div>
+                                    <div style="color: #6b7280;">错误数</div>
+                                    <div style="font-weight: 600;">${internalMetrics ? internalMetrics.error_count : '-'}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="border: 1px solid #e5e7eb; border-radius: 4px; padding: 8px;">
+                            <div style="font-size: 12px; font-weight: 500; color: #a855f7; margin-bottom: 3px;">外部调用</div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; font-size: 11px; gap: 4px;">
+                                <div>
+                                    <div style="color: #6b7280;">响应时间</div>
+                                    <div style="font-weight: 600;">${externalMetrics ? Math.round(externalMetrics.avg_response_time) + 'ms' : '-'}</div>
+                                </div>
+                                <div>
+                                    <div style="color: #6b7280;">请求数</div>
+                                    <div style="font-weight: 600;">${externalMetrics ? externalMetrics.total_requests : '-'}</div>
+                                </div>
+                                <div>
+                                    <div style="color: #6b7280;">成功率</div>
+                                    <div style="font-weight: 600;">${externalMetrics ? (externalMetrics.success_rate * 100).toFixed(1) + '%' : '-'}</div>
+                                </div>
+                                <div>
+                                    <div style="color: #6b7280;">错误数</div>
+                                    <div style="font-weight: 600;">${externalMetrics ? externalMetrics.error_count : '-'}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>` : '';
+
+            return `
+                <div class="source-card">
+                    <div class="source-header">
+                        <div class="source-title">${source.name}</div>
+                        <span class="status-badge ${statusClass}" role="status">${source.status}</span>
+                    </div>
+                    <div>Category: ${source.category || 'N/A'}</div>
+                    <div class="source-stats">
+                        <div class="stat-item">
+                            <div class="stat-value">${(source.metrics.success_rate * 100).toFixed(1)}%</div>
+                            <div class="stat-label">Success Rate</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${Math.round(source.metrics.avg_response_time)}ms</div>
+                            <div class="stat-label">Avg Response Time</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${source.metrics.total_requests}</div>
+                            <div class="stat-label">Total Requests</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${source.metrics.error_count}</div>
+                            <div class="stat-label">Error Count</div>
+                        </div>
+                    </div>
+                    ${apiTypeStats}
+                    <div>Last Update: ${lastUpdate}</div>
+                    ${source.metrics.last_error ? 
+                        `<div class="error-message" role="alert">${source.metrics.last_error}</div>` : 
+                        ''}
+                </div>
+            `;
         }
     </script>
 </body>

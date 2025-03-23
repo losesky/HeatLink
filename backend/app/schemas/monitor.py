@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -11,6 +11,29 @@ class SourceMetrics(BaseModel):
     last_update: Optional[datetime]
     last_error: Optional[str]
 
+class ApiTypeMetricsDetail(BaseModel):
+    """某个API类型（内部或外部）的具体指标"""
+    success_rate: float
+    avg_response_time: float
+    total_requests: int
+    error_count: int
+
+class ApiTypeMetrics(BaseModel):
+    """内部/外部API调用统计指标"""
+    internal_avg_response_time: float
+    external_avg_response_time: float
+    internal_requests: int
+    external_requests: int
+    internal_success_rate: float
+    external_success_rate: float
+
+class ApiTypeComparisonItem(BaseModel):
+    """API类型比较项，用于比较不同源的内部/外部API性能"""
+    source_id: str
+    source_name: str
+    internal: Optional[Dict[str, Any]] = None
+    external: Optional[Dict[str, Any]] = None
+
 class SourceInfo(BaseModel):
     """新闻源详细信息"""
     id: str
@@ -19,6 +42,7 @@ class SourceInfo(BaseModel):
     category: Optional[str] = None
     status: str
     metrics: SourceMetrics
+    api_type_metrics: Optional[Dict[str, Dict[str, Any]]] = None
 
 class TimeSeriesData(BaseModel):
     """时间序列数据点"""
@@ -34,13 +58,13 @@ class SourceHistoryData(BaseModel):
     error_count: int
 
 class PeakTimeInfo(BaseModel):
-    """高峰期信息"""
+    """访问高峰期信息"""
     timestamp: datetime
     count: int
 
 class DayPeakInfo(BaseModel):
-    """每日高峰期信息"""
-    day: str  # 星期几
+    """每日访问高峰期信息"""
+    day: str
     hour: int
     count: int
 
@@ -60,4 +84,6 @@ class MonitorResponse(BaseModel):
     inactive_sources: int
     avg_response_time: float
     historical_data: List[TimeSeriesData]
-    sources: List[SourceInfo] 
+    sources: List[SourceInfo]
+    api_type_metrics: Optional[ApiTypeMetrics] = None
+    api_type_comparison: Optional[List[Dict[str, Any]]] = None 

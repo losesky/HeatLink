@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 
 from app.api import deps
@@ -8,9 +8,11 @@ from app.crud import source as source_crud
 from app.crud import source_stats as stats_crud
 from app.schemas.monitor import (
     MonitorResponse, SourceInfo, SourceMetrics, TimeSeriesData,
-    SourceHistoryResponse, SourceHistoryData, PeakTimeInfo, DayPeakInfo
+    SourceHistoryResponse, SourceHistoryData, PeakTimeInfo, DayPeakInfo,
+    ApiTypeMetrics, ApiTypeComparisonItem
 )
 from app.models.source import Source, SourceStatus
+from app.models.source_stats import ApiCallType
 from app.models.category import Category
 
 router = APIRouter()
@@ -71,18 +73,62 @@ def get_source_monitor_data(
                         value=sum(times) / len(times)
                     ))
         
-        # 计算总体平均响应时间
-        all_stats = [stats_crud.get_latest_stats(db, s.id) for s in sources]
-        valid_stats = [s for s in all_stats if s is not None]
-        avg_response_time = (
-            sum(s.avg_response_time for s in valid_stats) / len(valid_stats)
-            if valid_stats else 0.0
-        )
+        # 计算内部/外部API调用的统计信息
+        api_type_metrics = {
+            "internal_avg_response_time": 0.0,
+            "external_avg_response_time": 0.0,
+            "internal_requests": 0,
+            "external_requests": 0,
+            "internal_success_rate": 0.0,
+            "external_success_rate": 0.0
+        }
+        
+        internal_stats = []
+        external_stats = []
+        
+        # 创建API类型对比数据
+        api_type_comparison = []
         
         # 构建源详细信息
         source_infos = []
         for source in sources:
-            latest_stats = stats_crud.get_latest_stats(db, source.id)
+            # 获取内部和外部最新统计数据
+            internal_latest = stats_crud.get_latest_stats(db, source.id, api_type=ApiCallType.INTERNAL)
+            external_latest = stats_crud.get_latest_stats(db, source.id, api_type=ApiCallType.EXTERNAL)
+            
+            # 准备存储内部/外部指标
+            source_api_type_metrics = {}
+            
+            if internal_latest:
+                internal_stats.append(internal_latest)
+                source_api_type_metrics["internal"] = {
+                    "success_rate": internal_latest.success_rate,
+                    "avg_response_time": internal_latest.avg_response_time,
+                    "total_requests": internal_latest.total_requests,
+                    "error_count": internal_latest.error_count
+                }
+            
+            if external_latest:
+                external_stats.append(external_latest)
+                source_api_type_metrics["external"] = {
+                    "success_rate": external_latest.success_rate,
+                    "avg_response_time": external_latest.avg_response_time,
+                    "total_requests": external_latest.total_requests,
+                    "error_count": external_latest.error_count
+                }
+            
+            # 如果有内部或外部统计数据，添加到对比列表
+            if internal_latest or external_latest:
+                api_type_comparison.append({
+                    "source_id": source.id,
+                    "source_name": source.name,
+                    "internal": source_api_type_metrics.get("internal"),
+                    "external": source_api_type_metrics.get("external")
+                })
+            
+            # 使用合并的统计信息或内部统计信息
+            latest_stats = internal_latest or stats_crud.get_latest_stats(db, source.id)
+            
             metrics = SourceMetrics(
                 success_rate=latest_stats.success_rate if latest_stats else 0.0,
                 avg_response_time=latest_stats.avg_response_time if latest_stats else 0.0,
@@ -104,8 +150,28 @@ def get_source_monitor_data(
                 description=source.description,
                 category=category_name,  # 使用获取的名称
                 status=source.status,
-                metrics=metrics
+                metrics=metrics,
+                api_type_metrics=source_api_type_metrics
             ))
+        
+        # 计算内部/外部API调用的平均响应时间和请求总数
+        if internal_stats:
+            api_type_metrics["internal_avg_response_time"] = sum(s.avg_response_time for s in internal_stats) / len(internal_stats)
+            api_type_metrics["internal_requests"] = sum(s.total_requests for s in internal_stats)
+            api_type_metrics["internal_success_rate"] = sum(s.success_rate * s.total_requests for s in internal_stats) / api_type_metrics["internal_requests"] if api_type_metrics["internal_requests"] > 0 else 0
+        
+        if external_stats:
+            api_type_metrics["external_avg_response_time"] = sum(s.avg_response_time for s in external_stats) / len(external_stats)
+            api_type_metrics["external_requests"] = sum(s.total_requests for s in external_stats)
+            api_type_metrics["external_success_rate"] = sum(s.success_rate * s.total_requests for s in external_stats) / api_type_metrics["external_requests"] if api_type_metrics["external_requests"] > 0 else 0
+            
+        # 计算总体平均响应时间
+        all_stats = [stats_crud.get_latest_stats(db, s.id) for s in sources]
+        valid_stats = [s for s in all_stats if s is not None]
+        avg_response_time = (
+            sum(s.avg_response_time for s in valid_stats) / len(valid_stats)
+            if valid_stats else 0.0
+        )
         
         return MonitorResponse(
             total_sources=total_sources,
@@ -115,7 +181,9 @@ def get_source_monitor_data(
             inactive_sources=inactive_sources,
             avg_response_time=avg_response_time,
             historical_data=historical_data,
-            sources=source_infos
+            sources=source_infos,
+            api_type_metrics=api_type_metrics,
+            api_type_comparison=api_type_comparison
         )
         
     except Exception as e:

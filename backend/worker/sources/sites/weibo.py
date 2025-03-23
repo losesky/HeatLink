@@ -139,16 +139,14 @@ class WeiboHotNewsSource(APINewsSource):
                 except Exception as e:
                     logger.error(f"请求备用API {backup_api} 失败: {str(e)}")
             
-            # 4. 如果所有API都失败，生成模拟数据
-            logger.warning("所有API都失败，生成模拟数据作为最后手段")
-            mock_items = self._generate_mock_data()
-            logger.info(f"生成了 {len(mock_items)} 条模拟微博热搜数据")
-            return mock_items
+            # 4. 如果所有API都失败，抛出异常
+            logger.error("所有API都失败，无法获取微博热搜数据")
+            raise RuntimeError("无法获取微博热搜数据：所有API请求均失败")
             
         except Exception as e:
             logger.error(f"微博热搜获取完全失败: {str(e)}")
-            # 确保至少返回一些数据
-            return self._generate_mock_data()
+            # 不再返回模拟数据，而是重新抛出异常，使调用方能够正确处理错误并记录统计信息
+            raise
     
     def _sync_fetch_weibo_hot(self) -> List[NewsItemModel]:
         """

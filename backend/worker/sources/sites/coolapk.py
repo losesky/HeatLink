@@ -143,13 +143,15 @@ class CoolApkNewsSource(APINewsSource):
             except Exception as e:
                 logger.error(f"Error fetching from third-party URL: {str(e)}")
             
-            # 如果以上方法都失败，尝试创建一些模拟数据来防止系统出错
-            logger.error("All methods failed to fetch CoolApk data. Creating mock data.")
-            return self._create_mock_data()
+            # 如果以上方法都失败，抛出异常
+            error_msg = "无法获取酷安数据：所有抓取方法均失败"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
             
         except Exception as e:
             logger.error(f"Unexpected error during fetch: {str(e)}", exc_info=True)
-            return self._create_mock_data()
+            # 不再返回模拟数据，而是重新抛出异常
+            raise
     
     async def _fetch_from_website(self, url: str, timeout: int) -> List[NewsItemModel]:
         """

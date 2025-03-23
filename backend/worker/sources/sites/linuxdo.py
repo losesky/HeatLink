@@ -111,12 +111,12 @@ class LinuxDoNewsSource(RESTNewsSource):
                     news_items = backup_items
                 else:
                     logger.warning("备用源也未能获取数据")
-                    # 创建模拟数据作为最后的备用选项
-                    news_items = self._create_mock_data()
+                    # 不再创建模拟数据，而是抛出异常
+                    raise RuntimeError("无法获取Linux新闻数据：原始API和所有备用源均失败")
             else:
-                # 创建模拟数据作为最后的备用选项
-                logger.info("使用模拟数据")
-                news_items = self._create_mock_data()
+                # 不再创建模拟数据，而是抛出异常
+                logger.error("原始API失败且未启用备用源")
+                raise RuntimeError(f"无法获取Linux新闻数据：API请求失败 - {str(e)}")
         
         return news_items
     

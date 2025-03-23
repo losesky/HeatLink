@@ -483,7 +483,7 @@ def fetch_source_news(self: Task, source_id: str) -> Dict[str, Any]:
             complete_task_step("get_source_from_provider")
             add_task_step("fetch_news")
         
-        # 获取新闻 - 使用运行异步函数的正确方式
+        # 获取新闻 - 使用带装饰器的版本
         coroutine = _fetch_source_news(source)
         
         try:
@@ -706,13 +706,27 @@ if have_asyncio_fix:
                 logger.info(f"API fetch completed for {source.source_id}, received {len(news_items)} items")
                 return news_items
             else:
-                # 直接从源获取数据
-                news_items = await source.get_news()
-                logger.info(f"source.get_news completed for {source.source_id}, received {len(news_items)} items")
-                return news_items
+                # 直接从源获取数据，使用stats_updater.wrap_fetch包装获取internal API调用统计
+                from worker.stats_wrapper import stats_updater
+                original_fetch = source.fetch
+                source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source.source_id, original_fetch, api_type="internal", *args, **kwargs)
+                
+                try:
+                    # 获取新闻
+                    news_items = await source.get_news()
+                    logger.info(f"source.get_news completed for {source.source_id}, received {len(news_items)} items")
+                    return news_items
+                finally:
+                    # 恢复原始fetch方法
+                    source.fetch = original_fetch
         except Exception as e:
             logger.error(f"Error fetching news from {source.source_id}: {str(e)}")
-            return []
+            
+            # 不再返回空列表，而是重新抛出异常
+            # 这样调用者可以正确处理错误，同时允许stats_updater正确记录失败
+            logger.warning(f"Source {source.source_id} failed to provide data: {str(e)}")
+            # 为了保持向后兼容性，将异常包装成RuntimeError
+            raise RuntimeError(f"Source {source.source_id} failed: {str(e)}")
 else:
     # 标准版本，不使用事件循环装饰器
     async def _fetch_sources_news(sources: List[Any]) -> Dict[str, List[Any]]:
@@ -809,13 +823,27 @@ else:
                 logger.info(f"API fetch completed for {source.source_id}, received {len(news_items)} items")
                 return news_items
             else:
-                # 直接从源获取数据
-                news_items = await source.get_news()
-                logger.info(f"source.get_news completed for {source.source_id}, received {len(news_items)} items")
-                return news_items
+                # 直接从源获取数据，使用stats_updater.wrap_fetch包装获取internal API调用统计
+                from worker.stats_wrapper import stats_updater
+                original_fetch = source.fetch
+                source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source.source_id, original_fetch, api_type="internal", *args, **kwargs)
+                
+                try:
+                    # 获取新闻
+                    news_items = await source.get_news()
+                    logger.info(f"source.get_news completed for {source.source_id}, received {len(news_items)} items")
+                    return news_items
+                finally:
+                    # 恢复原始fetch方法
+                    source.fetch = original_fetch
         except Exception as e:
             logger.error(f"Error fetching news from {source.source_id}: {str(e)}")
-            return []
+            
+            # 不再返回空列表，而是重新抛出异常
+            # 这样调用者可以正确处理错误，同时允许stats_updater正确记录失败
+            logger.warning(f"Source {source.source_id} failed to provide data: {str(e)}")
+            # 为了保持向后兼容性，将异常包装成RuntimeError
+            raise RuntimeError(f"Source {source.source_id} failed: {str(e)}")
 
 def _save_news_to_db(news_items: List[Any]) -> int:
     """

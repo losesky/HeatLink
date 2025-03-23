@@ -165,6 +165,10 @@ class BloombergNewsSource(WebNewsSource):
             config=config
         )
         
+        # 添加feed_url属性支持，确保与RSSNewsSource兼容
+        self.feed_url = url
+        self.api_url = url  # 同时设置api_url以支持APINewsSource
+        
         logger.info(f"Initialized {self.name} adapter with URL: {self.url} (Feed type: {feed_type})")
     
     async def parse_response(self, content: str, base_url: str = None) -> List[NewsItemModel]:
@@ -551,13 +555,13 @@ class BloombergNewsSource(WebNewsSource):
                     logger.info(f"使用标准asyncio获取事件循环: {id(loop)}")
                 except Exception as e:
                     logger.error(f"获取事件循环失败: {str(e)}")
-                    return self._create_mock_data()  # 返回模拟数据
+                    raise RuntimeError(f"获取事件循环失败: {str(e)}")
             
             # 使用安全的HTTP请求方法
             if have_safe_request:
-                logger.info(f"使用安全HTTP请求获取 {self.feed_url}")
+                logger.info(f"使用安全HTTP请求获取 {self.url}")
                 success, result, error_message = await safe_request(
-                    url=self.feed_url,
+                    url=self.url,
                     timeout=30.0,
                     max_retries=3,
                     user_agent=random.choice(self.USER_AGENTS),
@@ -567,6 +571,7 @@ class BloombergNewsSource(WebNewsSource):
                 if not success:
                     logger.error(f"获取RSS feed失败: {error_message}")
                     # 尝试备用URL
+                    backup_success = False
                     for backup_url in self.BACKUP_URLS:
                         logger.info(f"尝试备用URL: {backup_url}")
                         success, result, error_message = await safe_request(
@@ -578,26 +583,27 @@ class BloombergNewsSource(WebNewsSource):
                         )
                         if success:
                             logger.info(f"成功获取备用URL: {backup_url}")
+                            backup_success = True
                             break
                     
-                    if not success:
-                        logger.error(f"所有URL获取失败，返回模拟数据")
-                        return self._create_mock_data()
+                    if not backup_success:
+                        logger.error("所有URL获取失败")
+                        raise RuntimeError("无法从彭博社获取数据: 所有URL请求失败")
                 
                 # 解析内容
                 try:
                     return await self.parse_response(result)
                 except Exception as e:
                     logger.error(f"解析响应时发生错误: {str(e)}")
-                    return self._create_mock_data()
+                    raise
                 
             # 使用标准方法
             else:
-                logger.info(f"使用标准HTTP请求获取 {self.feed_url}")
+                logger.info(f"使用标准HTTP请求获取 {self.url}")
                 try:
                     # 使用类自带的fetch_with_retry方法
                     feed_content = await self.fetch_with_retry(
-                        url=self.feed_url,
+                        url=self.url,
                         timeout=30.0,
                         max_retries=3,
                         headers={'User-Agent': random.choice(self.USER_AGENTS)}
@@ -610,6 +616,7 @@ class BloombergNewsSource(WebNewsSource):
                     logger.error(f"使用标准HTTP请求失败: {str(e)}")
                     
                     # 尝试备用URL
+                    backup_success = False
                     for backup_url in self.BACKUP_URLS:
                         try:
                             logger.info(f"尝试备用URL: {backup_url}")
@@ -623,13 +630,14 @@ class BloombergNewsSource(WebNewsSource):
                         except Exception as backup_e:
                             logger.error(f"备用URL {backup_url} 获取失败: {str(backup_e)}")
                     
-                    # 所有URL失败，返回模拟数据
-                    logger.error(f"所有URL获取失败，返回模拟数据")
-                    return self._create_mock_data()
+                    # 所有URL失败，抛出异常
+                    logger.error("所有URL获取失败")
+                    raise RuntimeError("无法从彭博社获取数据: 所有URL请求失败")
                 
         except Exception as e:
             logger.error(f"获取Bloomberg新闻时出错: {str(e)}")
-            return self._create_mock_data()
+            # 不再返回模拟数据，而是重新抛出异常，使调用方能够正确处理错误并记录统计信息
+            raise
     
     def _create_mock_data(self) -> List[NewsItemModel]:
         """

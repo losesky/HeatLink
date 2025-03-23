@@ -39,20 +39,21 @@ class StatsUpdater:
         # 存储无效源ID的集合，避免重复检查已知不存在的源
         self._invalid_source_ids = set()
 
-    async def wrap_fetch(self, source_id: str, fetch_func, *args, **kwargs) -> List[NewsItemModel]:
+    async def wrap_fetch(self, source_id: str, fetch_func, api_type: str = "internal", *args, **kwargs) -> List[NewsItemModel]:
         """
         包装源适配器的fetch方法，自动更新统计信息
         
         Args:
             source_id: 源ID
             fetch_func: 源适配器的fetch方法
+            api_type: API调用类型，默认为internal（内部调用）
             
         Returns:
             获取的新闻列表
         """
         # 从源对象的source_id属性获取，可能使用下划线而不是连字符
         # 我们在这里不转换，保持原始ID，在更新统计信息时再处理兼容性
-        logger.info(f"StatsUpdater: 开始包装 {source_id} 的fetch方法")
+        logger.info(f"StatsUpdater: 开始包装 {source_id} 的fetch方法，API类型: {api_type}")
         
         if not self.enabled:
             logger.warning(f"StatsUpdater: 统计更新器已禁用，不会更新 {source_id} 的统计信息")
@@ -79,8 +80,8 @@ class StatsUpdater:
             # 不管成功还是失败，都更新统计信息
             end_time = time.time()
             response_time = (end_time - start_time) * 1000  # 转换为毫秒
-            logger.info(f"StatsUpdater: 更新 {source_id} 的统计信息，用时 {response_time:.2f}ms")
-            await self._update_stats(source_id, success, response_time, len(result), error_message)
+            logger.info(f"StatsUpdater: 更新 {source_id} 的统计信息，用时 {response_time:.2f}ms，API类型: {api_type}")
+            await self._update_stats(source_id, success, response_time, len(result), error_message, api_type)
     
     def _normalize_source_id(self, source_id: str) -> str:
         """
@@ -101,7 +102,8 @@ class StatsUpdater:
         return source_id
     
     async def _update_stats(self, source_id: str, success: bool, response_time: float, 
-                           news_count: int = 0, error_message: Optional[str] = None) -> None:
+                           news_count: int = 0, error_message: Optional[str] = None,
+                           api_type: str = "internal") -> None:
         """
         更新源统计信息
         
@@ -111,6 +113,7 @@ class StatsUpdater:
             response_time: 响应时间（毫秒）
             news_count: 获取到的新闻数量
             error_message: 错误信息
+            api_type: API调用类型，默认为internal（内部调用）
         """
         if not self.enabled:
             return
@@ -131,14 +134,16 @@ class StatsUpdater:
             should_update_db = (current_time - last_update_time) >= self.update_interval or not success
             
             # 获取或初始化统计数据
-            stats = self.stats_cache.get(source_id, {
+            cache_key = f"{source_id}:{api_type}"
+            stats = self.stats_cache.get(cache_key, {
                 "success_count": 0,
                 "error_count": 0,
                 "total_requests": 0,
                 "total_response_time": 0,
                 "news_count": 0,
                 "last_error": None,
-                "last_response_time": 0
+                "last_response_time": 0,
+                "api_type": api_type
             })
             
             # 更新统计数据
@@ -154,10 +159,11 @@ class StatsUpdater:
                 stats["last_error"] = error_message
             
             # 更新缓存
-            self.stats_cache[source_id] = stats
+            self.stats_cache[cache_key] = stats
             
             logger.debug(f"StatsUpdater: 已更新缓存中 {source_id} 的统计信息: 总请求 {stats['total_requests']}, "
-                        f"成功 {stats['success_count']}, 失败 {stats['error_count']}, 新闻 {stats['news_count']}")
+                        f"成功 {stats['success_count']}, 失败 {stats['error_count']}, 新闻 {stats['news_count']}, "
+                        f"API类型: {api_type}")
             
             # 如果需要更新数据库
             if should_update_db:
@@ -191,8 +197,8 @@ class StatsUpdater:
                             self._invalid_source_ids.add(source_id)
                             return
                             
-                        # 获取现有统计数据
-                        existing_stats = get_latest_stats(db, source_id)
+                        # 获取现有统计数据，指定api_type
+                        existing_stats = get_latest_stats(db, source_id, api_type)
                         
                         # 累加现有统计数据（如果存在）
                         total_requests = stats["total_requests"]
@@ -227,44 +233,42 @@ class StatsUpdater:
                             db_source.news_count = db_source.news_count + stats["news_count"]
                             db.commit()
                         
-                        # 使用create_source_stats创建新的统计记录
+                        # 使用create_source_stats创建新的统计记录，传递api_type
                         create_source_stats(db, source_id, 
                                          success_rate=success_rate,
                                          avg_response_time=avg_response_time,
                                          last_response_time=stats["last_response_time"],
                                          total_requests=total_requests,
                                          error_count=error_count,
-                                         news_count=stats["news_count"])
+                                         news_count=stats["news_count"],
+                                         api_type=api_type)
                         
                         db.commit()
                         
                         # 重置缓存，避免重复累加
-                        self.stats_cache[source_id] = {
+                        self.stats_cache[cache_key] = {
                             "success_count": 0,
                             "error_count": 0,
                             "total_requests": 0,
                             "total_response_time": 0,
                             "news_count": 0,
                             "last_error": None,
-                            "last_response_time": 0
+                            "last_response_time": 0,
+                            "api_type": api_type
                         }
                         
                         # 更新最后更新时间
                         self.last_update[source_id] = current_time
                         
-                        logger.info(f"StatsUpdater: 已更新数据库中 {source_id} 的统计信息: 成功率 {success_rate:.2f}, "
-                                   f"平均响应时间 {avg_response_time:.2f}ms, 请求总数 {total_requests}, 新闻数 {stats['news_count']}")
-                        
-                    except Exception as e:
-                        logger.error(f"StatsUpdater: 更新数据库中 {source_id} 的统计信息时出错: {str(e)}")
-                        if db:
-                            db.rollback()
+                        logger.info(f"StatsUpdater: 已更新数据库中 {source_id} 的统计信息: "
+                                   f"成功率 {success_rate:.2f}, 平均响应时间 {avg_response_time:.2f}ms, "
+                                   f"总请求 {total_requests}, 错误 {error_count}, API类型: {api_type}")
                     finally:
                         if db:
                             db.close()
                 except Exception as e:
-                    logger.error(f"StatsUpdater: 处理数据库更新时发生错误: {str(e)}")
+                    logger.exception(f"更新 {source_id} 的统计信息失败: {str(e)}")
 
 
-# 全局单例
+# 创建统计更新器实例
 stats_updater = StatsUpdater() 
