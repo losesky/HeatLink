@@ -7,6 +7,8 @@ import os
 import datetime
 from pathlib import Path
 
+from sqlalchemy import true
+
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -313,13 +315,16 @@ SOURCES = [
     {
         "id": "thepaper",
         "name": "澎湃新闻热榜",
-        "description": "澎湃新闻热榜",
+        "description": "澎湃新闻热榜（使用Selenium自动获取）",
         "url": "https://www.thepaper.cn/",
         "type": SourceType.WEB,
         "category": "news",
         "country": "中国",
         "language": "zh-CN",
-        "config": {}
+        "config": {
+            "use_selenium": true,
+            "headless": true
+        }
     },
     {
         "id": "tieba",
@@ -479,19 +484,6 @@ SOURCES = [
         "config": {
             "api_url": "https://daily.zhihu.com/api/4/news/latest",
             "backup_urls": ["https://news-at.zhihu.com/api/4/news/latest"]
-        }
-    },
-    {
-        "id": "thepaper-selenium",
-        "name": "澎湃新闻热榜",
-        "description": "使用Selenium获取澎湃新闻热榜",
-        "url": "https://www.thepaper.cn/",
-        "type": SourceType.WEB,
-        "category": "news",
-        "country": "中国",
-        "language": "zh-CN",
-        "config": {
-            "third_party_api_url": "https://api.vvhan.com/api/hotlist/pengPai"
         }
     },
     {

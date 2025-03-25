@@ -8,8 +8,7 @@ from worker.sources.sites.douyin import DouyinHotNewsSource
 from worker.sources.sites.toutiao import ToutiaoHotNewsSource
 from worker.sources.sites.ithome import ITHomeNewsSource
 from worker.sources.sites.github import GitHubTrendingSource
-from worker.sources.sites.v2ex import V2EXHotTopicsSource
-from worker.sources.sites.v2ex_selenium import V2EXSeleniumSource
+from worker.sources.sites.v2ex import V2EXSeleniumSource
 from worker.sources.sites.xueqiu import XueqiuHotStockSource
 from worker.sources.sites.tieba import TiebaHotTopicSource
 from worker.sources.sites.kuaishou import KuaishouHotSearchSource
@@ -58,7 +57,6 @@ __all__ = [
     "ToutiaoHotNewsSource",
     "ITHomeNewsSource",
     "GitHubTrendingSource",
-    "V2EXHotTopicsSource",
     "V2EXSeleniumSource",
     "XueqiuHotStockSource",
     "TiebaHotTopicSource",

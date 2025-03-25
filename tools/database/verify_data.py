@@ -9,7 +9,20 @@ import argparse
 from pathlib import Path
 
 # 添加项目根目录到 Python 路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../.."))
+sys.path.insert(0, project_root)
+
+# 修复bcrypt版本检测问题
+try:
+    import bcrypt
+    # 如果缺少__about__模块，添加一个dummy version
+    if not hasattr(bcrypt, '__about__'):
+        class DummyAbout:
+            __version__ = bcrypt.__version__ if hasattr(bcrypt, '__version__') else '4.0.0'
+        bcrypt.__about__ = DummyAbout()
+except ImportError:
+    pass
 
 # 确保加载 .env 文件
 from dotenv import load_dotenv
@@ -34,7 +47,7 @@ def verify_data(verbose=False, fix=False):
         session = Session()
         
         # 检查必要的表是否存在
-        required_tables = ['sources', 'categories', 'tags', 'users', 'articles']
+        required_tables = ['sources', 'categories', 'tags', 'users', 'news']
         missing_tables = [t for t in required_tables if t not in inspector.get_table_names()]
         
         if missing_tables:
@@ -125,13 +138,69 @@ def verify_data(verbose=False, fix=False):
         try:
             result = session.execute(text("""
                 SELECT id FROM sources 
-                WHERE config IS NULL OR config = '{}'
+                WHERE config IS NULL OR config::text = '{}'
             """))
             invalid_configs = result.fetchall()
             
             if invalid_configs:
                 source_ids = [r[0] for r in invalid_configs]
                 validation_issues.append(f"存在{len(invalid_configs)}个配置为空的source记录: {source_ids[:5]}...")
+                
+                # 修复方案 - 如果指定了修复选项
+                if fix:
+                    try:
+                        # 为每个空配置的源添加默认配置
+                        for source_id in source_ids:
+                            # 获取源类型
+                            source_info = session.execute(
+                                text("SELECT type FROM sources WHERE id = :id"),
+                                {"id": source_id}
+                            ).fetchone()
+                            
+                            if not source_info:
+                                continue
+                                
+                            source_type = source_info[0]
+                            
+                            # 根据源类型设置默认配置
+                            default_config = {}
+                            if source_id == 'thepaper':
+                                default_config = {
+                                    "use_selenium": True,
+                                    "headless": True,
+                                    "wait_time": 10
+                                }
+                            elif source_id.startswith('coolapk'):
+                                default_config = {
+                                    "use_api": True,
+                                    "limit": 20
+                                }
+                            elif source_id.startswith('cls'):
+                                default_config = {
+                                    "use_selenium": True,
+                                    "use_direct_api": False,
+                                    "use_scraping": True,
+                                    "use_backup_api": True
+                                }
+                            else:
+                                # 通用默认配置
+                                default_config = {
+                                    "limit": 20,
+                                    "active": True
+                                }
+                                
+                            # 更新源配置
+                            config_json = json.dumps(default_config)
+                            session.execute(
+                                text("UPDATE sources SET config = cast(:config AS jsonb) WHERE id = :id"),
+                                {"id": source_id, "config": config_json}
+                            )
+                            
+                        session.commit()
+                        print(f"已为{len(source_ids)}个源添加默认配置")
+                    except Exception as e:
+                        session.rollback()
+                        print(f"修复源配置时出错: {str(e)}")
         except Exception as e:
             validation_issues.append(f"检查sources配置时出错: {str(e)}")
         

@@ -6,7 +6,13 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# 使用多种哈希方案，如果bcrypt出错会降级使用SHA256
+pwd_context = CryptContext(
+    schemes=["bcrypt", "sha256_crypt"],
+    deprecated="auto",
+    bcrypt__rounds=12,  # 配置bcrypt参数
+    sha256_crypt__rounds=80000  # SHA256参数
+)
 
 
 def create_access_token(
@@ -28,4 +34,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password) 
+    # 捕获可能的bcrypt错误
+    try:
+        return pwd_context.hash(password)
+    except Exception as e:
+        # 如果bcrypt出错，记录错误并继续
+        print(f"警告: 使用备选哈希方法 - bcrypt可能存在问题: {str(e)}")
+        # 强制使用sha256_crypt
+        return pwd_context.using(scheme="sha256_crypt").hash(password) 

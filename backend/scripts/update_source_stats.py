@@ -24,6 +24,7 @@ load_dotenv()
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.source import Source
+from app.models.source import SourceStatus
 from app.crud.source_stats import update_source_status
 from worker.sources.factory import NewsSourceFactory
 

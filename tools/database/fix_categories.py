@@ -1,10 +1,10 @@
 import sys
 import os
 
-# 设置 Python 路径
+# 添加项目根目录到 Python 路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+project_root = os.path.abspath(os.path.join(current_dir, "../.."))
+sys.path.insert(0, project_root)
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker

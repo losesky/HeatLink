@@ -904,12 +904,8 @@ class CLSNewsSource(RESTNewsSource):
             response = session.get(telegraph_url, timeout=10, verify=True)
             logger.info(f"Got response with status code: {response.status_code}")
             
-            # Save the HTML content to file for debugging
-            timestamp = int(time.time())
-            html_file_path = f"cls_webpage_telegraph_{timestamp}.html"
-            with open(html_file_path, "w", encoding="utf-8") as f:
-                f.write(response.text)
-            logger.info(f"Saved HTML to {html_file_path}, content length: {len(response.text)}")
+            # 记录内容长度但不再保存HTML文件
+            logger.info(f"Received HTML content, length: {len(response.text)}")
             
             # 使用BeautifulSoup解析HTML
             soup = BeautifulSoup(response.text, 'html.parser')

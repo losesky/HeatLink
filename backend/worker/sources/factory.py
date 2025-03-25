@@ -13,7 +13,6 @@ from worker.sources.sites import (
     ToutiaoHotNewsSource,
     ITHomeNewsSource,
     GitHubTrendingSource,
-    V2EXHotTopicsSource,
     V2EXSeleniumSource,
     XueqiuHotStockSource,
     TiebaHotTopicSource,
@@ -75,6 +74,7 @@ class NewsSourceFactory:
             if "source_id" in kwargs and kwargs["source_id"] != "thepaper":
                 logger.warning(f"Overriding source_id from '{kwargs['source_id']}' to 'thepaper' for consistency")
             kwargs["source_id"] = "thepaper"
+            logger.info(f"Creating ThePaper source with ID: {kwargs['source_id']}")
             return ThePaperSeleniumSource(**kwargs)
         elif source_type == "hackernews":
             return HackerNewsSource(**kwargs)
@@ -267,13 +267,13 @@ class NewsSourceFactory:
         # 如果从数据库获取失败或没有找到数据，使用硬编码列表作为备用
         # 手动定义所有支持的新闻源类型
         sources = [
-            "zhihu", "weibo", "baidu", "thepaper-selenium", "hackernews", "bilibili", "douyin",
+            "zhihu", "weibo", "baidu", "hackernews", "bilibili", "douyin",
             "toutiao", "ithome", "github", "v2ex", "xueqiu",
             "tieba", "kuaishou", "jin10", "cankaoxiaoxi", "solidot", "zaobao",
             "sputniknewscn", "producthunt", "linuxdo", "linuxdo-latest", "linuxdo-hot",
             "kaopu", "gelonghui", "fastbull", "fastbull-express", "fastbull-news", "wallstreetcn",
             "wallstreetcn-news", "wallstreetcn-hot", "36kr", "coolapk", "coolapk-feed",
-            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper_selenium",
+            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper",
             "zhihu_daily", "bloomberg", "bloomberg-markets", "bloomberg-tech",
             "bloomberg-china", "ifanr", "techcrunch", "the_verge"
         ]

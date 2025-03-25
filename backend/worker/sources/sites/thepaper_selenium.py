@@ -41,6 +41,10 @@ except ImportError:
 # Global debug mode flag - set to False to reduce output
 DEBUG_MODE = False
 
+# 跟踪已初始化的实例，确保一致性
+_initialized_instances = {}
+_initialized_source_ids = set()
+
 class ThePaperSeleniumSource(WebNewsSource):
     """
     澎湃新闻热榜适配器 - Selenium版本
@@ -65,7 +69,7 @@ class ThePaperSeleniumSource(WebNewsSource):
     
     def __init__(
         self,
-        source_id: str = "thepaper_selenium",
+        source_id: str = "thepaper",
         name: str = "澎湃新闻热榜",
         url: str = "https://www.thepaper.cn/",
         update_interval: int = 1800,  # 30分钟
@@ -75,6 +79,27 @@ class ThePaperSeleniumSource(WebNewsSource):
         language: str = "zh-CN",
         config: Optional[Dict[str, Any]] = None
     ):
+        # 强制统一source_id，避免混乱
+        if source_id != "thepaper":
+            logger.warning(f"源ID '{source_id}' 被统一为标准ID 'thepaper'")
+            source_id = "thepaper"
+        
+        # 检查是否已经有同ID的实例初始化
+        instance_key = source_id
+        
+        if instance_key in _initialized_instances:
+            instance_count = _initialized_instances[instance_key]
+            _initialized_instances[instance_key] = instance_count + 1
+            logger.warning(f"注意：{source_id} 适配器正在被重复初始化，这是第 {instance_count+1} 次初始化")
+            
+            # 记录调用栈，帮助诊断重复初始化来源
+            import traceback
+            stack_trace = ''.join(traceback.format_stack()[:-1])
+            logger.debug(f"初始化调用栈:\n{stack_trace}")
+        else:
+            _initialized_instances[instance_key] = 1
+            _initialized_source_ids.add(source_id)
+        
         config = config or {}
         
         # 随机选择一个桌面版用户代理
@@ -138,7 +163,6 @@ class ThePaperSeleniumSource(WebNewsSource):
         
         self._driver = None
         self._driver_pid = None  # 添加记录chromedriver进程ID
-        logger.info(f"初始化 {self.name} 适配器，URL: {self.url}，无头模式: {self.config.get('headless', True)}")
     
     def _create_driver(self):
         """
@@ -450,11 +474,16 @@ class ThePaperSeleniumSource(WebNewsSource):
                 self._driver_pid = None
     
     async def close(self):
-        """
-        关闭资源
-        """
+        """关闭资源"""
         await self._close_driver()
-        await super().close()
+        
+        # 更新初始化计数
+        instance_key = self.source_id
+        if instance_key in _initialized_instances and _initialized_instances[instance_key] > 0:
+            _initialized_instances[instance_key] -= 1
+            logger.info(f"关闭 {self.source_id} 适配器，剩余 {_initialized_instances[instance_key]} 个实例")
+        
+        return await super().close()
     
     async def _fetch_with_selenium(self) -> List[NewsItemModel]:
         """
@@ -899,7 +928,9 @@ class ThePaperSeleniumSource(WebNewsSource):
         Returns:
             新闻列表
         """
-        logger.info("获取澎湃新闻数据")
+        instance_key = self.source_id
+        active_instances = _initialized_instances.get(instance_key, 0)
+        logger.info(f"开始获取 {self.name} 数据 [ID: {self.source_id}, 实例数: {active_instances}]")
         
         try:
             # 直接使用Selenium获取数据
