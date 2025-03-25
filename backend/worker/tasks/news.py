@@ -247,13 +247,13 @@ def fetch_high_frequency_sources(self: Task) -> Dict[str, Any]:
 
             # 记录任务成功信息
             logger.info(f"Task news.fetch_high_frequency_sources succeeded: Fetched from {len(sources)} sources, saved {total_news} news")
-        
-        return {
-            "status": "success",
-            "message": f"Fetched news from {len(results)} high frequency sources",
-            "sources": [source.source_id for source in sources],
+            
+            return {
+                "status": "success",
+                "message": f"Fetched news from {len(results)} high frequency sources",
+                "sources": [source.source_id for source in sources],
                 "total_news": total_news
-        }
+            }
         except Exception as e:
             logger.error(f"Error in high frequency news fetch task: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -306,13 +306,13 @@ def fetch_medium_frequency_sources(self: Task) -> Dict[str, Any]:
 
             # 记录任务成功信息
             logger.info(f"Task news.fetch_medium_frequency_sources succeeded: Fetched from {len(sources)} sources, saved {total_news} news")
-        
-        return {
-            "status": "success",
-            "message": f"Fetched news from {len(results)} medium frequency sources",
-            "sources": [source.source_id for source in sources],
+            
+            return {
+                "status": "success",
+                "message": f"Fetched news from {len(results)} medium frequency sources",
+                "sources": [source.source_id for source in sources],
                 "total_news": total_news
-        }
+            }
         except Exception as e:
             logger.error(f"Error in medium frequency news fetch task: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -365,13 +365,13 @@ def fetch_low_frequency_sources(self: Task) -> Dict[str, Any]:
 
             # 记录任务成功信息
             logger.info(f"Task news.fetch_low_frequency_sources succeeded: Fetched from {len(sources)} sources, saved {total_news} news")
-        
-        return {
-            "status": "success",
-            "message": f"Fetched news from {len(results)} low frequency sources",
-            "sources": [source.source_id for source in sources],
+            
+            return {
+                "status": "success",
+                "message": f"Fetched news from {len(results)} low frequency sources",
+                "sources": [source.source_id for source in sources],
                 "total_news": total_news
-        }
+            }
         except Exception as e:
             logger.error(f"Error in low frequency news fetch task: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -420,13 +420,13 @@ def fetch_all_news(self: Task) -> Dict[str, Any]:
                     
             # 记录任务成功信息
             logger.info(f"Task news.fetch_all_news succeeded: Fetched from {len(sources)} sources, saved {total_news} news")
-        
-        return {
-            "status": "success",
-            "message": f"Fetched news from {len(results)} sources",
-            "sources": [source.source_id for source in sources],
+            
+            return {
+                "status": "success",
+                "message": f"Fetched news from {len(results)} sources",
+                "sources": [source.source_id for source in sources],
                 "total_news": total_news
-        }
+            }
         except Exception as e:
             logger.error(f"Error in fetch all news task: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -716,10 +716,10 @@ if have_asyncio_fix:
                     news_items = await source.get_news()
                     logger.info(f"source.get_news completed for {source.source_id}, received {len(news_items)} items")
                     return news_items
-        finally:
+                finally:
                     # 恢复原始fetch方法
                     source.fetch = original_fetch
-    except Exception as e:
+        except Exception as e:
             logger.error(f"Error fetching news from {source.source_id}: {str(e)}")
             
             # 不再返回空列表，而是重新抛出异常
@@ -729,8 +729,8 @@ if have_asyncio_fix:
             raise RuntimeError(f"Source {source.source_id} failed: {str(e)}")
 else:
     # 标准版本，不使用事件循环装饰器
-async def _fetch_sources_news(sources: List[Any]) -> Dict[str, List[Any]]:
-    """
+    async def _fetch_sources_news(sources: List[Any]) -> Dict[str, List[Any]]:
+        """
         获取多个源的新闻
         
         Args:
@@ -741,25 +741,25 @@ async def _fetch_sources_news(sources: List[Any]) -> Dict[str, List[Any]]:
         """
         logger.info(f"Fetching news from {len(sources)} sources")
         
-    results = {}
+        results = {}
         tasks = []
-    
+        
         # 创建任务
         for source in sources:
             tasks.append(_fetch_source_news(source))
-    
-    # 并发执行任务
+        
+        # 并发执行任务
         try:
             source_news_list = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # 处理结果
+            
+            # 处理结果
             for i, news_items in enumerate(source_news_list):
-        source = sources[i]
+                source = sources[i]
                 if isinstance(news_items, Exception):
                     logger.error(f"Error fetching news from {source.source_id}: {str(news_items)}")
                     continue
                 
-            # 保存到数据库
+                # 保存到数据库
                 saved_count = _save_news_to_db(news_items)
                 
                 # 更新源的最后更新时间
@@ -776,11 +776,11 @@ async def _fetch_sources_news(sources: List[Any]) -> Dict[str, List[Any]]:
                 logger.info(f"Fetched {len(news_items)} news from {source.source_id}, saved {saved_count}")
         except Exception as e:
             logger.error(f"Error in async gather: {str(e)}")
+        
+        return results
     
-    return results
-
-async def _fetch_source_news(source: Any) -> List[Any]:
-    """
+    async def _fetch_source_news(source: Any) -> List[Any]:
+        """
         获取单个源的新闻
         
         Args:
@@ -832,13 +832,13 @@ async def _fetch_source_news(source: Any) -> List[Any]:
                     # 获取新闻
                     news_items = await source.get_news()
                     logger.info(f"source.get_news completed for {source.source_id}, received {len(news_items)} items")
-        return news_items
+                    return news_items
                 finally:
                     # 恢复原始fetch方法
                     source.fetch = original_fetch
-    except Exception as e:
+        except Exception as e:
             logger.error(f"Error fetching news from {source.source_id}: {str(e)}")
-
+            
             # 不再返回空列表，而是重新抛出异常
             # 这样调用者可以正确处理错误，同时允许stats_updater正确记录失败
             logger.warning(f"Source {source.source_id} failed to provide data: {str(e)}")
