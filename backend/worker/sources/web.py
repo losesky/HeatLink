@@ -84,9 +84,25 @@ class WebNewsSource(NewsSource):
         retry_count = 0
         current_delay = self.retry_delay
         
+        # 获取代理
+        proxy_url = None
+        if self.need_proxy:
+            try:
+                # 导入代理管理器
+                from worker.utils.proxy_manager import proxy_manager
+                
+                # 尝试获取代理
+                proxy_config = await proxy_manager.get_proxy(self.source_id, self.proxy_group)
+                if proxy_config and 'url' in proxy_config:
+                    proxy_url = proxy_config['url']
+                    logger.info(f"为 {self.source_id} 使用代理: {proxy_url}")
+            except Exception as e:
+                logger.warning(f"获取代理时出错: {str(e)}")
+        
         while retry_count <= self.max_retries:
             try:
-                async with client.get(self.url, headers=self.headers, timeout=30) as response:
+                # 使用代理发起请求
+                async with client.get(self.url, headers=self.headers, timeout=30, proxy=proxy_url) as response:
                     if response.status == 200:
                         return await response.text()
                     elif response.status in self.retry_status_codes and retry_count < self.max_retries:

@@ -311,6 +311,7 @@ class HTTPClient:
         """
         发送HTTP请求并返回响应
         自动处理会话管理和失败重试
+        支持代理管理器
         """
         # 重试机制参数
         max_retries = kwargs.pop('max_retries', 2)
@@ -320,36 +321,158 @@ class HTTPClient:
         # 响应解析方式
         response_type = kwargs.pop('response_type', 'json')
         
+        # 代理相关参数
+        source_id = kwargs.pop('source_id', None)
+        proxy_group = kwargs.pop('proxy_group', 'default')
+        need_proxy = kwargs.pop('need_proxy', False)
+        proxy_fallback = kwargs.pop('proxy_fallback', True)
+        
+        # 如果设置了特定代理URL，则使用它，否则使用代理管理器
+        proxy_url = kwargs.pop('proxy', None)
+        proxy_config = None
+        
+        # 提取域名信息
+        domain = "unknown"
+        try:
+            import urllib.parse
+            domain = urllib.parse.urlparse(url).netloc
+        except Exception:
+            pass
+        
+        # 检查域名是否在默认需要代理的列表中
+        proxy_required_domains = []
+        try:
+            # 尝试从配置中获取代理域名列表
+            from app.core.config import settings
+            proxy_required_domains = settings.proxy_domains
+        except ImportError:
+            # 如果无法导入设置，使用默认列表
+            proxy_required_domains = [
+                "github.com", "bloomberg.com", "hackernews.firebaseio.com", 
+                "news.ycombinator.com", "bbc.com", "v2ex.com", "producthunt.com",
+                "xueqiu.com", "stock.xueqiu.com", "news.google.com", "google.com",
+                "bbc.co.uk", "fastbull.cn", "ft.com",
+                "nytimes.com", "wsj.com", "forbes.com", "cnbc.com",
+                "reuters.com", "cnbc.com", "economist.com", "feeds.bbci.co.uk", "bbci.co.uk"
+            ]
+        
+        try:
+            if domain and any(required_domain in domain for required_domain in proxy_required_domains):
+                need_proxy = True
+                logger.info(f"HTTPClient请求: 域名 {domain} 在需要代理的列表中，自动启用代理")
+        except Exception as e:
+            logger.warning(f"解析URL域名时出错: {str(e)}")
+        
+        # 进一步详细记录代理参数
+        logger.info(f"HTTPClient请求: {method} {url}, 域名={domain}, 需要代理={need_proxy}, source_id={source_id}, proxy_group={proxy_group}")
+        
+        # 尝试获取代理管理器
+        try:
+            from worker.utils.proxy_manager import proxy_manager
+            proxy_manager_loaded = True
+        except ImportError:
+            try:
+                from backend.worker.utils.proxy_manager import proxy_manager
+                proxy_manager_loaded = True
+            except ImportError:
+                proxy_manager = None
+                proxy_manager_loaded = False
+                logger.warning("无法导入代理管理器，将不使用代理或仅使用指定的代理")
+        
         while retry_count <= max_retries:
+            start_time = None
+            proxy_used = False
+            
             try:
                 # 获取会话
                 session = await self._get_session()
                 
+                # 如果需要代理且代理管理器可用，尝试获取代理
+                if need_proxy and proxy_manager_loaded and not proxy_url:
+                    try:
+                        proxy_config = await proxy_manager.get_proxy(source_id, proxy_group)
+                        if proxy_config:
+                            proxy_url = proxy_config.get("url")
+                            logger.info(f"从代理管理器获取代理: {proxy_url} 用于请求 {url}")
+                        else:
+                            logger.warning(f"代理管理器未返回可用代理，使用 source_id={source_id}, proxy_group={proxy_group}")
+                    except Exception as e:
+                        logger.warning(f"从代理管理器获取代理失败: {str(e)}")
+                
+                # 设置代理参数
+                request_kwargs = dict(kwargs)
+                if proxy_url:
+                    request_kwargs["proxy"] = proxy_url
+                    proxy_used = True
+                    logger.info(f"使用代理 {proxy_url} 请求 {url}")
+                    start_time = asyncio.get_event_loop().time()
+                else:
+                    logger.info(f"未使用代理直接请求 {url}")
+                
                 # 发送请求
-                async with session.request(method, url, **kwargs) as response:
-                    status = response.status
-                    
-                    # 根据响应类型处理
-                    if response_type == 'json':
-                        try:
+                try:
+                    async with session.request(method, url, **request_kwargs) as response:
+                        status = response.status
+                        
+                        # 计算请求耗时
+                        if start_time is not None:
+                            elapsed = asyncio.get_event_loop().time() - start_time
+                        else:
+                            elapsed = None
+                        
+                        # 向代理管理器报告代理状态
+                        if proxy_used and proxy_manager_loaded and proxy_config and proxy_config.get('id'):
+                            success = 200 <= status < 300
+                            try:
+                                await proxy_manager.report_proxy_status(proxy_config.get('id'), success, elapsed)
+                                if success:
+                                    logger.info(f"通过代理成功请求 {url}, 状态码: {status}, 耗时: {elapsed:.2f}s")
+                                else:
+                                    logger.warning(f"通过代理请求 {url} 返回状态码: {status}")
+                            except Exception as e:
+                                logger.warning(f"报告代理状态时出错: {str(e)}")
+                        
+                        # 根据响应类型处理
+                        if response_type == 'json':
+                            try:
+                                data = await response.json()
+                            except (json.JSONDecodeError, aiohttp.ContentTypeError):
+                                # 如果JSON解析失败，尝试读取文本
+                                text = await response.text()
+                                data = {'text': text, 'error': 'JSON解析失败'}
+                        elif response_type == 'text':
+                            data = await response.text()
+                        elif response_type == 'binary':
+                            data = await response.read()
+                        else:
                             data = await response.json()
-                        except (json.JSONDecodeError, aiohttp.ContentTypeError):
-                            # 如果JSON解析失败，尝试读取文本
-                            text = await response.text()
-                            data = {'text': text, 'error': 'JSON解析失败'}
-                    elif response_type == 'text':
-                        data = await response.text()
-                    elif response_type == 'binary':
-                        data = await response.read()
-                    else:
-                        data = await response.json()
+                        
+                        return {
+                            'status': status,
+                            'data': data,
+                            'headers': dict(response.headers),
+                            'url': str(response.url)
+                        }
+                
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    # 代理请求失败时报告状态
+                    if proxy_used and proxy_manager_loaded and proxy_config and proxy_config.get('id'):
+                        try:
+                            await proxy_manager.report_proxy_status(proxy_config.get('id'), False)
+                            logger.warning(f"通过代理请求 {url} 失败: {str(e)}")
+                        except Exception as e2:
+                            logger.warning(f"报告代理失败状态时出错: {str(e2)}")
                     
-                    return {
-                        'status': status,
-                        'data': data,
-                        'headers': dict(response.headers),
-                        'url': str(response.url)
-                    }
+                    # 如果允许回退且有其他重试机会，重试但不使用代理
+                    if proxy_used and proxy_fallback and retry_count < max_retries:
+                        logger.info(f"代理请求失败，将尝试直连请求: {url}")
+                        proxy_url = None
+                        retry_count += 1
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    
+                    # 否则抛出异常进行标准重试流程
+                    raise
             
             except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as e:
                 error_msg = str(e)
@@ -425,12 +548,49 @@ class HTTPClient:
         """
         统一的数据获取方法，返回处理后的响应内容
         这是APINewsSource等类使用的主要方法
+        支持代理管理器配置
         """
         max_retries = kwargs.pop('max_retries', 3)
         retry_delay = kwargs.pop('retry_delay', 2)
         retry_count = 0
         last_error = None
         thread_id = threading.get_ident()
+        
+        # 提取代理相关参数，但不从kwargs中移除，让request方法处理
+        source_id = kwargs.get('source_id')
+        need_proxy = kwargs.get('need_proxy', False)
+        proxy_group = kwargs.get('proxy_group', 'default')
+        proxy_fallback = kwargs.get('proxy_fallback', True)
+        
+        # 检查域名是否需要代理
+        if not need_proxy and url:
+            try:
+                import urllib.parse
+                domain = urllib.parse.urlparse(url).netloc
+                # 尝试从配置中获取代理域名列表
+                proxy_required_domains = []
+                try:
+                    from app.core.config import settings
+                    proxy_required_domains = settings.proxy_domains
+                except ImportError:
+                    # 如果无法导入设置，使用默认列表
+                    proxy_required_domains = [
+                        "github.com", "bloomberg.com", "hackernews.firebaseio.com", 
+                        "news.ycombinator.com", "bbc.com", "v2ex.com", "producthunt.com",
+                        "xueqiu.com", "stock.xueqiu.com", "news.google.com", "google.com",
+                        "bbc.co.uk", "fastbull.cn", "ft.com",
+                        "nytimes.com", "wsj.com", "forbes.com", "cnbc.com",
+                        "reuters.com", "cnbc.com", "economist.com", "feeds.bbci.co.uk", "bbci.co.uk"
+                    ]
+                
+                if domain and any(required_domain in domain for required_domain in proxy_required_domains):
+                    need_proxy = True
+                    kwargs['need_proxy'] = True
+                    logger.info(f"全局fetch: 域名 {domain} 在需要代理的列表中，自动启用代理")
+                else:
+                    logger.debug(f"全局fetch: 域名 {domain} 不在代理列表中，使用直连")
+            except Exception as e:
+                logger.warning(f"解析URL域名时出错: {str(e)}")
         
         while retry_count <= max_retries:
             try:
@@ -484,6 +644,12 @@ class HTTPClient:
                 if json_data:
                     request_kwargs["json"] = json_data
                     
+                # 添加代理相关参数
+                request_kwargs["source_id"] = source_id
+                request_kwargs["need_proxy"] = need_proxy
+                request_kwargs["proxy_group"] = proxy_group
+                request_kwargs["proxy_fallback"] = proxy_fallback
+                
                 # 添加其他关键字参数
                 request_kwargs.update(kwargs)
                 
@@ -604,11 +770,60 @@ async def cached_get(url: str, **kwargs) -> Dict[str, Any]:
     return await default_client.cached_get(url, **kwargs)
 
 async def fetch(url: str, **kwargs) -> Any:
-    """使用默认客户端获取数据"""
+    """
+    使用默认客户端获取数据
+    支持代理配置，自动检测需要代理的域名
+    """
     retry_count = 0
     max_retries = kwargs.pop('max_retries', 3) 
     retry_delay = kwargs.pop('retry_delay', 2)
     thread_id = threading.get_ident()
+    
+    # 检查域名是否需要代理
+    need_proxy = kwargs.get('need_proxy', False)
+    if not need_proxy and url:
+        try:
+            import urllib.parse
+            domain = urllib.parse.urlparse(url).netloc
+            # 尝试从配置中获取代理域名列表
+            proxy_required_domains = []
+            try:
+                from app.core.config import settings
+                proxy_required_domains = settings.proxy_domains
+            except ImportError:
+                # 如果无法导入设置，使用默认列表
+                proxy_required_domains = [
+                    "github.com", "bloomberg.com", "hackernews.firebaseio.com", 
+                    "news.ycombinator.com", "bbc.com", "v2ex.com", "producthunt.com",
+                    "xueqiu.com", "stock.xueqiu.com", "news.google.com", "google.com",
+                    "bbc.co.uk", "fastbull.cn", "ft.com",
+                    "nytimes.com", "wsj.com", "forbes.com", "cnbc.com",
+                    "reuters.com", "cnbc.com", "economist.com", "feeds.bbci.co.uk", "bbci.co.uk"
+                ]
+            
+            if domain and any(required_domain in domain for required_domain in proxy_required_domains):
+                need_proxy = True
+                kwargs['need_proxy'] = True
+                logger.info(f"全局fetch: 域名 {domain} 在需要代理的列表中，自动启用代理")
+            else:
+                logger.debug(f"全局fetch: 域名 {domain} 不在代理列表中，使用直连")
+        except Exception as e:
+            logger.warning(f"解析URL域名时出错: {str(e)}")
+    
+    # 强制使用代理进行调试
+    if not need_proxy and kwargs.get('debug_proxy', False):
+        need_proxy = True
+        kwargs['need_proxy'] = True
+        logger.info(f"全局fetch: 强制使用代理模式（debug_proxy=True）")
+    
+    # 尝试获取代理管理器，确保它可用
+    try:
+        from worker.utils.proxy_manager import proxy_manager
+        # 尝试刷新代理列表
+        await proxy_manager.refresh_proxies()
+        logger.debug(f"全局fetch: 代理管理器可用，代理列表已刷新")
+    except Exception as e:
+        logger.warning(f"全局fetch: 加载或刷新代理管理器失败: {str(e)}")
     
     while retry_count <= max_retries:
         try:
@@ -640,7 +855,11 @@ async def fetch(url: str, **kwargs) -> Any:
                 except Exception as e:
                     logger.error(f"创建新事件循环失败: {str(e)}")
             
+            # 确保代理参数传递
+            kwargs['need_proxy'] = need_proxy
+            
             # 调用客户端fetch
+            logger.debug(f"发起请求 {url}，need_proxy={need_proxy}")
             result = await default_client.fetch(url, **kwargs)
             return result
             

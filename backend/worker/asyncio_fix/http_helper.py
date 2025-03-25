@@ -68,7 +68,11 @@ async def safe_request(
     verify_ssl: bool = True,
     user_agent: Optional[str] = None,
     proxy: Optional[str] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    source_id: Optional[str] = None,
+    need_proxy: bool = False,
+    proxy_group: str = "default",
+    proxy_fallback: bool = True
 ) -> Tuple[bool, Any, Optional[str]]:
     """
     执行一个安全的HTTP请求，自动处理各种错误情况
@@ -89,6 +93,10 @@ async def safe_request(
         user_agent: 自定义User-Agent
         proxy: 使用的代理服务器URL
         verbose: 是否打印详细日志
+        source_id: 数据源ID，用于获取特定的代理
+        need_proxy: 是否需要使用代理
+        proxy_group: 代理分组
+        proxy_fallback: 代理失败时是否回退到直连
         
     Returns:
         (success, result, error_message)
@@ -98,6 +106,54 @@ async def safe_request(
     """
     if not HAVE_AIOHTTP:
         return False, None, "未安装aiohttp库"
+    
+    # 检查域名是否在默认需要代理的列表中
+    try:
+        import urllib.parse
+        domain = urllib.parse.urlparse(url).netloc
+        
+        # 尝试从设置中获取代理域名列表
+        try:
+            from app.core.config import settings
+            proxy_required_domains = settings.proxy_domains
+        except ImportError:
+            # 如果无法导入设置，使用默认列表
+            proxy_required_domains = [
+                "github.com", "bloomberg.com", "hackernews.firebaseio.com", 
+                "news.ycombinator.com", "bbc.com", "v2ex.com", "producthunt.com",
+                "xueqiu.com", "stock.xueqiu.com", "news.google.com", "google.com",
+                "bbc.co.uk", "fastbull.cn","ft.com",
+                "nytimes.com", "wsj.com", "forbes.com", "cnbc.com",
+                "reuters.com", "cnbc.com", "economist.com", "feeds.bbci.co.uk", "bbci.co.uk"
+            ]
+            
+        if domain and any(required_domain in domain for required_domain in proxy_required_domains):
+            need_proxy = True
+            logger.info(f"安全请求: 域名 {domain} 在需要代理的列表中，自动启用代理")
+    except Exception as e:
+        logger.warning(f"解析URL域名时出错: {str(e)}")
+    
+    # 如果需要代理但没有提供，尝试从代理管理器获取
+    if need_proxy and not proxy:
+        try:
+            # 尝试导入代理管理器
+            proxy_manager = None
+            try:
+                from worker.utils.proxy_manager import proxy_manager
+            except ImportError:
+                try:
+                    from backend.worker.utils.proxy_manager import proxy_manager
+                except ImportError:
+                    logger.warning("无法导入代理管理器，将不使用代理")
+            
+            # 如果成功导入代理管理器，尝试获取代理
+            if proxy_manager:
+                proxy_config = await proxy_manager.get_proxy(source_id, proxy_group)
+                if proxy_config:
+                    proxy = proxy_config.get("url")
+                    logger.info(f"从代理管理器获取代理: {proxy} 用于请求 {url}")
+        except Exception as e:
+            logger.warning(f"获取代理时出错: {str(e)}")
         
     # 准备headers
     if headers is None:
@@ -115,24 +171,35 @@ async def safe_request(
             'http': proxy,
             'https': proxy
         }
+        proxy_used = True
+        logger.info(f"使用代理 {proxy} 请求 {url}")
     else:
         proxy_settings = None
+        proxy_used = False
+        logger.info(f"未使用代理直接请求 {url}")
     
     # 设置超时
     timeout_obj = aiohttp.ClientTimeout(total=timeout)
     
     retry_count = 0
     last_error = None
+    start_time = None
     
     while retry_count <= max_retries:
         if retry_count > 0:
             # 计算退避延迟 (指数退避 + 随机抖动)
             delay = retry_delay * (2 ** (retry_count - 1)) * (0.5 + random.random())
-            if verbose:
-                logger.info(f"重试请求 {url}，等待 {delay:.2f} 秒...")
+            logger.info(f"重试请求 {url}，等待 {delay:.2f} 秒...")
             await asyncio.sleep(delay)
+            
+            # 如果代理请求失败且允许回退到直连，尝试直连
+            if proxy_used and proxy_fallback and retry_count == 1:
+                logger.info(f"代理请求失败，尝试直连: {url}")
+                proxy = None
+                proxy_used = False
         
         retry_count += 1
+        start_time = time.time()
         
         try:
             # 确保事件循环有效
@@ -151,19 +218,64 @@ async def safe_request(
                     ssl=verify_ssl,
                     proxy=proxy
                 ) as response:
+                    # 计算请求耗时
+                    elapsed = time.time() - start_time
+                    
                     # 检查响应状态
                     if response.status >= 400:
                         error_text = await response.text()
                         error_msg = f"HTTP错误 {response.status}: {error_text[:500]}..."
-                        if verbose:
-                            logger.error(error_msg)
+                        logger.error(error_msg)
                         last_error = error_msg
+                        
+                        # 如果使用了代理，尝试报告失败状态
+                        if proxy_used:
+                            try:
+                                # 尝试导入代理管理器
+                                proxy_manager = None
+                                try:
+                                    from worker.utils.proxy_manager import proxy_manager
+                                except ImportError:
+                                    try:
+                                        from backend.worker.utils.proxy_manager import proxy_manager
+                                    except ImportError:
+                                        pass
+                                
+                                # 如果成功导入代理管理器，报告代理状态
+                                if proxy_manager:
+                                    proxy_config = await proxy_manager.get_proxy(source_id, proxy_group)
+                                    if proxy_config:
+                                        await proxy_manager.report_proxy_status(proxy_config.get('id'), False)
+                            except Exception as e:
+                                logger.warning(f"报告代理状态时出错: {str(e)}")
                         
                         # 检查是否应该重试
                         if response.status in [429, 500, 502, 503, 504] and retry_count <= max_retries:
                             continue
                         else:
                             return False, None, error_msg
+                    
+                    # 如果使用了代理，尝试报告成功状态
+                    if proxy_used:
+                        try:
+                            # 尝试导入代理管理器
+                            proxy_manager = None
+                            try:
+                                from worker.utils.proxy_manager import proxy_manager
+                            except ImportError:
+                                try:
+                                    from backend.worker.utils.proxy_manager import proxy_manager
+                                except ImportError:
+                                    pass
+                            
+                            # 如果成功导入代理管理器，报告代理状态
+                            if proxy_manager:
+                                proxy_config = await proxy_manager.get_proxy(source_id, proxy_group)
+                                if proxy_config:
+                                    await proxy_manager.report_proxy_status(proxy_config.get('id'), True, elapsed)
+                                    logger.info(f"通过代理成功请求 {url}, 状态码: {response.status}, 耗时: {elapsed:.2f}s")
+                        except Exception as e:
+                            logger.warning(f"报告代理状态时出错: {str(e)}")
                     
                     # 获取响应内容
                     if return_json:
@@ -173,8 +285,7 @@ async def safe_request(
                             # JSON解析失败，尝试获取文本
                             content = await response.text()
                             error_msg = f"JSON解析错误: {str(e)}, 响应内容: {content[:500]}..."
-                            if verbose:
-                                logger.error(error_msg)
+                            logger.error(error_msg)
                             return False, content, error_msg
                     else:
                         result = await response.text()

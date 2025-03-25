@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     DEFAULT_UPDATE_INTERVAL: int = 600  # 10 minutes
     DEFAULT_CACHE_TTL: int = 300  # 5 minutes
     
+    # Proxy settings
+    PROXY_REQUIRED_DOMAINS: str = ""
+    
     # Logging
     LOG_LEVEL: str = "INFO"
     
@@ -55,6 +58,22 @@ class Settings(BaseSettings):
                 return "debug-secret-key-not-secure"
             raise ValueError("SECRET_KEY must be set in production")
         return v
+    
+    @property
+    def proxy_domains(self) -> List[str]:
+        if not self.PROXY_REQUIRED_DOMAINS:
+            return []
+        
+        # 处理字符串格式
+        if isinstance(self.PROXY_REQUIRED_DOMAINS, str):
+            return [domain.strip() for domain in self.PROXY_REQUIRED_DOMAINS.split(",") if domain.strip()]
+        
+        # 其他类型尝试转换
+        try:
+            domains_str = str(self.PROXY_REQUIRED_DOMAINS)
+            return [domain.strip() for domain in domains_str.split(",") if domain.strip()]
+        except:
+            return []
     
     model_config = ConfigDict(
         env_file=".env",

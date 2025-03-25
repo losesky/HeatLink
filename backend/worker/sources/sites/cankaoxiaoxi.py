@@ -59,18 +59,20 @@ class CanKaoXiaoXiNewsSource(RESTNewsSource):
                 # 构建频道URL
                 channel_url = f"https://china.cankaoxiaoxi.com/json/channel/{channel}/list.json"
                 
-                # 发送请求
-                response = await self.http_client.get(channel_url, headers=self.headers)
+                # 获取 HTTP 客户端
+                client = await self.http_client
                 
-                # 解析响应
-                if response.status == 200:
-                    data = await response.json()
-                    
-                    # 使用自定义解析器处理数据
-                    channel_items = self.custom_parser(data)
-                    news_items.extend(channel_items)
-                else:
-                    logger.error(f"Failed to fetch data from {channel_url}, status: {response.status}")
+                # 发送请求
+                async with client.get(channel_url, headers=self.headers) as response:
+                    # 解析响应
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # 使用自定义解析器处理数据
+                        channel_items = self.custom_parser(data)
+                        news_items.extend(channel_items)
+                    else:
+                        logger.error(f"Failed to fetch data from {channel_url}, status: {response.status}")
             except Exception as e:
                 logger.error(f"Error fetching data from channel {channel}: {str(e)}")
         

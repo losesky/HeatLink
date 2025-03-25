@@ -34,7 +34,9 @@ class BaiduHotNewsSource(NewsSource):
         url = "https://top.baidu.com/board?tab=realtime"
         
         try:
-            async with self.http_client.get(url) as response:
+            # 获取 HTTP 客户端
+            client = await self.http_client
+            async with client.get(url) as response:
                 if response.status != 200:
                     logger.error(f"Failed to fetch Baidu hot search: {response.status}")
                     return []

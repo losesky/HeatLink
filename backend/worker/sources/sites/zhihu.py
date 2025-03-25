@@ -32,7 +32,10 @@ class ZhihuHotNewsSource(NewsSource):
         url = "https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=50&desktop=true"
         
         try:
-            async with self.http_client.get(url) as response:
+            # 获取 HTTP 客户端
+            client = await self.http_client
+            
+            async with client.get(url) as response:
                 if response.status != 200:
                     logger.error(f"Failed to fetch Zhihu hot topics: {response.status}")
                     return []

@@ -65,25 +65,27 @@ class KaoPuNewsSource(RESTNewsSource):
             try:
                 logger.info(f"Fetching data from {json_url}")
                 
-                # 发送请求
-                response = await self.http_client.get(json_url, headers=self.headers)
+                # 获取 HTTP 客户端
+                client = await self.http_client
                 
-                # 解析响应
-                if response.status == 200:
-                    # 先获取响应文本，然后手动解析JSON，不依赖Content-Type
-                    response_text = await response.text()
-                    
-                    try:
-                        data = json.loads(response_text)
+                # 发送请求
+                async with client.get(json_url, headers=self.headers) as response:
+                    # 解析响应
+                    if response.status == 200:
+                        # 先获取响应文本，然后手动解析JSON，不依赖Content-Type
+                        response_text = await response.text()
                         
-                        # 使用自定义解析器处理数据
-                        file_items = self.custom_parser(data)
-                        logger.info(f"Parsed {len(file_items)} items from {json_url}")
-                        news_items.extend(file_items)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON from {json_url}: {str(e)}")
-                else:
-                    logger.error(f"Failed to fetch data from {json_url}, status: {response.status}")
+                        try:
+                            data = json.loads(response_text)
+                            
+                            # 使用自定义解析器处理数据
+                            file_items = self.custom_parser(data)
+                            logger.info(f"Parsed {len(file_items)} items from {json_url}")
+                            news_items.extend(file_items)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse JSON from {json_url}: {str(e)}")
+                    else:
+                        logger.error(f"Failed to fetch data from {json_url}, status: {response.status}")
             except Exception as e:
                 logger.error(f"Error fetching data from URL {json_url}: {str(e)}")
         

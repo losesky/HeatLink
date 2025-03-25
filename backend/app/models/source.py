@@ -47,6 +47,11 @@ class Source(Base):
     last_update = Column(DateTime)
     news_count = Column(Integer, default=0)  # 新闻数量
     
+    # 代理相关字段
+    need_proxy = Column(Boolean, default=False)  # 是否需要使用代理
+    proxy_fallback = Column(Boolean, default=True)  # 代理失败时是否尝试直连
+    proxy_group = Column(String(50), nullable=True)  # 代理分组，可用于使用不同的代理组
+    
     # Relationships
     news = relationship("News", back_populates="source")
     category = relationship("Category", back_populates="sources")

@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 
 from worker.sources.config import settings
 from worker.sources.interface import NewsSourceInterface
+from worker.utils.proxy_manager import proxy_manager
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -197,9 +198,24 @@ class NewsSource(ABC):
         # 添加日志配置
         self.log_requests = self.config.get("log_requests", False)
         self.log_responses = self.config.get("log_responses", False)
+        
+        # 添加代理配置 - 数据库中的配置，优先级高于代码中的配置
+        self.need_proxy = self.config.get("need_proxy", False)  # 是否需要代理
+        self.proxy_fallback = self.config.get("proxy_fallback", True)  # 代理失败是否尝试直连
+        self.proxy_group = self.config.get("proxy_group", "default")  # 使用的代理组
+        
+        # 固定需要代理的源列表
+        self.proxy_required_sources = [
+            "github", "bloomberg-markets", "bloomberg-tech", "bloomberg", 
+            "hackernews", "bbc_world", "bloomberg-china", "v2ex", "producthunt"
+        ]
+        
+        # 如果该源ID在需要代理的列表中，自动设置need_proxy为True
+        if self.source_id in self.proxy_required_sources or any(s in self.source_id for s in self.proxy_required_sources):
+            self.need_proxy = True
     
     @property
-    def http_client(self) -> aiohttp.ClientSession:
+    async def http_client(self) -> aiohttp.ClientSession:
         """
         获取HTTP客户端
         """
@@ -224,19 +240,35 @@ class NewsSource(ABC):
             )
         return self._http_client
     
-    def get_next_proxy(self) -> Optional[str]:
+    async def get_next_proxy(self) -> Optional[Dict[str, Any]]:
         """
-        获取下一个代理
+        获取下一个代理URL和配置
+        优先使用代理管理器，如果不可用则回退到类属性中的代理
         """
+        # 如果不需要代理，直接返回None
+        if not self.need_proxy:
+            return None
+            
+        # 尝试从代理管理器获取代理
+        try:
+            proxy_config = await proxy_manager.get_proxy(self.source_id, self.proxy_group)
+            if proxy_config:
+                logger.info(f"为 {self.source_id} 使用代理管理器提供的代理: {proxy_config['host']}:{proxy_config['port']}")
+                return proxy_config
+        except Exception as e:
+            logger.warning(f"从代理管理器获取代理失败: {e}，将尝试使用配置的代理")
+        
+        # 如果代理管理器不可用或未返回代理，使用配置的代理
         if self.proxy:
-            return self.proxy
+            return {"url": self.proxy, "id": None}
         
         if not self.proxies:
+            logger.warning(f"数据源 {self.source_id} 需要代理但未找到可用代理")
             return None
         
         proxy = self.proxies[self.current_proxy_index]
         self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxies)
-        return proxy
+        return {"url": proxy, "id": None}
     
     def get_next_user_agent(self) -> str:
         """
@@ -294,35 +326,87 @@ class NewsSource(ABC):
             retry_delay = kwargs.get('retry_delay', 1.0)
             verify_ssl = kwargs.get('verify_ssl', True)
             
-            # 使用类中的代理和用户代理
-            proxy = self.get_next_proxy()
+            # 获取代理配置
+            proxy_config = await self.get_next_proxy()
             user_agent = self.get_next_user_agent()
             
-            # 执行请求
-            success, result, error_message = await safe_request(
-                url=url,
-                method=method,
-                headers=headers,
-                params=params,
-                data=data,
-                timeout=timeout,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
-                return_json=return_json,
-                verify_ssl=verify_ssl,
-                user_agent=user_agent,
-                proxy=proxy,
-                verbose=kwargs.get('verbose', False)
-            )
+            start_time = time.time()
+            proxy_used = False
             
-            if not success:
-                raise Exception(f"请求失败: {error_message}")
+            # 如果需要代理则先尝试使用代理
+            if self.need_proxy and proxy_config:
+                proxy = proxy_config.get("url")
+                proxy_used = True
+                try:
+                    logger.info(f"使用代理 {proxy} 请求 {url}")
+                    # 执行请求（使用代理）
+                    success, result, error_message = await safe_request(
+                        url=url,
+                        method=method,
+                        headers=headers,
+                        params=params,
+                        data=data,
+                        timeout=timeout,
+                        max_retries=max_retries,
+                        retry_delay=retry_delay,
+                        return_json=return_json,
+                        verify_ssl=verify_ssl,
+                        user_agent=user_agent,
+                        proxy=proxy,
+                        verbose=kwargs.get('verbose', False)
+                    )
+                    
+                    elapsed = time.time() - start_time
+                    # 向代理管理器报告代理状态
+                    if hasattr(proxy_manager, 'report_proxy_status') and proxy_used:
+                        await proxy_manager.report_proxy_status(proxy_config.get('id'), success, elapsed)
+                    
+                    if success:
+                        logger.info(f"通过代理成功请求 {url}，耗时: {elapsed:.2f}秒")
+                        
+                        # 根据response_type处理结果
+                        if response_type.lower() == 'bytes' and isinstance(result, str):
+                            return result.encode('utf-8')
+                        
+                        return result
+                    else:
+                        logger.warning(f"通过代理请求失败: {error_message}")
+                        # 如果代理失败且允许回退到直连，则继续执行
+                        if not self.proxy_fallback:
+                            raise Exception(f"请求失败: {error_message}")
+                except Exception as e:
+                    logger.warning(f"通过代理请求出错: {e}")
+                    # 如果不允许回退到直连，则直接抛出异常
+                    if not self.proxy_fallback:
+                        raise
             
-            # 根据response_type处理结果
-            if response_type.lower() == 'bytes' and isinstance(result, str):
-                return result.encode('utf-8')
-            
-            return result
+            # 如果没有代理，或代理失败且允许回退到直连，则尝试直连
+            if not proxy_used or (proxy_used and self.proxy_fallback):
+                logger.info(f"直连请求 {url}")
+                success, result, error_message = await safe_request(
+                    url=url,
+                    method=method,
+                    headers=headers,
+                    params=params,
+                    data=data,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay,
+                    return_json=return_json,
+                    verify_ssl=verify_ssl,
+                    user_agent=user_agent,
+                    proxy=None,
+                    verbose=kwargs.get('verbose', False)
+                )
+                
+                if not success:
+                    raise Exception(f"请求失败: {error_message}")
+                
+                # 根据response_type处理结果
+                if response_type.lower() == 'bytes' and isinstance(result, str):
+                    return result.encode('utf-8')
+                
+                return result
         except ImportError:
             # 如果无法导入安全HTTP模块，使用原始实现
             import aiohttp
@@ -339,8 +423,9 @@ class NewsSource(ABC):
                     # 设置超时
                     timeout_obj = aiohttp.ClientTimeout(total=timeout)
                     
-                    # 设置代理
-                    proxy = self.get_next_proxy()
+                    # 获取代理配置
+                    proxy_config = await self.get_next_proxy()
+                    proxy = proxy_config.get("url") if proxy_config else None
                     
                     # 从用户代理池获取User-Agent
                     user_agent = self.get_next_user_agent()
@@ -353,24 +438,72 @@ class NewsSource(ABC):
                     if 'User-Agent' not in headers:
                         headers['User-Agent'] = user_agent
                     
-                    # 执行请求
-                    async with aiohttp.ClientSession(timeout=timeout_obj) as session:
-                        async with session.request(
-                            method, url, headers=headers, data=data, params=params, 
-                            proxy=proxy, ssl=kwargs.get('verify_ssl', True)
-                        ) as response:
-                            # 检查响应状态
-                            if response.status >= 400:
-                                error_text = await response.text()
-                                raise Exception(f"HTTP error {response.status}: {error_text[:500]}")
-                            
-                            # 根据response_type返回不同类型的响应
-                            if response_type.lower() == 'json':
-                                return await response.json()
-                            elif response_type.lower() == 'bytes':
-                                return await response.read()
-                            else:
-                                return await response.text()
+                    proxy_used = False
+                    
+                    # 如果需要代理则先尝试使用代理
+                    if self.need_proxy and proxy:
+                        proxy_used = True
+                        try:
+                            logger.info(f"使用代理 {proxy} 请求 {url}")
+                            # 执行请求（使用代理）
+                            async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+                                async with session.request(
+                                    method, url, headers=headers, data=data, params=params, 
+                                    proxy=proxy, ssl=kwargs.get('verify_ssl', True)
+                                ) as response:
+                                    # 检查响应状态
+                                    if response.status >= 400:
+                                        error_text = await response.text()
+                                        logger.warning(f"通过代理请求响应状态码: {response.status}")
+                                        # 如果不允许回退到直连，则抛出异常
+                                        if not self.proxy_fallback:
+                                            raise Exception(f"HTTP error {response.status}: {error_text[:500]}")
+                                    else:
+                                        # 报告代理成功
+                                        elapsed = time.time() - start_time
+                                        if hasattr(proxy_manager, 'report_proxy_status') and proxy_used:
+                                            await proxy_manager.report_proxy_status(proxy_config.get('id'), True, elapsed)
+                                        
+                                        logger.info(f"通过代理成功请求 {url}，状态码: {response.status}")
+                                        
+                                        # 根据response_type返回不同类型的响应
+                                        if response_type.lower() == 'json':
+                                            return await response.json()
+                                        elif response_type.lower() == 'bytes':
+                                            return await response.read()
+                                        else:
+                                            return await response.text()
+                        except Exception as e:
+                            # 报告代理失败
+                            if hasattr(proxy_manager, 'report_proxy_status') and proxy_used and proxy_config:
+                                await proxy_manager.report_proxy_status(proxy_config.get('id'), False)
+                                
+                            logger.warning(f"通过代理请求出错: {e}")
+                            # A如果不允许回退到直连，则抛出异常
+                            if not self.proxy_fallback:
+                                raise
+                    
+                    # 如果没有代理，或代理失败且允许回退到直连，则尝试直连
+                    if not proxy_used or (proxy_used and self.proxy_fallback):
+                        logger.info(f"直连请求 {url}")
+                        # 执行请求（直连）
+                        async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+                            async with session.request(
+                                method, url, headers=headers, data=data, params=params, 
+                                ssl=kwargs.get('verify_ssl', True)
+                            ) as response:
+                                # 检查响应状态
+                                if response.status >= 400:
+                                    error_text = await response.text()
+                                    raise Exception(f"HTTP error {response.status}: {error_text[:500]}")
+                                
+                                # 根据response_type返回不同类型的响应
+                                if response_type.lower() == 'json':
+                                    return await response.json()
+                                elif response_type.lower() == 'bytes':
+                                    return await response.read()
+                                else:
+                                    return await response.text()
                 
                 except (aiohttp.ClientError, asyncio.TimeoutError, Exception) as e:
                     last_exception = e
@@ -394,16 +527,24 @@ class NewsSource(ABC):
     def generate_id(self, url: str, title: str = "", published_at: Optional[datetime.datetime] = None) -> str:
         """
         生成唯一ID
-        """
-        # 使用URL、标题和发布时间生成唯一ID
-        content = url
-        if title:
-            content += title
-        if published_at:
-            content += published_at.isoformat()
         
-        # 使用MD5生成ID
-        return hashlib.md5(content.encode('utf-8')).hexdigest()
+        Args:
+            url: 文章URL
+            title: 文章标题
+            published_at: 发布时间
+            
+        Returns:
+            唯一ID
+        """
+        # 创建一个唯一字符串
+        unique_str = f"{self.source_id}:{url}"
+        if title:
+            unique_str += f":{title}"
+        if published_at:
+            unique_str += f":{published_at.isoformat()}"
+        
+        # 生成哈希
+        return hashlib.md5(unique_str.encode('utf-8')).hexdigest()
     
     def create_news_item(self, **kwargs) -> NewsItemModel:
         """
@@ -509,27 +650,32 @@ class NewsSource(ABC):
         
         return False
     
-    def record_performance(self, operation: str, start_time: float, end_time: float) -> None:
+    def record_performance(self, operation: str, start_time: float, end_time: float):
         """
         记录性能指标
+        
+        Args:
+            operation: 操作名称
+            start_time: 开始时间
+            end_time: 结束时间
         """
         duration = end_time - start_time
         
         if operation not in self.performance_metrics:
             self.performance_metrics[operation] = {
-                "count": 0,
-                "total_time": 0,
-                "min_time": float("inf"),
-                "max_time": 0,
-                "last_time": 0
+                'count': 0,
+                'total_duration': 0,
+                'average_duration': 0,
+                'min_duration': float('inf'),
+                'max_duration': 0
             }
         
         metrics = self.performance_metrics[operation]
-        metrics["count"] += 1
-        metrics["total_time"] += duration
-        metrics["min_time"] = min(metrics["min_time"], duration)
-        metrics["max_time"] = max(metrics["max_time"], duration)
-        metrics["last_time"] = duration
+        metrics['count'] += 1
+        metrics['total_duration'] += duration
+        metrics['average_duration'] = metrics['total_duration'] / metrics['count']
+        metrics['min_duration'] = min(metrics['min_duration'], duration)
+        metrics['max_duration'] = max(metrics['max_duration'], duration)
     
     def get_cache_key(self, params: Dict[str, Any] = None) -> str:
         """
