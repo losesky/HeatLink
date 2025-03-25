@@ -64,6 +64,7 @@ alembic/versions/*.py
 # Celery
 celerybeat-schedule
 celerybeat.pid
+celery.pid
 
 # Redis
 dump.rdb
@@ -77,4 +78,19 @@ Thumbs.db
 htmlcov/
 reference/
 .pytest_cache/
-.mypy_cache/ 
+.mypy_cache/
+
+# Temporary and backup files
+.db_connection.json
+.migration_status.txt
+.data_status.json
+*.backup_*
+backend/*.html
+backend/*.json
+db_backups/
+.env.backup_*
+
+# ChromeDriver and other tools
+chromedriver-linux64/
+chromedriver-install/
+*.zip 

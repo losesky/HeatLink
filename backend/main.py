@@ -11,6 +11,7 @@ import psutil
 import time
 import platform
 from datetime import datetime
+from fastapi.responses import RedirectResponse, FileResponse
 
 # 添加当前目录到 Python 路径，确保可以正确导入模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -189,21 +190,86 @@ app.include_router(api_router, prefix="/api")
 # Mount static files
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "static")
 if os.path.exists(static_dir):
+    # 单独挂载docs目录以确保index.html被正确处理
+    docs_static_dir = os.path.join(static_dir, "docs")
+    if os.path.exists(docs_static_dir):
+        # 先挂载更具体的路径
+        app.mount("/static/docs", StaticFiles(directory=docs_static_dir, html=True), name="docs_static")
+        logger.info(f"Documentation mounted at /static/docs with HTML mode enabled")
+        
+        # 添加一个直接处理/static/docs/路径的路由
+        @app.get("/static/docs/", include_in_schema=False)
+        async def serve_docs_index():
+            """直接提供docs/index.html文件"""
+            index_path = os.path.join(docs_static_dir, "index.html")
+            if os.path.exists(index_path):
+                logger.info(f"Directly serving docs index.html from {index_path}")
+                return FileResponse(index_path)
+            return {"error": "Documentation index file not found"}
+    
+    # 然后挂载整个静态文件目录
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# 添加一个路由专门处理/static/docs/路径
+# @app.get("/static/docs", include_in_schema=False)
+# @app.get("/static/docs/", include_in_schema=False)
+# async def serve_docs_index():
+#     """为/static/docs和/static/docs/路径提供index.html文件"""
+#     index_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "static", "docs", "index.html")
+#     logger.info(f"Serving docs index.html from {index_path}")
+#     return FileResponse(index_path)
 
-@app.get("/")
+# 不再需要自定义的docs挂载，因为已经包含在static目录中了
+
+# Add a documentation redirect route
+@app.get("/documentation", include_in_schema=False)
+def documentation_redirect():
+    """Redirect /documentation to the documentation center"""
+    return RedirectResponse(url="/static/docs_index.html")
+
+# 添加对/docs路径的重定向，以便兼容旧链接
+@app.get("/docs", include_in_schema=False)
+@app.get("/docs/{path:path}", include_in_schema=False)
+async def docs_redirect(path: str = ""):
+    """重定向旧的/docs路径到新的/static/docs路径"""
+    redirect_url = "/static/docs/"
+    
+    # 如果有路径，添加到URL中
+    if path:
+        redirect_url = f"/static/docs/{path}"
+    
+    logger.info(f"Redirecting /docs/{path} to {redirect_url}")
+    return RedirectResponse(url=redirect_url, status_code=302)
+
+@app.get("/", include_in_schema=False)
 def root():
-    return {
+    """重定向根路径到文档中心"""
+    return RedirectResponse(url="/static/docs_index.html")
+
+@app.get("/api-info", include_in_schema=True)
+def api_info():
+    """返回API信息和链接"""
+    # 检查docs目录是否存在
+    docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "static", "docs")
+    docs_exists = os.path.exists(docs_dir)
+    
+    response = {
         "message": f"Welcome to {settings.APP_NAME} API",
         "version": settings.APP_VERSION,
-        "docs": "/api/docs",
+        "api_docs": "/api/docs",
+        "documentation": "/documentation",  # 文档中心链接
         "source_test_ui": "/static/source_test.html",
         "format_checker_ui": "/static/format_checker.html",
         "source_monitor_ui": "/static/source_monitor.html",
         "source_monitor_simple_ui": "/static/source_monitor_simple.html",
     }
-
+    
+    # 如果文档目录存在，添加文档链接
+    if docs_exists:
+        response["project_docs"] = "/static/docs/"
+        response["project_docs_search"] = "/static/docs/#/?search="
+    
+    return response
 
 # 添加根级别的健康检查API
 @app.get("/health")
@@ -234,6 +300,57 @@ def root_health():
         "system_info": system_info
     }
 
+# 添加一个静态文件目录检查端点
+@app.get("/debug/static-files", include_in_schema=True)
+def debug_static_files():
+    """返回静态文件目录的信息，用于调试"""
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "static")
+    docs_dir = os.path.join(static_dir, "docs")
+    
+    # 检查静态文件目录
+    static_exists = os.path.exists(static_dir)
+    static_is_dir = os.path.isdir(static_dir) if static_exists else False
+    static_files = os.listdir(static_dir) if static_is_dir else []
+    
+    # 检查文档目录
+    docs_exists = os.path.exists(docs_dir)
+    docs_is_dir = os.path.isdir(docs_dir) if docs_exists else False
+    docs_files = os.listdir(docs_dir) if docs_is_dir else []
+    
+    # 检查index文件
+    docs_index_html_path = os.path.join(docs_dir, "index.html")
+    docs_index_html_exists = os.path.exists(docs_index_html_path)
+    docs_index_html_size = os.path.getsize(docs_index_html_path) if docs_index_html_exists else 0
+    
+    # 检查sidebar文件
+    docs_sidebar_path = os.path.join(docs_dir, "_sidebar.md")
+    docs_sidebar_exists = os.path.exists(docs_sidebar_path)
+    
+    return {
+        "static_directory": {
+            "path": static_dir,
+            "exists": static_exists,
+            "is_directory": static_is_dir,
+            "files": static_files[:10],  # 只返回前10个文件，避免响应过大
+            "file_count": len(static_files)
+        },
+        "docs_directory": {
+            "path": docs_dir,
+            "exists": docs_exists,
+            "is_directory": docs_is_dir,
+            "files": docs_files[:10],  # 只返回前10个文件
+            "file_count": len(docs_files)
+        },
+        "index_html": {
+            "path": docs_index_html_path,
+            "exists": docs_index_html_exists,
+            "size_bytes": docs_index_html_size
+        },
+        "sidebar": {
+            "path": docs_sidebar_path,
+            "exists": docs_sidebar_exists
+        }
+    }
 
 @app.on_event("startup")
 async def startup_event():

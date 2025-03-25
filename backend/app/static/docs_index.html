@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HeatLink 文档中心</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        h1 {
+            color: #0066cc;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .card h2 {
+            color: #0066cc;
+            margin-top: 0;
+        }
+        .card p {
+            margin-bottom: 15px;
+        }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 15px;
+            background-color: #0066cc;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        .button:hover {
+            background-color: #0056b3;
+        }
+        .button-secondary {
+            background-color: #6c757d;
+        }
+        .button-secondary:hover {
+            background-color: #5a6268;
+        }
+        .search-box {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .search-box input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px 0 0 4px;
+            font-size: 16px;
+        }
+        .search-box button {
+            padding: 10px 15px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+        }
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #6c757d;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>HeatLink 文档中心</h1>
+    
+    <div class="search-box">
+        <input type="text" id="searchInput" placeholder="搜索文档...">
+        <button onclick="searchDocs()">搜索</button>
+    </div>
+    
+    <div class="card-grid">
+        <div class="card">
+            <h2>项目文档</h2>
+            <p>包含完整的项目架构、使用指南、维护手册和参考资料。</p>
+            <a href="/static/docs/" class="button">浏览项目文档</a>
+        </div>
+        
+        <div class="card">
+            <h2>API文档</h2>
+            <p>API接口详细说明，包括请求参数、响应格式和示例。</p>
+            <a href="/api/docs" class="button">查看API文档</a>
+        </div>
+        
+        <div class="card">
+            <h2>源监控工具</h2>
+            <p>监控所有新闻源的运行状态和性能指标。</p>
+            <a href="/static/source_monitor.html" class="button button-secondary">进入监控工具</a>
+        </div>
+        
+        <div class="card">
+            <h2>源测试工具</h2>
+            <p>测试和调试各个新闻源适配器的功能。</p>
+            <a href="/static/source_test.html" class="button button-secondary">进入测试工具</a>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>快速链接</h2>
+        <p>常用文档链接：</p>
+        <ul>
+            <li><a href="/static/docs/#/getting-started/index">快速入门</a></li>
+            <li><a href="/static/docs/#/maintenance/index">系统维护</a></li>
+            <li><a href="/static/docs/#/development/index">开发指南</a></li>
+            <li><a href="/static/docs/#/reference/file-organization">文件组织</a></li>
+            <li><a href="/static/docs/#/reference/changelog">更新日志</a></li>
+        </ul>
+    </div>
+    
+    <div class="footer">
+        <p>HeatLink © 2025 | 版本 <span id="version">loading...</span></p>
+    </div>
+
+    <script>
+        // 获取API信息
+        fetch('/api-info')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('version').textContent = data.version || 'unknown';
+            })
+            .catch(error => console.error('Error fetching API info:', error));
+        
+        // 搜索文档
+        function searchDocs() {
+            const searchTerm = document.getElementById('searchInput').value.trim();
+            if (searchTerm) {
+                window.location.href = `/static/docs/#/?search=${encodeURIComponent(searchTerm)}`;
+            }
+        }
+        
+        // 为搜索框添加回车键事件
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchDocs();
+            }
+        });
+    </script>
+</body>
+</html> 

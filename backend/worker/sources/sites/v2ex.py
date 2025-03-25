@@ -88,8 +88,8 @@ class V2EXHotTopicsSource(WebNewsSource):
             # 读取超时（秒）
             "read_timeout": 40,
             # 默认使用模拟文件，因为V2EX可能有反爬虫措施
-            "use_mock": True,
-            "use_mock_as_fallback": True,
+            "use_mock": False,
+            "use_mock_as_fallback": False,
             "mock_file": mock_file,
             # 启用缓存以减少重复请求
             "use_cache": True,
