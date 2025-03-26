@@ -10,6 +10,7 @@ class SourceMetrics(BaseModel):
     error_count: int
     last_update: Optional[datetime]
     last_error: Optional[str]
+    news_count: Optional[int] = 0
 
 class ApiTypeMetricsDetail(BaseModel):
     """某个API类型（内部或外部）的具体指标"""
@@ -56,6 +57,7 @@ class SourceHistoryData(BaseModel):
     avg_response_time: float
     total_requests: int
     error_count: int
+    news_count: int = 0
 
 class PeakTimeInfo(BaseModel):
     """访问高峰期信息"""

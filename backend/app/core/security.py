@@ -1,6 +1,18 @@
 from datetime import datetime, timedelta
 from typing import Any, Optional, Union
 
+# 修复bcrypt版本检测问题
+try:
+    import bcrypt
+    # 如果bcrypt没有__about__属性，添加一个模拟的__about__模块
+    if not hasattr(bcrypt, '__about__'):
+        class DummyAbout:
+            __version__ = bcrypt.__version__ if hasattr(bcrypt, '__version__') else '4.3.0'
+        bcrypt.__about__ = DummyAbout()
+except Exception:
+    # 忽略任何错误，passlib会自动降级到其他哈希方案
+    pass
+
 from jose import jwt
 from passlib.context import CryptContext
 

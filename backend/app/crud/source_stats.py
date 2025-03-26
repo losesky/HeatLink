@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.models.source_stats import SourceStats, ApiCallType
 from app.models.source import Source, SourceStatus
 from datetime import datetime, timedelta
+from sqlalchemy.types import String
 
 def create_source_stats(
     db: Session,
@@ -16,6 +17,18 @@ def create_source_stats(
     api_type: str = "internal"  # 默认为内部调用
 ) -> SourceStats:
     """创建新的源统计数据"""
+    # 确保api_type是小写，然后转换为正确的枚举值
+    api_type = api_type.lower()
+    
+    # 根据api_type字符串选择正确的枚举实例
+    if api_type == "internal":
+        enum_api_type = ApiCallType.internal
+    elif api_type == "external":
+        enum_api_type = ApiCallType.external
+    else:
+        # 默认使用内部类型
+        enum_api_type = ApiCallType.internal
+    
     db_stats = SourceStats(
         source_id=source_id,
         success_rate=success_rate,
@@ -24,7 +37,7 @@ def create_source_stats(
         error_count=error_count,
         news_count=news_count,
         last_response_time=last_response_time,
-        api_type=api_type
+        api_type=enum_api_type
     )
     db.add(db_stats)
     db.commit()
@@ -36,7 +49,7 @@ def get_latest_stats(db: Session, source_id: str, api_type: Optional[str] = None
     query = db.query(SourceStats).filter(SourceStats.source_id == source_id)
     
     if api_type:
-        query = query.filter(SourceStats.api_type == api_type)
+        query = query.filter(SourceStats.api_type.cast(String) == api_type)
         
     return query.order_by(SourceStats.created_at.desc()).first()
 
@@ -54,7 +67,7 @@ def get_stats_history(
     )
     
     if api_type:
-        query = query.filter(SourceStats.api_type == api_type)
+        query = query.filter(SourceStats.api_type.cast(String) == api_type)
         
     return query.order_by(SourceStats.created_at.asc()).all()
 
@@ -85,7 +98,7 @@ def update_source_status(
     else:
         source.status = SourceStatus.ACTIVE
     
-    source.last_update = datetime.utcnow()
+    source.last_updated = datetime.utcnow()
     source.last_error = last_error
     
     # 创建新的统计数据

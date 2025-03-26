@@ -67,6 +67,20 @@ class FastBullExpressNewsSource(FastBullNewsSource):
             **kwargs
         )
     
+    async def fetch(self) -> List[NewsItemModel]:
+        """
+        从快牛快讯网站获取新闻
+        调用父类的fetch方法，但确保使用自己的source_id进行统计
+        """
+        logger.info(f"Fetching FastBull Express news with source_id={self.source_id}")
+        try:
+            result = await super().fetch()
+            logger.info(f"FastBull Express fetch completed: {len(result)} items")
+            return result
+        except Exception as e:
+            logger.error(f"FastBull Express fetch error: {str(e)}")
+            raise
+    
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """
         解析快牛快讯网页响应
@@ -165,6 +179,20 @@ class FastBullGeneralNewsSource(FastBullNewsSource):
             url=url,
             **kwargs
         )
+    
+    async def fetch(self) -> List[NewsItemModel]:
+        """
+        从快牛新闻网站获取一般新闻
+        调用父类的fetch方法，但确保使用自己的source_id进行统计
+        """
+        logger.info(f"Fetching FastBull General news with source_id={self.source_id}")
+        try:
+            result = await super().fetch()
+            logger.info(f"FastBull General fetch completed: {len(result)} items")
+            return result
+        except Exception as e:
+            logger.error(f"FastBull General fetch error: {str(e)}")
+            raise
     
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """

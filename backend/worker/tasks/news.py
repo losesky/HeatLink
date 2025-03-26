@@ -650,7 +650,7 @@ if have_asyncio_fix:
                     # 获取源对象
                     db_source = get_source(db, source.source_id)
                     if db_source:
-                        update_source(db, db_source, {"last_update": datetime.now()})
+                        update_source(db, db_source, {"last_updated": datetime.now()})
                 finally:
                     db.close()
                 
@@ -768,7 +768,7 @@ else:
                     # 获取源对象
                     db_source = get_source(db, source.source_id)
                     if db_source:
-                        update_source(db, db_source, {"last_update": datetime.now()})
+                        update_source(db, db_source, {"last_updated": datetime.now()})
                 finally:
                     db.close()
                 

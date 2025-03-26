@@ -48,7 +48,7 @@ def initialize_missing_stats(db: Session):
             total_requests=0,
             error_count=0,
             news_count=0,
-            api_type=ApiCallType.INTERNAL  # 默认为内部调用
+            api_type=ApiCallType.internal  # 默认为内部调用
         )
         logger.info(f"为源 {source.id} ({source.name}) 创建了初始统计记录 (内部类型)")
         
@@ -61,7 +61,7 @@ def initialize_missing_stats(db: Session):
             total_requests=0,
             error_count=0,
             news_count=0,
-            api_type=ApiCallType.EXTERNAL  # 外部调用
+            api_type=ApiCallType.external  # 外部调用
         )
         logger.info(f"为源 {source.id} ({source.name}) 创建了初始统计记录 (外部类型)")
     

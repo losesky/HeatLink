@@ -44,7 +44,6 @@ class Source(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     status = Column(SQLEnum(SourceStatus), default=SourceStatus.INACTIVE)
-    last_update = Column(DateTime)
     news_count = Column(Integer, default=0)  # 新闻数量
     
     # 代理相关字段

@@ -94,7 +94,7 @@ def update_source_status(source_id, new_status="ACTIVE"):
     try:
         # 更新数据源状态和最后更新时间，同时清除错误信息
         db.execute(
-            text("UPDATE sources SET status = :status, last_error = NULL, last_update = :now WHERE id = :id"),
+            text("UPDATE sources SET status = :status, last_error = NULL, last_updated = :now WHERE id = :id"),
             {"status": new_status, "id": source_id, "now": datetime.utcnow()}
         )
         db.commit()

@@ -5,6 +5,7 @@
 import sys
 import os
 import datetime
+import json
 from pathlib import Path
 
 from sqlalchemy import true
@@ -108,7 +109,7 @@ SOURCES = [
         }
     },
     {
-        "id": "fastbull",
+        "id": "fastbull-express",
         "name": "FastBull快讯",
         "description": "FastBull财经快讯",
         "url": "https://www.fastbull.com/cn/express-news",
@@ -536,7 +537,7 @@ SOURCES = [
         "description": "彭博社科技新闻",
         "url": "https://news.google.com/rss/search?q=site:bloomberg.com+technology&hl=en-US&gl=US&ceid=US:en",
         "type": SourceType.RSS,
-        "category": "technology",
+        "category": "tech",
         "country": "美国",
         "language": "en",
         "config": {
@@ -562,7 +563,7 @@ SOURCES = [
         "description": "酷安新闻和动态",
         "url": "https://www.coolapk.com",
         "type": SourceType.WEB,
-        "category": "technology",
+        "category": "tech",
         "country": "中国",
         "language": "zh-CN",
         "config": {
@@ -575,7 +576,7 @@ SOURCES = [
         "description": "酷安动态消息",
         "url": "https://www.coolapk.com",
         "type": SourceType.WEB,
-        "category": "technology",
+        "category": "tech",
         "country": "中国",
         "language": "zh-CN",
         "config": {}
@@ -586,7 +587,7 @@ SOURCES = [
         "description": "酷安应用更新和推荐",
         "url": "https://www.coolapk.com/apk",
         "type": SourceType.WEB,
-        "category": "technology",
+        "category": "tech",
         "country": "中国",
         "language": "zh-CN",
         "config": {}
@@ -618,6 +619,27 @@ SOURCES = [
     }
 ]
 
+# 函数: 确保配置是可JSON序列化的
+def ensure_serializable(obj):
+    """
+    确保对象是可JSON序列化的，移除任何不可序列化的部分
+    """
+    if isinstance(obj, dict):
+        return {k: ensure_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [ensure_serializable(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        # 对于其他类型，尝试转换为字符串
+        try:
+            # 测试是否可序列化
+            json.dumps(obj)
+            return obj
+        except (TypeError, OverflowError):
+            # 如果无法序列化，转换为字符串表示
+            return str(obj)
+
 def init_db():
     """初始化数据库中的新闻源数据"""
     db = SessionLocal()
@@ -647,6 +669,9 @@ def init_db():
                 # 获取分类ID
                 category_id = categories.get(source_data["category"])
                 
+                # 确保配置是可序列化的
+                serializable_config = ensure_serializable(source_data["config"])
+                
                 # 创建新闻源
                 db_source = Source(
                     id=source_data["id"],
@@ -657,7 +682,7 @@ def init_db():
                     category_id=category_id,
                     country=source_data["country"],
                     language=source_data["language"],
-                    config=source_data["config"],
+                    config=serializable_config,
                     status=SourceStatus.ACTIVE,
                     update_interval=datetime.timedelta(minutes=10),
                     cache_ttl=datetime.timedelta(minutes=5),

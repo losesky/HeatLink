@@ -19,6 +19,122 @@ check_status() {
     fi
 }
 
+# 功能：等待服务就绪 - 增强版
+wait_for_service() {
+    local service_name=$1
+    local check_command=$2
+    local max_attempts=$3
+    local sleep_time=$4
+    local attempt=1
+
+    echo -e "${YELLOW}等待 ${service_name} 就绪...${NC}"
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo -e "${YELLOW}  尝试 $attempt/$max_attempts${NC}"
+        
+        # 执行检查命令
+        if eval $check_command; then
+            echo -e "${GREEN}  ${service_name} 已就绪!${NC}"
+            return 0
+        fi
+        
+        echo -e "${YELLOW}  等待 ${sleep_time} 秒后重试...${NC}"
+        sleep $sleep_time
+        attempt=$((attempt+1))
+    done
+    
+    echo -e "${RED}${service_name} 未能在规定时间内就绪${NC}"
+    return 1
+}
+
+# 创建初始化数据的函数
+init_data() {
+    echo -e "${YELLOW}执行数据初始化...${NC}"
+    
+    # 创建一个临时Python脚本文件
+    cat > .temp_init_data.py << EOF
+#!/usr/bin/env python
+import os
+import sys
+import traceback
+import asyncio
+
+# 添加项目根目录和脚本目录到Python路径
+sys.path.insert(0, os.path.abspath('.'))
+sys.path.insert(0, os.path.abspath('./scripts'))
+
+try:
+    # 加载模块之前打印调试信息
+    print(f'当前目录: {os.getcwd()}')
+    print(f'Python路径: {sys.path}')
+    
+    # 使用try/except单独处理每个导入
+    try:
+        from scripts.init_sources import init_db as init_sources
+        print('成功导入初始化源模块')
+    except Exception as e:
+        print(f'导入初始化源模块失败: {str(e)}')
+        traceback.print_exc()
+        sys.exit(1)
+        
+    try:
+        from scripts.init_tags import init_tags
+        print('成功导入初始化标签模块')
+    except Exception as e:
+        print(f'导入初始化标签模块失败: {str(e)}')
+        traceback.print_exc()
+        sys.exit(1)
+        
+    try:
+        from scripts.create_admin import create_admin_auto
+        print('成功导入创建管理员模块')
+    except Exception as e:
+        print(f'导入创建管理员模块失败: {str(e)}')
+        traceback.print_exc()
+        sys.exit(1)
+    
+    # 导入代理初始化模块
+    try:
+        from scripts.init_proxy import init_proxy
+        print('成功导入代理初始化模块')
+    except Exception as e:
+        print(f'导入代理初始化模块失败: {str(e)}')
+        traceback.print_exc()
+        sys.exit(1)
+    
+    # 初始化新闻源
+    print('初始化新闻源...')
+    init_sources()
+    
+    # 初始化标签
+    print('初始化标签...')
+    init_tags()
+    
+    # 自动创建管理员用户（非交互模式）
+    print('创建默认管理员用户...')
+    create_admin_auto(email='admin@example.com', password='adminpassword')
+    
+    # 初始化代理配置
+    print('初始化代理配置...')
+    asyncio.run(init_proxy())
+    
+    print('数据初始化完成')
+except Exception as e:
+    print(f'初始化数据时出错: {str(e)}')
+    traceback.print_exc()
+    sys.exit(1)
+EOF
+    
+    # 执行临时脚本
+    python .temp_init_data.py
+    init_result=$?
+    
+    # 删除临时脚本
+    rm -f .temp_init_data.py
+    
+    return $init_result
+}
+
 # 检查 Docker 是否已安装
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}错误: Docker 未安装${NC}"
@@ -55,6 +171,11 @@ if docker ps -q --filter "name=heatlink-postgres-local" | grep -q .; then
     fi
 fi
 
+# 确保所有容器都已停止 - 新增
+echo -e "${YELLOW}确保所有容器都干净重启...${NC}"
+docker compose -f docker-compose.local.yml down
+sleep 3  # 增加等待时间确保所有容器都已停止
+
 # 启动数据库和缓存服务
 echo -e "${YELLOW}正在启动数据库和缓存服务...${NC}"
 docker compose -f docker-compose.local.yml up -d
@@ -62,23 +183,28 @@ check_status "启动容器服务失败"
 
 # 等待服务启动 - 使用更可靠的方式进行健康检查
 echo -e "${YELLOW}等待服务启动...${NC}"
-MAX_RETRIES=10
+MAX_RETRIES=20  # 增加最大尝试次数
 RETRY_COUNT=0
+RETRY_DELAY=5   # 增加每次尝试的等待时间
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     if docker ps | grep -q "heatlink-postgres-local" && docker ps | grep -q "(healthy)"; then
         echo -e "${GREEN}所有服务已启动并健康${NC}"
+        # 额外等待确保数据库完全就绪 - 新增
+        echo -e "${YELLOW}额外等待5秒确保数据库完全就绪...${NC}"
+        sleep 5
         break
     fi
     
     echo -e "${YELLOW}等待服务启动，尝试 $((RETRY_COUNT+1))/$MAX_RETRIES...${NC}"
     RETRY_COUNT=$((RETRY_COUNT+1))
-    sleep 3
+    sleep $RETRY_DELAY
 done
 
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     echo -e "${RED}服务启动超时，请手动检查容器状态${NC}"
-    echo -e "${YELLOW}继续执行脚本，但可能会遇到连接问题${NC}"
+    echo -e "${RED}终止执行...${NC}"
+    exit 1
 fi
 
 # 运行数据库初始化和迁移
@@ -110,8 +236,8 @@ host_port, db = host_db.split('/')
 host, port = host_port.split(':')
 
 # 重试连接
-max_retries = 10
-retry_delay = 3
+max_retries = 15  # 增加重试次数
+retry_delay = 5   # 增加重试间隔
 connected = False
 
 for i in range(max_retries):
@@ -318,147 +444,24 @@ else
     echo -e "${GREEN}数据库迁移成功完成${NC}"
 fi
 
-# 创建一个更可靠的数据初始化检查函数
-echo -e "${YELLOW}验证数据一致性...${NC}"
-python -c "
-import os
-import sys
-import json
-import sqlalchemy
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text, inspect, MetaData
+# 在继续之前再次等待数据库 - 新增
+echo -e "${YELLOW}确保数据库完全可用...${NC}"
+sleep 3
 
-# 添加项目根目录到Python路径
-sys.path.insert(0, os.path.abspath('.'))
-
-# 加载环境变量
-load_dotenv()
-
-# 获取数据库连接
-from app.core.config import settings
-engine = create_engine(settings.DATABASE_URL)
-inspector = inspect(engine)
-metadata = MetaData()
-metadata.reflect(bind=engine)
-
-# 检查必要的表是否存在
-required_tables = ['sources', 'categories', 'tags']
-missing_tables = [t for t in required_tables if t not in inspector.get_table_names()]
-
-if missing_tables:
-    print(f'缺少必要的表: {missing_tables}')
-    sys.exit(2)  # 特殊错误码 - 表缺失
-
-# 检查sources表是否为空
-try:
-    with engine.connect() as conn:
-        # 检查sources表
-        if 'sources' in inspector.get_table_names():
-            result = conn.execute(text('SELECT COUNT(*) FROM sources'))
-            sources_count = result.scalar()
-        else:
-            sources_count = 0
-            
-        # 检查categories表
-        if 'categories' in inspector.get_table_names():
-            result = conn.execute(text('SELECT COUNT(*) FROM categories'))
-            categories_count = result.scalar()
-        else:
-            categories_count = 0
-            
-        # 检查tags表
-        if 'tags' in inspector.get_table_names():
-            result = conn.execute(text('SELECT COUNT(*) FROM tags'))
-            tags_count = result.scalar()
-        else:
-            tags_count = 0
-        
-    # 将计数信息写入文件以供bash脚本读取
-    with open('.data_status.json', 'w') as f:
-        json.dump({
-            'sources_count': sources_count,
-            'categories_count': categories_count,
-            'tags_count': tags_count
-        }, f)
-        
-    # 全面检查所有表
-    if sources_count == 0 or categories_count == 0 or tags_count == 0:
-        print('一个或多个核心表为空，需要初始化数据')
-        sys.exit(1)  # 需要初始化
-    else:
-        print(f'数据检查: sources: {sources_count}, categories: {categories_count}, tags: {tags_count}')
-        sys.exit(0)  # 不需要初始化
-except Exception as e:
-    print(f'检查数据时出错: {str(e)}')
-    sys.exit(3)  # 特殊错误码 - 检查错误
-"
-
-DATA_STATUS=$?
-
-# 根据数据验证结果处理数据初始化
-if [ $DATA_STATUS -eq 1 ]; then
-    echo -e "${YELLOW}需要初始化基础数据...${NC}"
+# 执行数据初始化 - 使用我们的新函数
+echo -e "${YELLOW}开始初始化数据...${NC}"
+if [ -d "scripts" ]; then
+    init_data
     
-    # 检查是否有init_all.py脚本
-    if [ -f "scripts/init_all.py" ]; then
-        # 执行初始化脚本
-        echo -e "${YELLOW}运行数据初始化脚本...${NC}"
-        # 修改为非交互模式
-        python -c "
-import os
-import sys
-sys.path.insert(0, os.path.abspath('.'))
-sys.path.insert(0, os.path.abspath('./scripts'))
-
-try:
-    from scripts.init_sources import init_db as init_sources
-    from scripts.init_tags import init_tags
-    from scripts.create_admin import create_admin_auto
-    
-    # 初始化新闻源
-    print('初始化新闻源...')
-    init_sources()
-    
-    # 初始化标签
-    print('初始化标签...')
-    init_tags()
-    
-    # 自动创建管理员用户（非交互模式）
-    print('创建默认管理员用户...')
-    create_admin_auto(email='admin@example.com', password='adminpassword')
-    
-    print('数据初始化完成')
-except Exception as e:
-    print(f'初始化数据时出错: {str(e)}')
-    sys.exit(1)
-"
-        
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}初始化数据失败${NC}"
-            exit 1
-        else
-            echo -e "${GREEN}基础数据初始化成功${NC}"
-        fi
-    else
-        echo -e "${RED}找不到初始化脚本: scripts/init_all.py${NC}"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}初始化数据失败${NC}"
         exit 1
-    fi
-elif [ $DATA_STATUS -eq 2 ]; then
-    echo -e "${RED}数据库缺少必要的表，请检查模型定义或迁移${NC}"
-    exit 1
-elif [ $DATA_STATUS -eq 3 ]; then
-    echo -e "${RED}数据验证过程中出现错误${NC}"
-    exit 1
-else
-    # 加载数据状态信息
-    if [ -f ".data_status.json" ]; then
-        SOURCES_COUNT=$(python -c "import json; f=open('.data_status.json'); data=json.load(f); print(data['sources_count']); f.close()")
-        CATEGORIES_COUNT=$(python -c "import json; f=open('.data_status.json'); data=json.load(f); print(data['categories_count']); f.close()")
-        TAGS_COUNT=$(python -c "import json; f=open('.data_status.json'); data=json.load(f); print(data['tags_count']); f.close()")
-        echo -e "${GREEN}数据验证通过: sources: ${SOURCES_COUNT}, categories: ${CATEGORIES_COUNT}, tags: ${TAGS_COUNT}${NC}"
     else
-        echo -e "${GREEN}数据验证通过${NC}"
+        echo -e "${GREEN}基础数据初始化成功${NC}"
     fi
+else
+    echo -e "${RED}找不到初始化脚本目录: scripts/${NC}"
+    exit 1
 fi
 
 # 清理临时文件

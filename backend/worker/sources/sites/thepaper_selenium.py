@@ -55,6 +55,8 @@ class ThePaperSeleniumSource(WebNewsSource):
     - 使用桌面版浏览器配置访问网站，避免被重定向到移动版
     - 监测并自动从移动版切换到桌面版，确保获取完整内容
     - 使用大窗口尺寸和桌面版用户代理模拟真实桌面浏览器
+    - 使用缓存机制减少频繁请求和Selenium会话开销
+    - 通过超时控制避免任务长时间阻塞
     """
     
     # 用户代理列表，仅包含桌面浏览器，避免重定向到移动版网站
@@ -131,22 +133,26 @@ class ThePaperSeleniumSource(WebNewsSource):
             },
             # Selenium配置
             "use_selenium": True,  # 始终启用Selenium
-            "selenium_timeout": 30,  # 页面加载超时时间（秒）
-            "selenium_wait_time": 5,  # 等待元素出现的时间（秒）
+            "selenium_timeout": 20,  # 降低页面加载超时时间（秒）
+            "selenium_wait_time": 3,  # 降低等待元素出现的时间（秒）
             "headless": True,  # 无头模式（不显示浏览器窗口）
             # 重试配置
-            "max_retries": 3,
-            "retry_delay": 5,
+            "max_retries": 2,       # 减少重试次数以提高速度
+            "retry_delay": 2,       # 减少重试延迟
             # 启用缓存以减少重复请求
             "use_cache": True,
-            "cache_ttl": 1800,  # 30分钟缓存
+            "cache_ttl": 1800,      # 30分钟缓存
             # 启用随机延迟，避免被识别为爬虫
             "use_random_delay": True,
-            "min_delay": 1.0,
-            "max_delay": 3.0,
+            "min_delay": 0.5,       # 减少最小延迟
+            "max_delay": 1.5,       # 减少最大延迟
+            # 整体超时控制
+            "overall_timeout": 60,  # 整体操作超时时间（秒）
             # 调试配置
             "debug_file": "/tmp/thepaper_selenium_debug.html",  # 调试文件路径
             "failed_debug_file": "/tmp/thepaper_selenium_failed.html",  # 失败时的调试文件路径
+            # HTTP备用方式
+            "use_http_fallback": True,  # 启用HTTP备用方式
         })
         
         super().__init__(
@@ -163,6 +169,15 @@ class ThePaperSeleniumSource(WebNewsSource):
         
         self._driver = None
         self._driver_pid = None  # 添加记录chromedriver进程ID
+        
+        # 增加内存缓存
+        self._news_cache = []
+        self._last_cache_update = 0
+        self._cache_ttl = 1800  # 30分钟缓存有效期
+        self._cache_lock = asyncio.Lock()
+        
+        # 已尝试了HTTP备用的标志
+        self._tried_http_fallback = False
     
     def _create_driver(self):
         """
@@ -473,18 +488,277 @@ class ThePaperSeleniumSource(WebNewsSource):
                 self._driver = None
                 self._driver_pid = None
     
+    async def fetch(self) -> List[NewsItemModel]:
+        """
+        获取新闻
+        通过Selenium访问网站获取，如果失败则尝试使用HTTP请求备用方案
+        增加了缓存机制和超时控制，极大减少响应时间
+        """
+        logger.info(f"开始获取澎湃新闻热榜数据")
+        start_time = time.time()
+        
+        # 首先检查缓存是否有效
+        current_time = time.time()
+        if self._news_cache and current_time - self._last_cache_update < self._cache_ttl:
+            logger.info(f"从缓存获取到 {len(self._news_cache)} 条澎湃新闻热榜数据，用时: {time.time() - start_time:.2f}秒")
+            # 从缓存获取不需要更新统计，注释掉以避免重复统计
+            # try:
+            #     from worker.stats_wrapper import stats_updater
+            #     # 创建一个假的fetch函数，确保外部API调用计数增加
+            #     async def dummy_fetch():
+            #         return self._news_cache.copy()
+            #     # 带上外部API类型标记包装这个假函数并执行
+            #     await stats_updater.wrap_fetch(self.source_id, dummy_fetch, api_type="external")
+            # except Exception as stats_e:
+            #     logger.warning(f"更新澎湃新闻热榜外部API统计时出错: {str(stats_e)}")
+            return self._news_cache.copy()
+        
+        # 设置整体超时
+        overall_timeout = self.config.get("overall_timeout", 60)
+        
+        # 创建异步任务
+        try:
+            # 创建异步任务
+            fetch_task = asyncio.create_task(self._fetch_impl())
+            
+            # 使用超时控制
+            try:
+                news_items = await asyncio.wait_for(fetch_task, timeout=overall_timeout)
+                
+                # 记录执行时间
+                elapsed = time.time() - start_time
+                logger.info(f"成功获取 {len(news_items)} 条澎湃新闻热榜数据，用时: {elapsed:.2f}秒")
+                
+                # 更新缓存
+                async with self._cache_lock:
+                    self._news_cache = news_items
+                    self._last_cache_update = time.time()
+                
+                # 注释掉以避免重复统计，因为实际的fetch_impl内部已经更新了统计
+                # try:
+                #     from worker.stats_wrapper import stats_updater
+                #     # 创建一个假的fetch函数，确保外部API调用计数增加
+                #     async def dummy_fetch():
+                #         return news_items
+                #     # 包装这个假函数并执行
+                #     await stats_updater.wrap_fetch(self.source_id, dummy_fetch, api_type="external")
+                # except Exception as stats_e:
+                #     logger.warning(f"更新澎湃新闻热榜外部API统计时出错: {str(stats_e)}")
+                
+                return news_items
+            except asyncio.TimeoutError:
+                logger.warning(f"获取澎湃新闻热榜数据超时 ({overall_timeout}秒)，尝试使用备用方法")
+                
+                # 如果使用Selenium超时，尝试HTTP备用方法
+                if self.config.get("use_http_fallback", True) and not self._tried_http_fallback:
+                    logger.info("尝试使用HTTP备用方法获取数据")
+                    self._tried_http_fallback = True
+                    try:
+                        fallback_items = await self._fetch_with_http_fallback()
+                        if fallback_items:
+                            # 更新缓存
+                            async with self._cache_lock:
+                                self._news_cache = fallback_items
+                                self._last_cache_update = time.time()
+                            
+                            elapsed = time.time() - start_time
+                            logger.info(f"通过HTTP备用方法成功获取 {len(fallback_items)} 条新闻，总用时: {elapsed:.2f}秒")
+                            
+                            # HTTP备用方法是真正的外部调用，需要更新统计
+                            try:
+                                from worker.stats_wrapper import stats_updater
+                                # 创建一个假的fetch函数
+                                async def dummy_fetch():
+                                    return fallback_items
+                                # 包装这个假函数并执行，这里可以保留因为HTTP fallback是额外的API调用
+                                await stats_updater.wrap_fetch(self.source_id, dummy_fetch, api_type="external")
+                            except Exception as stats_e:
+                                logger.warning(f"更新澎湃新闻热榜外部API统计时出错: {str(stats_e)}")
+                            
+                            return fallback_items
+                    except Exception as fallback_e:
+                        logger.error(f"HTTP备用方法失败: {str(fallback_e)}")
+                
+                # 如果有缓存，返回缓存
+                if self._news_cache:
+                    logger.info(f"返回缓存的 {len(self._news_cache)} 条新闻")
+                    # 从缓存获取不需要更新统计
+                    # try:
+                    #     from worker.stats_wrapper import stats_updater
+                    #     # 创建一个假的fetch函数
+                    #     async def dummy_fetch():
+                    #         return self._news_cache.copy()
+                    #     # 包装这个假函数并执行
+                    #     await stats_updater.wrap_fetch(self.source_id, dummy_fetch, api_type="external")
+                    # except Exception as stats_e:
+                    #     logger.warning(f"更新澎湃新闻热榜外部API统计时出错: {str(stats_e)}")
+                    return self._news_cache.copy()
+                
+                logger.error("获取澎湃新闻热榜数据完全失败")
+                return []
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"获取澎湃新闻热榜数据时发生错误: {str(e)}，用时: {elapsed:.2f}秒")
+            
+            # 如果有缓存，返回缓存
+            if self._news_cache:
+                logger.info(f"错误后返回缓存的 {len(self._news_cache)} 条新闻")
+                # 从缓存获取不需要更新统计
+                # try:
+                #     from worker.stats_wrapper import stats_updater
+                #     # 创建一个假的fetch函数
+                #     async def dummy_fetch():
+                #         return self._news_cache.copy()
+                #     # 包装这个假函数并执行
+                #     await stats_updater.wrap_fetch(self.source_id, dummy_fetch, api_type="external")
+                # except Exception as stats_e:
+                #     logger.warning(f"更新澎湃新闻热榜外部API统计时出错: {str(stats_e)}")
+                return self._news_cache.copy()
+            
+            raise
+    
+    async def _fetch_impl(self) -> List[NewsItemModel]:
+        """实际获取数据的内部方法"""
+        # 重置HTTP备用标志
+        self._tried_http_fallback = False
+        
+        # 先尝试使用Selenium获取
+        try:
+            return await self._fetch_with_selenium()
+        except Exception as e:
+            logger.error(f"使用Selenium获取澎湃新闻热榜数据失败: {str(e)}")
+            
+            # 尝试HTTP备用方法
+            if self.config.get("use_http_fallback", True):
+                logger.info("尝试使用HTTP备用方法获取数据")
+                try:
+                    fallback_items = await self._fetch_with_http_fallback()
+                    if fallback_items:
+                        logger.info(f"通过HTTP备用方法成功获取 {len(fallback_items)} 条新闻")
+                        return fallback_items
+                except Exception as fallback_e:
+                    logger.error(f"HTTP备用方法失败: {str(fallback_e)}")
+            
+            # 如果都失败，抛出异常
+            raise
+    
+    async def _fetch_with_http_fallback(self) -> List[NewsItemModel]:
+        """使用HTTP请求作为备用方案获取新闻"""
+        logger.info("使用HTTP请求作为备用方案获取澎湃新闻热榜数据")
+        
+        try:
+            # 获取HTTP客户端
+            client = http_client
+            
+            # 准备请求头
+            headers = {
+                "User-Agent": random.choice(self.USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Referer": "https://www.thepaper.cn/",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1"
+            }
+            
+            # 尝试获取首页
+            async with client.get("https://www.thepaper.cn/", headers=headers, timeout=10) as response:
+                if response.status != 200:
+                    logger.error(f"HTTP备用方法获取首页失败，状态码: {response.status}")
+                    return []
+                
+                content = await response.text()
+                
+                # 解析HTML
+                soup = BeautifulSoup(content, 'html.parser')
+                
+                # 提取新闻列表
+                news_items = []
+                
+                # 尝试提取热榜新闻
+                hot_news_section = soup.select_one(".news_li, .news-list, .hot-list")
+                if hot_news_section:
+                    news_links = hot_news_section.select("a")
+                    for idx, link in enumerate(news_links[:30]):  # 限制数量
+                        try:
+                            href = link.get("href", "")
+                            if not href or href == "#" or "javascript:" in href:
+                                continue
+                                
+                            # 构建完整URL
+                            if href.startswith("/"):
+                                full_url = f"https://www.thepaper.cn{href}"
+                            elif href.startswith("http"):
+                                full_url = href
+                            else:
+                                full_url = f"https://www.thepaper.cn/{href}"
+                            
+                            # 提取标题
+                            title = link.get_text(strip=True)
+                            if not title and link.select_one(".title, h3, h4"):
+                                title = link.select_one(".title, h3, h4").get_text(strip=True)
+                            
+                            if not title:
+                                continue
+                            
+                            # 生成唯一ID
+                            # 从URL提取ID或使用标题哈希
+                            match = re.search(r'newsDetail_forward_(\d+)', href)
+                            if match:
+                                id_part = match.group(1)
+                            else:
+                                id_part = hashlib.md5(title.encode()).hexdigest()
+                            
+                            item_id = f"thepaper-http-{id_part}"
+                            
+                            # 创建新闻项
+                            news_item = NewsItemModel(
+                                id=item_id,
+                                title=title,
+                                url=full_url,
+                                source_id=self.source_id,
+                                source_name=self.name,
+                                published_at=datetime.datetime.now(),  # 无法获取准确时间，使用当前时间
+                                category=self.category,
+                                language=self.language,
+                                country=self.country,
+                                extra={
+                                    "rank": idx + 1,
+                                    "fetched_by": "http_fallback"
+                                }
+                            )
+                            
+                            news_items.append(news_item)
+                        except Exception as e:
+                            logger.error(f"解析新闻项失败: {str(e)}")
+                
+                logger.info(f"通过HTTP备用方法获取到 {len(news_items)} 条新闻")
+                return news_items
+        except Exception as e:
+            logger.error(f"HTTP备用方法失败: {str(e)}")
+            raise
+    
+    # 清理缓存
+    async def clear_cache(self):
+        """清理缓存数据"""
+        async with self._cache_lock:
+            self._news_cache = []
+            self._last_cache_update = 0
+        logger.info("已清理澎湃新闻热榜缓存")
+    
+    # 重写关闭方法，确保清理资源
     async def close(self):
         """关闭资源"""
-        await self._close_driver()
+        await self.clear_cache()
         
-        # 更新初始化计数
-        instance_key = self.source_id
-        if instance_key in _initialized_instances and _initialized_instances[instance_key] > 0:
-            _initialized_instances[instance_key] -= 1
-            logger.info(f"关闭 {self.source_id} 适配器，剩余 {_initialized_instances[instance_key]} 个实例")
+        # 关闭WebDriver
+        if self._driver:
+            try:
+                await self._close_driver()
+            except Exception as e:
+                logger.error(f"关闭WebDriver时出错: {str(e)}")
         
-        return await super().close()
-    
+        await super().close()
+
     async def _fetch_with_selenium(self) -> List[NewsItemModel]:
         """
         使用Selenium从澎湃新闻获取数据
@@ -921,120 +1195,6 @@ class ThePaperSeleniumSource(WebNewsSource):
         
         return news_items
 
-    async def fetch(self) -> List[NewsItemModel]:
-        """
-        获取澎湃新闻热榜
-        
-        Returns:
-            新闻列表
-        """
-        instance_key = self.source_id
-        active_instances = _initialized_instances.get(instance_key, 0)
-        logger.info(f"开始获取 {self.name} 数据 [ID: {self.source_id}, 实例数: {active_instances}]")
-        
-        try:
-            # 直接使用Selenium获取数据
-            news_items = await self._fetch_with_selenium()
-            
-            if not news_items or len(news_items) == 0:
-                logger.error("未获取到新闻数据")
-                raise RuntimeError("未能获取到任何新闻数据")
-            
-            logger.info(f"获取到 {len(news_items)} 条新闻")
-            return news_items
-            
-        except Exception as e:
-            logger.error(f"获取数据失败: {str(e)}")
-            raise RuntimeError(f"获取数据失败: {str(e)}")
-        finally:
-            # 确保每次fetch后都关闭driver，防止资源泄漏
-            try:
-                await self._close_driver()
-            except Exception:
-                pass
-
-    async def parse_response(self, response: str) -> List[NewsItemModel]:
-        """
-        解析HTTP响应内容
-        注意：这个方法是必须的，因为它是从WebNewsSource继承的抽象方法
-        但本适配器仅使用Selenium，不使用HTTP响应解析
-        """
-        logger.warning("ThePaperSeleniumSource 仅使用 Selenium 抓取，不支持 HTTP 响应解析")
-        return []  # 返回空列表，因为我们不会使用这个方法来获取数据 
-
-    def _find_news_from_section_tabs(self, driver):
-        """从页面的各个板块tab中获取热门新闻"""
-        news_items = []
-        try:
-            # 获取tab分类区域
-            tab_container = driver.find_element(By.CSS_SELECTOR, self.TAB_CONTAINER_SELECTOR)
-            if DEBUG_MODE:
-                logger.debug("找到tab分类区域")
-            
-            # 获取所有tab按钮
-            tab_buttons = tab_container.find_elements(By.CSS_SELECTOR, self.TAB_BUTTON_SELECTOR)
-            if not tab_buttons:
-                if DEBUG_MODE:
-                    logger.debug("未找到任何tab按钮")
-                return []
-            
-            if DEBUG_MODE:
-                logger.debug(f"找到 {len(tab_buttons)} 个tab分类")
-            
-            # 遍历点击每个tab，获取对应的新闻
-            for i, tab in enumerate(tab_buttons[:3]):  # 限制只处理前3个tab以提高效率
-                try:
-                    tab_name = tab.text.strip()
-                    if not tab_name:
-                        continue
-                    
-                    if DEBUG_MODE:
-                        logger.debug(f"点击'{tab_name}'tab")
-                    # 点击tab
-                    driver.execute_script("arguments[0].click();", tab)
-                    time.sleep(1)  # 等待内容加载
-                    
-                    # 获取当前tab下的新闻列表
-                    section_items = driver.find_elements(By.CSS_SELECTOR, self.SECTION_NEWS_SELECTOR)
-                    if not section_items:
-                        if DEBUG_MODE:
-                            logger.debug(f"'{tab_name}'tab下未找到新闻条目")
-                        continue
-                    
-                    if DEBUG_MODE:
-                        logger.debug(f"'{tab_name}'tab下找到 {len(section_items)} 条新闻")
-                    
-                    # 解析每条新闻
-                    for item in section_items[:5]:  # 每个tab仅获取前5条
-                        try:
-                            link_elem = item.find_element(By.CSS_SELECTOR, 'a')
-                            url = link_elem.get_attribute('href')
-                            title = link_elem.text.strip()
-                            
-                            if not url or not title:
-                                continue
-                            
-                            news_items.append({
-                                'title': title,
-                                'url': url,
-                                'source': self.SOURCE_NAME,
-                                'category': tab_name
-                            })
-                        except Exception as e:
-                            if DEBUG_MODE:
-                                logger.debug(f"解析tab新闻条目时出错: {str(e)}")
-                except Exception as e:
-                    if DEBUG_MODE:
-                        logger.debug(f"处理tab '{i+1}' 时出错: {str(e)}")
-            
-            if news_items:
-                logger.info(f"从tab分类中提取 {len(news_items)} 条新闻")
-        except Exception as e:
-            if DEBUG_MODE:
-                logger.debug(f"处理tab分类区域时出错: {str(e)}")
-        
-        return news_items 
-
     async def _force_desktop_mode(self, driver, loop):
         """
         强制使用桌面模式，避免重定向到移动版
@@ -1091,3 +1251,21 @@ class ThePaperSeleniumSource(WebNewsSource):
         except Exception as e:
             logger.warning(f"强制桌面模式失败: {str(e)}")
             return False 
+
+    async def parse_response(self, response: str) -> List[NewsItemModel]:
+        """
+        实现基类要求的parse_response方法
+        
+        由于ThePaperSeleniumSource类使用Selenium和自定义的fetch方法进行数据获取和解析，
+        这个方法仅作为满足抽象基类要求而存在，实际不会被直接调用。
+        实际的解析逻辑在_fetch_with_selenium和相关方法中。
+        
+        Args:
+            response: HTML响应内容
+            
+        Returns:
+            空列表，因为该方法不会被实际使用
+        """
+        logger.warning("ThePaperSeleniumSource.parse_response被直接调用，这不是预期的使用方式。"
+                      "ThePaper适配器使用专用的Selenium方法获取新闻。")
+        return [] 

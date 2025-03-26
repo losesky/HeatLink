@@ -31,13 +31,13 @@ def upgrade():
         
         # 根据active字段设置status的初始值
         print("根据active字段初始化status值...")
-        op.execute("""
+        op.execute(sa.text("""
             UPDATE sources 
             SET status = CASE
                 WHEN active = true THEN 'ACTIVE'
                 ELSE 'INACTIVE'
             END;
-        """)
+        """))
         print("status列添加并初始化完成")
     
     # 检查active列是否存在
@@ -47,17 +47,17 @@ def upgrade():
         
         # 尝试更新，但用try/except捕获可能的错误
         try:
-            op.execute("""
+            op.execute(sa.text("""
                 UPDATE sources 
                 SET status = 'ACTIVE'
                 WHERE active = true AND (status <> 'ACTIVE' OR status IS NULL);
-            """)
+            """))
             
-            op.execute("""
+            op.execute(sa.text("""
                 UPDATE sources 
                 SET status = 'INACTIVE'
                 WHERE active = false AND (status = 'ACTIVE' OR status IS NULL);
-            """)
+            """))
             print("数据一致性更新完成")
             
             # 删除active字段
@@ -85,13 +85,13 @@ def downgrade():
         if 'status' in columns:
             print("正在还原：根据status设置active值")
             try:
-                op.execute("""
+                op.execute(sa.text("""
                     UPDATE sources 
                     SET active = CASE
                         WHEN status = 'ACTIVE' THEN true
                         ELSE false
                     END;
-                """)
+                """))
                 print("active字段值设置完成")
             except Exception as e:
                 print(f"设置active值出错: {str(e)}")

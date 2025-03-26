@@ -33,13 +33,17 @@ def upgrade():
     
     try:
         # 检查枚举类型是否已存在
-        with conn.begin():
-            try:
-                # 尝试查询现有的枚举类型
-                conn.execute("SELECT pg_type.typname FROM pg_type JOIN pg_enum ON pg_enum.enumtypid = pg_type.oid WHERE pg_type.typname = 'apicalltype'")
-                enum_exists = conn.fetchone() is not None
-            except:
-                enum_exists = False
+        enum_exists = False
+        try:
+            # 修复SQL查询执行方式
+            query = sa.text("SELECT pg_type.typname FROM pg_type JOIN pg_enum ON pg_enum.enumtypid = pg_type.oid WHERE pg_type.typname = 'apicalltype'")
+            result = conn.execute(query)
+            row = result.fetchone()
+            enum_exists = row is not None
+            print(f"枚举类型查询结果: {row}")
+        except Exception as e:
+            print(f"查询枚举类型时出错: {str(e)}")
+            enum_exists = False
         
         if not enum_exists:
             print("创建枚举类型apicalltype...")
@@ -86,4 +90,4 @@ def downgrade():
         print("枚举类型删除成功")
     except Exception as e:
         print(f"回滚出错: {str(e)}")
-        print("跳过删除api_type字段") 
+        print("跳过删除api_type字段")

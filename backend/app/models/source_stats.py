@@ -5,8 +5,8 @@ from datetime import datetime
 from enum import Enum
 
 class ApiCallType(str, Enum):
-    INTERNAL = "internal"  # 内部调度任务访问
-    EXTERNAL = "external"  # 外部API访问
+    internal = "internal"  # 内部调度任务访问
+    external = "external"  # 外部API访问
 
 class SourceStats(Base):
     """
@@ -27,7 +27,7 @@ class SourceStats(Base):
     error_count = Column(Integer, default=0)  # 错误数
     news_count = Column(Integer, default=0)  # 新闻数量
     last_response_time = Column(Float, default=0.0)  # 最后一次响应时间（毫秒）
-    api_type = Column(SQLEnum(ApiCallType), default=ApiCallType.INTERNAL, nullable=False)  # API调用类型
+    api_type = Column(SQLEnum(ApiCallType), default=ApiCallType.internal, nullable=False)  # API调用类型
     
     # 关联关系
     source = relationship("Source", back_populates="stats") 

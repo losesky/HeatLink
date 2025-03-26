@@ -93,28 +93,60 @@ def get_source_monitor_data(
         source_infos = []
         for source in sources:
             # 获取内部和外部最新统计数据
-            internal_latest = stats_crud.get_latest_stats(db, source.id, api_type=ApiCallType.INTERNAL)
-            external_latest = stats_crud.get_latest_stats(db, source.id, api_type=ApiCallType.EXTERNAL)
+            internal_latest = stats_crud.get_latest_stats(db, source.id, api_type="internal")
+            external_latest = stats_crud.get_latest_stats(db, source.id, api_type="external")
             
             # 准备存储内部/外部指标
             source_api_type_metrics = {}
             
+            # 获取历史聚合数据（24小时内）
+            internal_history = stats_crud.get_stats_history(db, source.id, hours=24, api_type="internal")
+            external_history = stats_crud.get_stats_history(db, source.id, hours=24, api_type="external")
+            
+            # 计算内部API的聚合指标
             if internal_latest:
                 internal_stats.append(internal_latest)
+                
+                # 计算总请求数
+                total_internal_requests = sum(stat.total_requests for stat in internal_history) if internal_history else internal_latest.total_requests
+                
+                # 计算加权平均响应时间
+                if internal_history and len(internal_history) > 1:
+                    weighted_response_time = sum(stat.avg_response_time * stat.total_requests for stat in internal_history) / max(1, sum(stat.total_requests for stat in internal_history))
+                else:
+                    weighted_response_time = internal_latest.avg_response_time
+                
+                # 计算总错误数
+                total_error_count = sum(stat.error_count for stat in internal_history) if internal_history else internal_latest.error_count
+                
                 source_api_type_metrics["internal"] = {
                     "success_rate": internal_latest.success_rate,
-                    "avg_response_time": internal_latest.avg_response_time,
-                    "total_requests": internal_latest.total_requests,
-                    "error_count": internal_latest.error_count
+                    "avg_response_time": weighted_response_time,
+                    "total_requests": total_internal_requests,
+                    "error_count": total_error_count
                 }
             
+            # 计算外部API的聚合指标
             if external_latest:
                 external_stats.append(external_latest)
+                
+                # 计算总请求数
+                total_external_requests = sum(stat.total_requests for stat in external_history) if external_history else external_latest.total_requests
+                
+                # 计算加权平均响应时间
+                if external_history and len(external_history) > 1:
+                    weighted_response_time = sum(stat.avg_response_time * stat.total_requests for stat in external_history) / max(1, sum(stat.total_requests for stat in external_history))
+                else:
+                    weighted_response_time = external_latest.avg_response_time
+                
+                # 计算总错误数
+                total_error_count = sum(stat.error_count for stat in external_history) if external_history else external_latest.error_count
+                
                 source_api_type_metrics["external"] = {
                     "success_rate": external_latest.success_rate,
-                    "avg_response_time": external_latest.avg_response_time,
-                    "total_requests": external_latest.total_requests,
-                    "error_count": external_latest.error_count
+                    "avg_response_time": weighted_response_time,
+                    "total_requests": total_external_requests,
+                    "error_count": total_error_count
                 }
             
             # 如果有内部或外部统计数据，添加到对比列表
@@ -129,13 +161,47 @@ def get_source_monitor_data(
             # 使用合并的统计信息或内部统计信息
             latest_stats = internal_latest or stats_crud.get_latest_stats(db, source.id)
             
+            # 获取历史统计数据以计算聚合指标
+            all_stats_history = stats_crud.get_stats_history(db, source.id, hours=24)
+            
+            # 计算聚合指标
+            if all_stats_history:
+                # 计算总请求数
+                total_requests = sum(stat.total_requests for stat in all_stats_history)
+                
+                # 计算加权平均响应时间
+                if total_requests > 0:
+                    weighted_avg_response_time = sum(stat.avg_response_time * stat.total_requests for stat in all_stats_history) / total_requests
+                else:
+                    weighted_avg_response_time = latest_stats.avg_response_time if latest_stats else 0.0
+                
+                # 计算总错误数
+                total_error_count = sum(stat.error_count for stat in all_stats_history)
+                
+                # 计算加权成功率
+                if total_requests > 0:
+                    weighted_success_rate = sum(stat.success_rate * stat.total_requests for stat in all_stats_history) / total_requests
+                else:
+                    weighted_success_rate = latest_stats.success_rate if latest_stats else 0.0
+                    
+                # 计算总新闻数
+                total_news_count = sum(stat.news_count for stat in all_stats_history)
+            else:
+                # 如果没有历史数据，使用最新的统计信息
+                total_requests = latest_stats.total_requests if latest_stats else 0
+                weighted_avg_response_time = latest_stats.avg_response_time if latest_stats else 0.0
+                total_error_count = latest_stats.error_count if latest_stats else 0
+                weighted_success_rate = latest_stats.success_rate if latest_stats else 0.0
+                total_news_count = latest_stats.news_count if latest_stats else 0
+            
             metrics = SourceMetrics(
-                success_rate=latest_stats.success_rate if latest_stats else 0.0,
-                avg_response_time=latest_stats.avg_response_time if latest_stats else 0.0,
-                total_requests=latest_stats.total_requests if latest_stats else 0,
-                error_count=latest_stats.error_count if latest_stats else 0,
-                last_update=source.last_update,
-                last_error=source.last_error
+                success_rate=weighted_success_rate,
+                avg_response_time=weighted_avg_response_time,
+                total_requests=total_requests,
+                error_count=total_error_count,
+                last_update=source.last_updated,
+                last_error=source.last_error,
+                news_count=total_news_count
             )
             
             # 修复 category 字段类型问题
@@ -156,14 +222,60 @@ def get_source_monitor_data(
         
         # 计算内部/外部API调用的平均响应时间和请求总数
         if internal_stats:
-            api_type_metrics["internal_avg_response_time"] = sum(s.avg_response_time for s in internal_stats) / len(internal_stats)
-            api_type_metrics["internal_requests"] = sum(s.total_requests for s in internal_stats)
-            api_type_metrics["internal_success_rate"] = sum(s.success_rate * s.total_requests for s in internal_stats) / api_type_metrics["internal_requests"] if api_type_metrics["internal_requests"] > 0 else 0
+            # 获取所有数据源的24小时内内部API调用历史
+            all_internal_history = []
+            for source in sources:
+                source_history = stats_crud.get_stats_history(db, source.id, hours=24, api_type="internal")
+                if source_history:
+                    all_internal_history.extend(source_history)
+            
+            # 计算总请求数
+            api_type_metrics["internal_requests"] = sum(stat.total_requests for stat in all_internal_history) if all_internal_history else sum(s.total_requests for s in internal_stats)
+            
+            # 计算加权平均响应时间
+            if all_internal_history:
+                total_requests = sum(stat.total_requests for stat in all_internal_history)
+                if total_requests > 0:
+                    api_type_metrics["internal_avg_response_time"] = sum(stat.avg_response_time * stat.total_requests for stat in all_internal_history) / total_requests
+                else:
+                    api_type_metrics["internal_avg_response_time"] = sum(s.avg_response_time for s in internal_stats) / len(internal_stats)
+            else:
+                api_type_metrics["internal_avg_response_time"] = sum(s.avg_response_time for s in internal_stats) / len(internal_stats)
+            
+            # 计算加权成功率
+            if api_type_metrics["internal_requests"] > 0:
+                total_success = sum((stat.success_rate * stat.total_requests) for stat in all_internal_history) if all_internal_history else sum(s.success_rate * s.total_requests for s in internal_stats)
+                api_type_metrics["internal_success_rate"] = total_success / api_type_metrics["internal_requests"]
+            else:
+                api_type_metrics["internal_success_rate"] = 0
         
         if external_stats:
-            api_type_metrics["external_avg_response_time"] = sum(s.avg_response_time for s in external_stats) / len(external_stats)
-            api_type_metrics["external_requests"] = sum(s.total_requests for s in external_stats)
-            api_type_metrics["external_success_rate"] = sum(s.success_rate * s.total_requests for s in external_stats) / api_type_metrics["external_requests"] if api_type_metrics["external_requests"] > 0 else 0
+            # 获取所有数据源的24小时内外部API调用历史
+            all_external_history = []
+            for source in sources:
+                source_history = stats_crud.get_stats_history(db, source.id, hours=24, api_type="external")
+                if source_history:
+                    all_external_history.extend(source_history)
+            
+            # 计算总请求数
+            api_type_metrics["external_requests"] = sum(stat.total_requests for stat in all_external_history) if all_external_history else sum(s.total_requests for s in external_stats)
+            
+            # 计算加权平均响应时间
+            if all_external_history:
+                total_requests = sum(stat.total_requests for stat in all_external_history)
+                if total_requests > 0:
+                    api_type_metrics["external_avg_response_time"] = sum(stat.avg_response_time * stat.total_requests for stat in all_external_history) / total_requests
+                else:
+                    api_type_metrics["external_avg_response_time"] = sum(s.avg_response_time for s in external_stats) / len(external_stats)
+            else:
+                api_type_metrics["external_avg_response_time"] = sum(s.avg_response_time for s in external_stats) / len(external_stats)
+            
+            # 计算加权成功率
+            if api_type_metrics["external_requests"] > 0:
+                total_success = sum((stat.success_rate * stat.total_requests) for stat in all_external_history) if all_external_history else sum(s.success_rate * s.total_requests for s in external_stats)
+                api_type_metrics["external_success_rate"] = total_success / api_type_metrics["external_requests"]
+            else:
+                api_type_metrics["external_success_rate"] = 0
             
         # 计算总体平均响应时间
         all_stats = [stats_crud.get_latest_stats(db, s.id) for s in sources]
@@ -234,7 +346,8 @@ def get_source_history(
             success_rate=stat.success_rate,
             avg_response_time=stat.avg_response_time,
             total_requests=stat.total_requests,
-            error_count=stat.error_count
+            error_count=stat.error_count,
+            news_count=stat.news_count
         ))
     
     # 分析访问高峰期 - 按绝对时间点

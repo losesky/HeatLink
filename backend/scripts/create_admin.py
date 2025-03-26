@@ -16,26 +16,28 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv()
 
+# 修复bcrypt版本检测问题
+try:
+    import bcrypt
+    # 如果bcrypt没有__about__属性，添加一个模拟的__about__模块
+    if not hasattr(bcrypt, '__about__'):
+        class DummyAbout:
+            __version__ = bcrypt.__version__ if hasattr(bcrypt, '__version__') else '4.3.0'
+        bcrypt.__about__ = DummyAbout()
+        print(f"已修复bcrypt版本检测，使用版本: {bcrypt.__about__.__version__}")
+except Exception as e:
+    print(f"无法修复bcrypt版本检测: {str(e)}")
+
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.core.security import get_password_hash
-from app.models.role import Role, UserRole
 
 def create_admin():
     """交互式创建管理员用户"""
     db = SessionLocal()
     
     try:
-        # 检查是否已存在管理员角色
-        admin_role = db.query(Role).filter(Role.name == "admin").first()
-        if not admin_role:
-            print("创建管理员角色...")
-            admin_role = Role(name="admin", description="系统管理员")
-            db.add(admin_role)
-            db.commit()
-            db.refresh(admin_role)
-        
         # 输入管理员电子邮件
         email = input("请输入管理员电子邮件: ")
         
@@ -46,20 +48,17 @@ def create_admin():
             assign_admin = input("是否将该用户设为管理员? (y/n): ").lower()
             if assign_admin == 'y':
                 # 检查是否已经是管理员
-                existing_role = db.query(UserRole).filter(
-                    UserRole.user_id == existing_user.id,
-                    UserRole.role_id == admin_role.id
-                ).first()
-                
-                if existing_role:
+                if existing_user.is_superuser:
                     print(f"用户 {email} 已经是管理员")
                 else:
-                    # 分配管理员角色
-                    user_role = UserRole(user_id=existing_user.id, role_id=admin_role.id)
-                    db.add(user_role)
+                    # 设置为管理员
+                    existing_user.is_superuser = True
                     db.commit()
                     print(f"用户 {email} 已设为管理员")
             return
+        
+        # 输入用户名
+        username = input("请输入用户名: ")
         
         # 输入并确认密码
         while True:
@@ -80,19 +79,14 @@ def create_admin():
         hashed_password = get_password_hash(password)
         user = User(
             email=email,
+            username=username,
             hashed_password=hashed_password,
             is_active=True,
-            is_superuser=True,
-            full_name="Admin User"
+            is_superuser=True
         )
         db.add(user)
         db.commit()
         db.refresh(user)
-        
-        # 分配管理员角色
-        user_role = UserRole(user_id=user.id, role_id=admin_role.id)
-        db.add(user_role)
-        db.commit()
         
         print(f"管理员用户 {email} 创建成功")
     
@@ -112,14 +106,8 @@ def create_admin_auto(email="admin@example.com", password=None, full_name="Admin
     db = SessionLocal()
     
     try:
-        # 检查是否已存在管理员角色
-        admin_role = db.query(Role).filter(Role.name == "admin").first()
-        if not admin_role:
-            print("创建管理员角色...")
-            admin_role = Role(name="admin", description="系统管理员")
-            db.add(admin_role)
-            db.commit()
-            db.refresh(admin_role)
+        # 生成用户名 (从邮箱中提取)
+        username = email.split('@')[0]
         
         # 检查是否已存在此邮箱用户
         existing_user = db.query(User).filter(User.email == email).first()
@@ -127,17 +115,11 @@ def create_admin_auto(email="admin@example.com", password=None, full_name="Admin
             print(f"用户 {email} 已存在")
             
             # 检查是否已经是管理员
-            existing_role = db.query(UserRole).filter(
-                UserRole.user_id == existing_user.id,
-                UserRole.role_id == admin_role.id
-            ).first()
-            
-            if existing_role:
+            if existing_user.is_superuser:
                 print(f"用户 {email} 已经是管理员")
             else:
-                # 分配管理员角色
-                user_role = UserRole(user_id=existing_user.id, role_id=admin_role.id)
-                db.add(user_role)
+                # 设置为管理员
+                existing_user.is_superuser = True
                 db.commit()
                 print(f"用户 {email} 已设为管理员")
             
@@ -147,19 +129,14 @@ def create_admin_auto(email="admin@example.com", password=None, full_name="Admin
         hashed_password = get_password_hash(password)
         user = User(
             email=email,
+            username=username,
             hashed_password=hashed_password,
             is_active=True,
-            is_superuser=True,
-            full_name=full_name
+            is_superuser=True
         )
         db.add(user)
         db.commit()
         db.refresh(user)
-        
-        # 分配管理员角色
-        user_role = UserRole(user_id=user.id, role_id=admin_role.id)
-        db.add(user_role)
-        db.commit()
         
         print(f"管理员用户 {email} 创建成功，密码: {password}")
         return user
@@ -179,11 +156,11 @@ if __name__ == "__main__":
     parser.add_argument("--non-interactive", action="store_true", help="非交互模式")
     parser.add_argument("--email", default="admin@example.com", help="管理员邮箱")
     parser.add_argument("--password", help="管理员密码 (不指定则生成随机密码)")
-    parser.add_argument("--full-name", default="Admin User", help="管理员全名")
+    parser.add_argument("--username", help="管理员用户名 (不指定则从邮箱生成)")
     
     args = parser.parse_args()
     
     if args.non_interactive:
-        create_admin_auto(email=args.email, password=args.password, full_name=args.full_name)
+        create_admin_auto(email=args.email, password=args.password)
     else:
         create_admin() 

@@ -58,7 +58,7 @@ def reset_inactive_sources():
         
         # 重置所有非活跃状态的源
         update_result = db.execute(
-            text("UPDATE sources SET error_count = 0, last_error = NULL, last_update = :now, status = 'ACTIVE' WHERE status != 'ACTIVE'"),
+            text("UPDATE sources SET error_count = 0, last_error = NULL, last_updated = :now, status = 'ACTIVE' WHERE status != 'ACTIVE'"),
             {"now": datetime.utcnow()}
         )
         
@@ -70,18 +70,18 @@ def reset_inactive_sources():
         
         # 验证更新
         reset_sources = db.execute(
-            text("SELECT id, name, status, last_error, last_update FROM sources WHERE id IN (SELECT id FROM sources WHERE id IN :ids)")
+            text("SELECT id, name, status, last_error, last_updated FROM sources WHERE id IN (SELECT id FROM sources WHERE id IN :ids)")
             .bindparams(ids=tuple([source[0] for source in inactive_sources]))
         ).fetchall()
         
         logger.info("\n重置后的数据源信息:")
         for source in reset_sources:
-            source_id, name, status, last_error, last_update = source
+            source_id, name, status, last_error, last_updated = source
             logger.info(f"ID: {source_id}")
             logger.info(f"名称: {name}")
             logger.info(f"状态: {status}")
             logger.info(f"最后错误: {last_error or '无'}")
-            logger.info(f"最后更新时间: {last_update}")
+            logger.info(f"最后更新时间: {last_updated}")
             logger.info("-" * 50)
         
         return True
