@@ -16,7 +16,7 @@ Before you begin, ensure you have the following software installed on your syste
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourorganization/HeatLink.git
+git clone https://github.com/losesky/HeatLink.git
 cd HeatLink
 ```
 

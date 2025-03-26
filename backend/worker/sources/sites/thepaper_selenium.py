@@ -564,16 +564,16 @@ class ThePaperSeleniumSource(WebNewsSource):
                             elapsed = time.time() - start_time
                             logger.info(f"通过HTTP备用方法成功获取 {len(fallback_items)} 条新闻，总用时: {elapsed:.2f}秒")
                             
-                            # HTTP备用方法是真正的外部调用，需要更新统计
-                            try:
-                                from worker.stats_wrapper import stats_updater
-                                # 创建一个假的fetch函数
-                                async def dummy_fetch():
-                                    return fallback_items
-                                # 包装这个假函数并执行，这里可以保留因为HTTP fallback是额外的API调用
-                                await stats_updater.wrap_fetch(self.source_id, dummy_fetch, api_type="external")
-                            except Exception as stats_e:
-                                logger.warning(f"更新澎湃新闻热榜外部API统计时出错: {str(stats_e)}")
+                            # HTTP备用方法已经由外部包装器统计，这里不需要额外统计
+                            # try:
+                            #     from worker.stats_wrapper import stats_updater
+                            #     # 创建一个假的fetch函数
+                            #     async def dummy_fetch():
+                            #         return fallback_items
+                            #     # 包装这个假函数并执行，这里可以保留因为HTTP fallback是额外的API调用
+                            #     await stats_updater.wrap_fetch(self.source_id, dummy_fetch, api_type="external")
+                            # except Exception as stats_e:
+                            #     logger.warning(f"更新澎湃新闻热榜外部API统计时出错: {str(stats_e)}")
                             
                             return fallback_items
                     except Exception as fallback_e:
