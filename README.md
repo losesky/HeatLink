@@ -11,22 +11,28 @@ HeatLink采用现代化的微服务架构，主要由以下几个核心组件构
 3. **Beat服务**：Celery Beat调度器，负责定时触发任务
 4. **数据库**：PostgreSQL关系型数据库，存储结构化数据
 5. **缓存**：Redis缓存服务，提高系统性能并支持任务队列
+6. **代理服务**：支持通过HTTP或SOCKS代理访问受限资源，提高数据获取可靠性
 
 系统架构图：
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+┌─────────────┐     ┌─────────────┐      ┌─────────────┐
 │   客户端    │────▶│  API服务    │◀───▶│  数据库     │
-└─────────────┘     └──────┬──────┘     └─────────────┘
-                          │                    ▲
-                          ▼                    │
-                    ┌─────────────┐     ┌─────────────┐
+└─────────────┘     └──────┬──────┘      └─────────────┘
+                          │                     ▲
+                          ▼                     │
+                    ┌─────────────┐      ┌─────────────┐
                     │  Redis缓存  │◀───▶│ Worker服务  │
-                    └─────────────┘     └──────┬──────┘
-                          ▲                    │
-                          │                    ▼
-                          │             ┌─────────────┐
-                          └─────────────│  Beat服务   │
-                                        └─────────────┘
+                    └─────────────┘      └──────┬──────┘
+                          ▲                     │
+                          │                     ▼
+                          │              ┌─────────────┐
+                          └───────────── │  Beat服务   │
+                                         └─────────────┘
+                                                │
+                                                ▼
+                                         ┌─────────────┐
+                                         │  代理服务   │
+                                         └─────────────┘
 ```
 
 ## 核心功能与实现
@@ -94,6 +100,23 @@ HeatLink采用现代化的微服务架构，主要由以下几个核心组件构
 - **规范化处理**：自动处理源ID格式不一致问题（如下划线与连字符格式转换）
 - **可配置更新间隔**：支持自定义统计信息的更新频率，平衡实时性与性能
 
+### 8. 智能代理支持
+
+系统新增了智能代理支持功能，解决某些数据源访问限制问题：
+
+- **灵活的代理配置**：支持SOCKS5、HTTP和HTTPS多种代理协议
+- **自动代理选择**：根据数据源特性自动选择合适的代理服务器
+- **代理健康监控**：自动监控代理可用性并切换到可用代理
+- **代理分组管理**：支持按地区、用途等对代理进行分组管理
+- **自动故障转移**：代理失败时可配置自动尝试直连或切换备用代理
+- **性能统计**：记录代理使用情况、成功率和响应时间等指标
+
+代理管理的主要功能：
+1. **自动识别需要代理的源**：系统会自动识别需要使用代理的数据源（如国际新闻、开发者社区等）
+2. **智能调度**：根据代理的历史性能和当前负载分配代理资源
+3. **实时监控**：监控代理健康状态，自动屏蔽异常代理
+4. **API管理**：提供完整的REST API接口管理代理配置
+
 统计更新器的工作流程：
 1. 在调用源的`fetch`方法时，自动记录开始时间
 2. 监控请求执行过程，捕获可能的异常
@@ -115,6 +138,60 @@ HeatLink采用现代化的微服务架构，主要由以下几个核心组件构
 
 通过这些统计信息，系统能够更智能地管理新闻源，提高数据获取的可靠性和效率。
 
+## 系统要求
+
+### 开发环境要求
+
+- **Python**: 3.9+
+- **PostgreSQL**: 12.0+
+- **Redis**: 6.0+
+- **Docker** (可选): 20.10+
+- **Docker Compose** (可选): 2.0+
+
+### 主要依赖
+
+系统主要依赖以下Python库：
+
+- **Web框架与API**：
+  - FastAPI 0.103.0+：高性能异步API框架
+  - Uvicorn 0.23.2+：ASGI服务器
+  - Pydantic 2.4.2+：数据验证和设置管理
+
+- **网络和通信**：
+  - aiohttp 3.8.5+：异步HTTP客户端/服务器
+  - httpx 0.25.0+：现代HTTP客户端
+  - websockets 11.0.3+：WebSocket支持
+
+- **代理支持**：
+  - aiohttp-socks 0.8.1+：aiohttp的SOCKS代理支持
+  - requests[socks] 2.31.0+：requests的SOCKS代理支持
+  - PySocks 1.7.1+：SOCKS协议实现
+  - python-socks 2.4.3+：纯Python SOCKS客户端库
+
+- **数据库和ORM**：
+  - SQLAlchemy 2.0.20+：Python SQL工具包和ORM
+  - Alembic 1.12.0+：数据库迁移工具
+  - psycopg2-binary 2.9.9+：PostgreSQL适配器
+  - Redis 5.0.0+：Redis客户端
+
+- **任务队列**：
+  - Celery 5.3.4+：分布式任务队列
+  - Flower 2.0.1+：Celery实时监控工具
+
+- **数据处理**：
+  - numpy 1.25.2+：科学计算库
+  - pandas 2.1.0+：数据分析工具
+  - scikit-learn 1.3.0+：机器学习库
+  - jieba 0.42.1+：中文分词库
+
+- **数据抓取**：
+  - beautifulsoup4 4.12.2+：HTML/XML解析库
+  - lxml 4.9.3+：高效XML和HTML处理库
+  - Selenium 4.12.0+：自动化浏览器测试工具
+  - feedparser 6.0.10+：RSS/Atom解析库
+
+完整的依赖列表可在`requirements.txt`文件中查看。
+
 ## 数据模型设计
 
 系统的核心数据模型包括：
@@ -125,6 +202,7 @@ HeatLink采用现代化的微服务架构，主要由以下几个核心组件构
 4. **Tag**：新闻标签
 5. **User**：用户信息
 6. **Subscription**：用户订阅关系
+7. **ProxyConfig**：代理服务器配置
 
 模型之间通过外键和多对多关系建立连接，形成完整的数据关系网络。
 
@@ -144,6 +222,7 @@ HeatLink采用现代化的微服务架构，主要由以下几个核心组件构
    - GET /{id}：获取特定新闻源详情
    - PUT /{id}：更新新闻源配置
    - DELETE /{id}：删除新闻源
+   - PUT /{id}/proxy：更新新闻源的代理设置
 
 3. **/api/users**：用户管理
    - GET /me：获取当前用户信息
@@ -164,6 +243,16 @@ HeatLink采用现代化的微服务架构，主要由以下几个核心组件构
    - POST /run/source-news/{source_id}：运行指定新闻源更新任务
    - GET /status/{task_id}：获取任务状态
    - GET /active：获取活跃任务列表
+
+6. **/api/proxies**：代理管理
+   - GET /：获取所有代理配置
+   - POST /：创建新代理配置
+   - GET /{proxy_id}：获取指定代理详情
+   - PUT /{proxy_id}：更新代理配置
+   - DELETE /{proxy_id}：删除代理配置
+   - POST /test：测试代理连接
+   - GET /stats：获取代理使用统计
+   - PUT /domains：更新需要代理的域名列表
 
 所有API端点都有完整的OpenAPI文档，可通过Swagger UI或ReDoc访问。
 
@@ -257,20 +346,40 @@ Docker配置包括：
 
 ## 快速开始
 
-### 使用Docker Compose
+### 安装与依赖
 
-1. 克隆仓库:
+1. 首先确保您已安装必要的依赖：
+   - Python 3.9+
+   - PostgreSQL 12.0+
+   - Redis 6.0+
+
+2. 克隆仓库:
    ```bash
-   git clone https://github.com/yourusername/heatlink.git
+   git clone https://github.com/losesky/heatlink.git
    cd heatlink
    ```
 
-2. 启动服务:
+3. 安装Python依赖:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. 创建并配置环境变量文件:
+   ```bash
+   cp .env.example .env
+   # 编辑 .env 文件设置您的数据库和Redis连接
+   ```
+
+### 使用Docker Compose
+
+使用Docker Compose可以快速启动所有必要的服务：
+
+1. 启动服务:
    ```bash
    docker-compose up -d
    ```
 
-3. 访问服务:
+2. 访问服务:
    - API: http://localhost:8000
    - API 文档: http://localhost:8000/api/docs
    - PgAdmin: http://localhost:5050 (邮箱: admin@heatlink.com, 密码: admin)
@@ -291,24 +400,57 @@ Docker配置包括：
    # 启动数据库和缓存服务
    ./local-dev.sh
    
-   # 启动后端API服务
+   # 启动后端API服务（使用新的run_server.sh脚本）
    ./run_server.sh
+   # 或使用旧的方式
+   # python backend/start_server.py
    
    # 启动Celery任务系统
    ./run_celery.sh
    ```
 
-3. 停止服务：
+3. 初始化系统配置（包括默认数据源、分类和代理配置）：
+   ```bash
+   cd backend
+   python -m scripts.init_all  # 初始化基础数据
+   python -m scripts.init_proxy  # 初始化代理配置
+   ```
+
+4. 停止服务：
    ```bash
    # 停止Celery服务
    ./stop_celery.sh
    
-   # 停止API服务
+   # 停止API服务（如果使用run_server.sh启动）
+   kill $(cat .server.pid)
+   # 或使用进程查找
    pkill -f "python backend/start_server.py"
    
    # 停止基础设施服务
    docker-compose -f docker-compose.local.yml down
    ```
+
+### 验证安装
+
+安装完成后，您可以通过以下方式验证服务是否正常运行：
+
+1. 检查API服务:
+   ```bash
+   curl http://localhost:8000/health
+   ```
+
+2. 检查代理配置（需要登陆验证）:
+   ```bash
+   curl http://localhost:8000/api/proxies
+   ```
+
+3. 检查新闻源（需要登陆验证）:
+   ```bash
+   curl http://localhost:8000/api/sources
+   ```
+
+4. 查看API文档：
+   在浏览器中访问 http://localhost:8000/docs
 
 ### 开发环境
 
@@ -329,9 +471,13 @@ Docker配置包括：
 
    启动后端API服务：
    ```bash
+   # 使用新的run_server.sh脚本（推荐）
+   ./run_server.sh --reload
+   
+   # 或使用传统方式
    cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
-   # 或使用封装脚本
-   ./run_server.sh
+   # 或使用start_server.py脚本（包含同步数据库功能）
+   python backend/start_server.py --reload
    ```
 
    启动Celery任务系统：
@@ -343,7 +489,7 @@ Docker配置包括：
    tail -f celery_worker.log
    tail -f celery_beat.log
    ```
-   
+
    启动Flower监控：
    ```bash
    cd backend && celery -A worker.celery_app flower --port=5555
@@ -408,9 +554,14 @@ chmod +x stop_celery.sh  # 确保脚本有执行权限
 
 2. **启动后端API服务**
    ```bash
-   ./run_server.sh
-   # 或(开发环境)
-   cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   # 使用便捷的Shell脚本（推荐）
+   ./run_server.sh  # 生产环境
+   ./run_server.sh --reload  # 开发环境，启用热重载
+   
+   # 或使用Python脚本
+   python backend/start_server.py
+   # 或(开发环境，启用热重载)
+   python backend/start_server.py --reload
    ```
 
 3. **启动Celery任务系统**
@@ -433,7 +584,7 @@ chmod +x stop_celery.sh  # 确保脚本有执行权限
    ps aux | grep "[c]elery -A worker.celery_app" | grep -v grep
    
    # 查看日志
-   tail -f server_log.txt
+   tail -f logs/server_*.log  # 后端服务日志
    tail -f celery_worker.log
    tail -f celery_beat.log
    ```
@@ -444,6 +595,9 @@ chmod +x stop_celery.sh  # 确保脚本有执行权限
    ./stop_celery.sh
    
    # 停止API服务
+   # 如果使用run_server.sh启动
+   kill $(cat .server.pid)
+   # 或使用进程查找
    pkill -f "python backend/start_server.py"
    
    # 停止基础设施服务
@@ -511,7 +665,67 @@ chmod +x stop_celery.sh  # 确保脚本有执行权限
 
 ## 后端服务启动脚本
 
-项目提供了一个便捷的脚本 `start_server.py` 用于启动 HeatLink 后端服务。该脚本具有以下功能：
+项目提供了两种启动后端服务的方式：通过 `run_server.sh` 便捷脚本或直接使用 `start_server.py`。
+
+### run_server.sh 脚本
+
+`run_server.sh` 是一个功能丰富的 Shell 脚本，封装了 `python backend/start_server.py` 命令，并增加了很多实用功能：
+
+#### 功能特点
+
+- **命令行参数支持**：支持所有 `start_server.py` 的原有参数
+- **环境检查**：自动检测 Python 版本、查找并激活虚拟环境、验证核心依赖
+- **配置检查**：检查 `.env` 文件是否存在，提供配置引导
+- **进程管理**：检查服务是否已在运行，提供终止并重新启动的选项
+- **日志管理**：自动创建带时间戳的日志文件，便于追踪
+- **彩色输出**：用户友好的彩色命令行界面，增强可读性
+
+#### 使用方法
+
+```bash
+# 确保脚本有执行权限
+chmod +x run_server.sh
+
+# 基本用法（默认在0.0.0.0:8000启动服务）
+./run_server.sh
+
+# 使用热重载（前台运行，适合开发）
+./run_server.sh --reload
+
+# 指定端口
+./run_server.sh --port 8080
+
+# 仅同步数据库，不启动服务
+./run_server.sh --sync-only
+
+# 获取帮助
+./run_server.sh --help
+```
+
+#### 后台运行与查看日志
+
+当不使用 `--reload` 参数时，服务默认会在后台运行：
+
+```bash
+# 查看实时日志
+tail -f logs/server_YYYYmmdd_HHMMSS.log
+```
+
+#### 停止服务
+
+```bash
+# 使用PID文件终止进程
+kill $(cat .server.pid)
+
+# 或通过进程查找并终止
+pkill -f "python backend/start_server.py"
+```
+
+### start_server.py 脚本
+
+项目还提供了核心的 Python 启动脚本 `start_server.py`，可以直接使用：
+
+#### 功能
 
 1. 自动同步数据库源和源适配器
 2. 检测和处理数据库中的重复源记录
@@ -519,19 +733,19 @@ chmod +x stop_celery.sh  # 确保脚本有执行权限
 4. 启动API服务
 5. 清理Chrome浏览器进程，防止端口占用问题
 
-### 使用方法
+#### 使用方法
 
-#### 基本用法
+##### 基本用法
 
 最简单的启动方式：
 
 ```bash
-python start_server.py
+python backend/start_server.py
 ```
 
 这将启动服务器，监听 `0.0.0.0:8000`，同步源适配器和数据库，并使用Redis缓存。
 
-#### 命令行参数
+##### 命令行参数
 
 脚本支持以下命令行参数：
 
@@ -543,31 +757,31 @@ python start_server.py
 - `--no-chromedriver`: 禁用Chrome驱动清理
 - `--clean-ports`: 在启动前清理指定的端口
 
-#### 使用示例
+##### 使用示例
 
 1. 在开发环境中运行（带热重载）
    ```bash
-   python start_server.py --host 127.0.0.1 --port 8000 --reload
+   python backend/start_server.py --host 127.0.0.1 --port 8000 --reload
    ```
 
 2. 仅同步数据库和源适配器，不启动服务
    ```bash
-   python start_server.py --sync-only
+   python backend/start_server.py --sync-only
    ```
 
 3. 在生产环境中运行，指定端口
    ```bash
-   python start_server.py --host 0.0.0.0 --port 80
+   python backend/start_server.py --host 0.0.0.0 --port 80
    ```
 
 4. 不使用Redis缓存（不推荐用于生产）
    ```bash
-   python start_server.py --no-cache
+   python backend/start_server.py --no-cache
    ```
 
 5. 在启动前清理端口
    ```bash
-   python start_server.py --clean-ports
+   python backend/start_server.py --clean-ports
    ```
 
 ### 开发者注意事项
@@ -668,6 +882,106 @@ python -m scripts.init_all
 - 新闻源配置
 - 标签分类
 - 管理员用户
+
+## 代理服务配置
+
+HeatLink 支持通过代理服务器访问受限制的数据源，特别是对于国际新闻源或需要特殊网络环境的数据源。代理功能完全集成到系统中，可以通过API或脚本进行管理。
+
+### 初始化代理配置
+
+系统提供了专门的初始化脚本来设置默认代理配置：
+
+```bash
+cd backend
+python -m scripts.init_proxy
+```
+
+此脚本会执行以下操作：
+1. 为需要代理的数据源（如GitHub、Bloomberg、BBC等）启用代理支持
+2. 添加默认的本地SOCKS5代理配置（默认使用本地Xray/V2Ray SOCKS5代理端口）
+3. 配置代理故障转移策略（默认配置代理失败时尝试直连）
+
+### 代理配置项说明
+
+代理配置包含以下主要参数：
+
+- **协议(Protocol)**：支持SOCKS5、HTTP和HTTPS三种代理协议
+- **主机(Host)**：代理服务器地址
+- **端口(Port)**：代理服务器端口
+- **用户名/密码**：用于需要认证的代理服务器
+- **代理组(Group)**：按用途或地区对代理进行分组管理
+- **优先级(Priority)**：决定代理选择顺序，数值越高优先级越高
+- **健康检查URL**：用于验证代理连接的URL
+
+### 使用本地代理
+
+默认情况下，系统会使用配置为127.0.0.1:10606的本地SOCKS5代理。如果您使用其他代理软件或端口，可以通过以下方式修改：
+
+1. **通过API修改**
+   ```bash
+   # 使用curl更新默认代理配置
+   curl -X PUT "http://localhost:8000/api/proxies/1" \
+     -H "Content-Type: application/json" \
+     -d '{"host": "127.0.0.1", "port": 1080, "protocol": "SOCKS5"}'
+   ```
+
+2. **通过脚本添加新代理**
+   ```python
+   # 创建脚本add_proxy.py
+   import asyncio
+   from backend.worker.utils.proxy_manager import proxy_manager
+   
+   async def add_new_proxy():
+       proxy_id = await proxy_manager.add_proxy({
+           "name": "自定义代理",
+           "protocol": "http",
+           "host": "192.168.1.100",
+           "port": 8080,
+           "username": "user",  # 可选
+           "password": "pass",  # 可选
+           "priority": 10,
+           "group": "custom"
+       })
+       print(f"添加了新代理，ID: {proxy_id}")
+   
+   if __name__ == "__main__":
+       asyncio.run(add_new_proxy())
+   ```
+
+### 配置需要代理的数据源
+
+您可以通过API或直接在数据库中配置哪些数据源需要使用代理：
+
+```bash
+# 为特定数据源启用代理
+curl -X PUT "http://localhost:8000/api/sources/github/proxy" \
+  -H "Content-Type: application/json" \
+  -d '{"need_proxy": true, "proxy_fallback": true, "proxy_group": "default"}'
+```
+
+系统还支持设置全局代理域名列表，任何匹配这些域名的请求都会自动使用代理：
+
+```bash
+# 设置需要代理的域名列表
+curl -X PUT "http://localhost:8000/api/proxies/domains" \
+  -H "Content-Type: application/json" \
+  -d '{"domains": ["github.com", "bbc.com", "bloomberg.com"]}'
+```
+
+### 代理健康监控
+
+系统会自动监控代理健康状态并收集性能统计信息：
+
+- 成功率和平均响应时间
+- 历史请求总数和失败次数
+- 最近错误信息和最后检查时间
+
+这些信息可通过API查看：
+
+```bash
+# 获取代理统计信息
+curl "http://localhost:8000/api/proxies/stats"
+```
 
 ## 贡献指南
 
