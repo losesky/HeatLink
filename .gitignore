@@ -10,7 +10,13 @@ build/
 develop-eggs/
 dist/
 downloads/
+tools/
+debug/
 eggs/
+backend/docs/
+backend/doc/
+backend/tests/
+
 .eggs/
 lib/
 lib64/
@@ -19,6 +25,7 @@ sdist/
 var/
 *.egg-info/
 .installed.cfg
+.server.pid
 *.egg
 *.code-workspace
 cleanup_tests.py
