@@ -975,122 +975,135 @@ class SourceSynchronizer:
 
 async def main():
     """主函数"""
+    
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="HeatLink后端服务启动脚本")
     parser.add_argument("--sync-only", action="store_true", help="只同步数据库和适配器，不启动服务")
     parser.add_argument("--no-cache", action="store_true", help="不使用Redis缓存")
-    parser.add_argument("--host", default="0.0.0.0", help="服务器监听地址，默认为0.0.0.0")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="服务器监听地址，默认为0.0.0.0")
     parser.add_argument("--port", type=int, default=8000, help="服务器监听端口，默认为8000")
     parser.add_argument("--reload", action="store_true", help="启用热重载，开发环境下有用")
     parser.add_argument("--fallback-mode", action="store_true", help="强制使用本地源适配器数据，不连接数据库和缓存")
     parser.add_argument("--verbose-logging", action="store_true", help="启用详细日志输出，包括缓存操作")
     args = parser.parse_args()
     
-    # 配置日志级别
-    if not args.verbose_logging:
-        # 提高缓存模块的日志级别，减少DEBUG信息
-        logging.getLogger('worker.cache').setLevel(logging.INFO)
+    # 打印启动信息
+    logger.info("正在启动HeatLink后端API服务...")
+    logger.info(f"使用配置: {'本地开发环境' if settings.DEBUG else '生产环境'}")
     
-    # 初始化缓存管理器
-    cache_manager = None
-    if not args.no_cache and not args.fallback_mode:
-        try:
-            cache_manager = CacheManager(
-                redis_url=settings.REDIS_URL,
-                enable_memory_cache=True,
-                default_ttl=settings.DEFAULT_CACHE_TTL,
-                verbose_logging=args.verbose_logging
-            )
-            await cache_manager.initialize()
-            logger.info("Redis缓存连接成功")
-        except Exception as e:
-            logger.error(f"Redis缓存连接失败: {str(e)}")
-            logger.warning("将使用内存缓存运行")
-            # 使用内存缓存作为备选
-            cache_manager = CacheManager(
-                redis_url=None,
-                enable_memory_cache=True,
-                default_ttl=settings.DEFAULT_CACHE_TTL,
-                verbose_logging=args.verbose_logging
-            )
-            await cache_manager.initialize()
-    elif not args.no_cache and args.fallback_mode:
-        # 在回退模式下使用内存缓存
-        logger.info("使用回退模式，仅启用内存缓存")
-        cache_manager = CacheManager(
-            redis_url=None,
-            enable_memory_cache=True,
-            default_ttl=settings.DEFAULT_CACHE_TTL,
-            verbose_logging=args.verbose_logging
-        )
-        await cache_manager.initialize()
+    # 设置缓存日志选项
+    from app.core.logging_config import get_cache_logger
+    cache_logger = get_cache_logger()
     
-    # 创建源同步器
-    synchronizer = SourceSynchronizer(verbose=True, cache_manager=cache_manager, fallback_mode=args.fallback_mode)
-    
-    # 同步源
-    sync_result = synchronizer.sync_sources()
-    
-    # 如果只同步不启动服务，则退出
-    if args.sync_only:
-        if cache_manager:
-            await cache_manager.close()
-        return
-    
-    # 设置SIGTERM信号处理，优雅关闭
+    # 定义退出处理函数
     def handle_exit(signum, frame):
-        logger.info("接收到退出信号，正在关闭服务...")
+        """处理退出信号"""
+        logger.info(f"接收到信号 {signum}，正在关闭服务...")
         if cache_manager:
             asyncio.create_task(cache_manager.close())
         # 给异步任务一些时间完成
         time.sleep(1)
         sys.exit(0)
     
-    signal.signal(signal.SIGINT, handle_exit)
-    signal.signal(signal.SIGTERM, handle_exit)
+    # 处理信号
+    loop = asyncio.get_event_loop()
+    signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+    for s in signals:
+        loop.add_signal_handler(s, lambda s=s: handle_exit(s, None))
     
-    # 设置环境变量，告知应用运行模式
-    if synchronizer.fallback_mode:
-        os.environ["HEATLINK_FALLBACK_MODE"] = "true"
-        logger.info("系统设置为回退模式运行，仅使用本地源适配器数据")
+    # Redis缓存URL
+    redis_url = settings.REDIS_URL if not args.no_cache else None
     
-    # 启动后端API服务
-    logger.info(f"启动HeatLink后端API服务，地址: {args.host}:{args.port}...")
+    # 创建缓存管理器
+    cache_manager = None
+    if not args.no_cache and not args.fallback_mode:
+        try:
+            # 创建缓存管理器
+            cache_manager = CacheManager(
+                redis_url=redis_url,
+                enable_memory_cache=True,
+                verbose_logging=args.verbose_logging
+            )
+            await cache_manager.initialize()
+            
+            # 打印缓存状态
+            cache_stats = await cache_manager.get_stats()
+            if redis_url:
+                logger.info(f"Redis缓存已启用，URL: {redis_url.replace('://:','://***:')}")
+                if "redis_info" in cache_stats:
+                    redis_info = cache_stats["redis_info"]
+                    logger.info(f"Redis状态: 内存使用={redis_info.get('used_memory', '未知')}")
+            else:
+                logger.info("Redis缓存未启用，使用内存缓存")
+        except Exception as e:
+            logger.error(f"初始化缓存失败，将使用本地模式运行: {str(e)}")
+            cache_manager = None
+            args.fallback_mode = True
     
-    # 使用uvicorn启动服务
+    # 创建源同步器
+    if args.fallback_mode:
+        logger.warning("使用本地回退模式，不连接数据库和缓存")
+        
+    # 源同步器
+    synchronizer = SourceSynchronizer(
+        verbose=args.verbose_logging,
+        cache_manager=cache_manager,
+        fallback_mode=args.fallback_mode
+    )
+    
+    # 进行数据库同步
+    if not args.fallback_mode:
+        try:
+            synchronizer.sync_sources()
+        except Exception as e:
+            logger.error(f"同步数据库失败: {str(e)}，系统将使用本地模式运行")
+            args.fallback_mode = True
+            
+            # 重新创建源同步器（本地模式）
+            synchronizer = SourceSynchronizer(
+                verbose=args.verbose_logging,
+                cache_manager=cache_manager,
+                fallback_mode=True
+            )
+    
+    # 将源数据缓存到Redis（如果启用了缓存）
+    if cache_manager:
+        try:
+            await synchronizer._cache_sources_to_redis()
+        except Exception as e:
+            logger.error(f"缓存源数据失败: {str(e)}")
+    
+    # 如果只是同步模式，则退出
+    if args.sync_only:
+        logger.info("同步完成，程序退出")
+        if cache_manager:
+            await cache_manager.close()
+        return
+        
+    # 本地源管理器（用于fallback模式）
+    if args.fallback_mode:
+        local_manager = LocalSourceManager(cache_manager=cache_manager)
+        if cache_manager:
+            await local_manager.cache_local_sources()
+    
+    # 启动API服务
+    logger.info(f"启动API服务，地址: {args.host}:{args.port}")
+    
+    # 启动uvicorn服务器
     config = uvicorn.Config(
-        "main:app", 
-        host=args.host, 
+        "main:app",
+        host=args.host,
         port=args.port,
         reload=args.reload,
         log_level="info",
-        log_config={
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "default": {
-                    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                },
-            },
-            "handlers": {
-                "default": {
-                    "formatter": "default",
-                    "class": "logging.StreamHandler",
-                    "stream": "ext://sys.stderr",
-                },
-            },
-            "loggers": {
-                "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "fastapi": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "app": {"handlers": ["default"], "level": "INFO", "propagate": False},
-                "worker": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            },
-        }
+        reload_dirs=["app", "worker"] if args.reload else None
     )
     server = uvicorn.Server(config)
     await server.serve()
+    
+    # 关闭缓存管理器
+    if cache_manager:
+        await cache_manager.close()
 
 
 if __name__ == "__main__":

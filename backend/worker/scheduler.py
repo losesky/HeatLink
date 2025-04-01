@@ -183,6 +183,17 @@ class AdaptiveScheduler:
             
             if success:
                 logger.info(f"Successfully fetched {len(news_items)} items from {source_id} in {end_time - start_time:.2f}s")
+                
+                # 将新闻条目保存到Redis缓存
+                if self.cache_manager and news_items:
+                    try:
+                        cache_key = f"source:{source_id}"
+                        # 使用源的cache_ttl作为Redis缓存的过期时间
+                        ttl = getattr(source, 'cache_ttl', 900)  # 默认15分钟
+                        await self.cache_manager.set(cache_key, news_items, ttl)
+                        logger.info(f"Saved {len(news_items)} news items to Redis cache with key: {cache_key}, TTL: {ttl}s")
+                    except Exception as cache_error:
+                        logger.error(f"Failed to save news items to Redis cache: {str(cache_error)}")
             else:
                 logger.error(f"Failed to fetch from {source_id} after {end_time - start_time:.2f}s")
                 

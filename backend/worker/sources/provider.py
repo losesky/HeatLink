@@ -106,32 +106,7 @@ class DefaultNewsSourceProvider(NewsSourceProvider):
                             if alt_source_type in db_configs:
                                 found_config = db_configs[alt_source_type]
                                 config_key = alt_source_type
-                    
-                    # 特殊处理cls-article源
-                    if source_type.lower() == "cls-article":
-                        logger.info(f"处理CLS Article源: {source_type}")
-                        # 确保cls-article被正确处理，无论数据库中是否有配置
-                        cls_article_source = NewsSourceFactory.create_source("cls-article")
-                        if cls_article_source:
-                            self.sources[cls_article_source.source_id] = cls_article_source
-                            logger.info(f"成功创建并注册了 cls-article 源: {cls_article_source.source_id}")
-                        continue
-                    
-                    # 支持特殊源的配置回退
-                    if not found_config and (source_type.lower() == "cls" or source_type.lower() == "cls-article"):
-                        try:
-                            # 对于cls和cls-article，使用硬编码的默认配置作为备用
-                            exact_id = "cls" if source_type.lower() == "cls" else "cls-article"
-                            logger.warning(f"未找到{exact_id}的配置，尝试使用默认配置创建")
-                            
-                            # 使用硬编码的默认配置
-                            source = NewsSourceFactory.create_source(exact_id)
-                            if source:
-                                self.sources[source.source_id] = source
-                                logger.info(f"成功使用默认配置创建并注册了源: {source.source_id}")
-                        except Exception as e:
-                            logger.error(f"使用默认配置创建{exact_id}源时出错: {str(e)}")
-                    
+                                
                     # 如果找到配置，使用配置创建源
                     if found_config:
                         source = NewsSourceFactory.create_source(source_type, config=found_config)
@@ -144,18 +119,7 @@ class DefaultNewsSourceProvider(NewsSourceProvider):
                         self.sources[source.source_id] = source
                 except Exception as e:
                     logger.error(f"创建源 {source_type} 时出错: {str(e)}")
-                    
-            # 检查cls-article是否已成功注册
-            if "cls-article" not in self.sources:
-                logger.warning(f"cls-article源未在初始化过程中注册，尝试手动创建")
-                try:
-                    cls_article_source = NewsSourceFactory.create_source("cls-article")
-                    if cls_article_source:
-                        self.sources[cls_article_source.source_id] = cls_article_source
-                        logger.info(f"成功手动创建并注册了 cls-article 源")
-                except Exception as e:
-                    logger.error(f"手动创建cls-article源时出错: {str(e)}")
-                    
+                     
         except Exception as e:
             logger.error(f"初始化新闻源出错: {str(e)}")
             logger.error(traceback.format_exc())

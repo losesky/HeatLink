@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HeatLink - Redis 缓存状态报告</title>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --success-color: #2ecc71;
+            --warning-color: #f39c12;
+            --danger-color: #e74c3c;
+            --light-color: #ecf0f1;
+            --dark-color: #34495e;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f8f9fa;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .container {
+            width: 90%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 2rem 0;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        
+        .logo span {
+            color: var(--light-color);
+        }
+        
+        .timestamp {
+            font-size: 1rem;
+            opacity: 0.8;
+        }
+        
+        h1, h2, h3 {
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+        
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+        
+        .card-header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 1rem;
+            font-weight: bold;
+        }
+        
+        .card-body {
+            padding: 1.5rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .stat-card {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            padding: 1.5rem;
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .stat-header {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #7f8c8d;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: var(--secondary-color);
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-footer {
+            font-size: 0.9rem;
+            color: #7f8c8d;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1.5rem;
+        }
+        
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #e1e1e1;
+        }
+        
+        th {
+            background-color: var(--light-color);
+            font-weight: bold;
+            color: var(--dark-color);
+        }
+        
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        
+        tr:hover {
+            background-color: #f1f2f3;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        
+        .badge-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+        
+        .badge-warning {
+            background-color: var(--warning-color);
+            color: white;
+        }
+        
+        .badge-danger {
+            background-color: var(--danger-color);
+            color: white;
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+        }
+        
+        .alert-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+        
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .alert-info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .progress {
+            height: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            overflow: hidden;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            border-radius: 4px;
+            background-color: var(--secondary-color);
+        }
+        
+        .progress-bar-warning {
+            background-color: var(--warning-color);
+        }
+        
+        .progress-bar-danger {
+            background-color: var(--danger-color);
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding: 1.5rem 0;
+            border-top: 1px solid #e1e1e1;
+            color: #7f8c8d;
+            font-size: 0.9rem;
+        }
+        
+        .chart-container {
+            position: relative;
+            margin: 20px auto;
+            height: 300px;
+            width: 100%;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .tabs {
+            display: flex;
+            list-style: none;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 1rem;
+        }
+        
+        .tab {
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            border: 1px solid transparent;
+            border-bottom: none;
+            margin-bottom: -1px;
+        }
+        
+        .tab.active {
+            background-color: white;
+            border-color: #ddd;
+            border-radius: 4px 4px 0 0;
+            color: var(--secondary-color);
+            font-weight: bold;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        @media screen and (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .stat-card {
+                margin-bottom: 1rem;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            table {
+                display: block;
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Heat<span>Link</span> 缓存状态监控</div>
+                <div class="timestamp">报告生成时间: {{timestamp}}</div>
+            </div>
+        </div>
+    </header>
+    
+    <div class="container">
+        <div class="card">
+            <div class="card-header">缓存状态摘要</div>
+            <div class="card-body">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-header">总缓存键数</div>
+                        <div class="stat-value">{{total_keys}}</div>
+                        <div class="stat-footer">Redis 键总数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">新闻条目总数</div>
+                        <div class="stat-value">{{total_items}}</div>
+                        <div class="stat-footer">所有源的新闻条目</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">平均 TTL</div>
+                        <div class="stat-value">{{avg_ttl}}</div>
+                        <div class="stat-footer">单位: 秒</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">无缓存源数量</div>
+                        <div class="stat-value">{{empty_sources}}</div>
+                        <div class="stat-footer">需要关注的源</div>
+                    </div>
+                </div>
+                
+                {% if warnings %}
+                <div class="alert alert-warning">
+                    <strong>注意!</strong> 存在以下警告:
+                    <ul>
+                        {% for warning in warnings %}
+                        <li>{{warning}}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+                
+                <div class="tabs">
+                    <div class="tab active" data-tab="overview">缓存概览</div>
+                    <div class="tab" data-tab="sources">源详情</div>
+                    <div class="tab" data-tab="empty">无缓存源</div>
+                </div>
+                
+                <div id="overview" class="tab-content active">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>统计项</th>
+                                <th>值</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>监控的源总数</td>
+                                <td>{{source_count}}</td>
+                            </tr>
+                            <tr>
+                                <td>平均每源条目数</td>
+                                <td>{{avg_items_per_source}}</td>
+                            </tr>
+                            <tr>
+                                <td>缓存命中率</td>
+                                <td>{{cache_hit_ratio}}%</td>
+                            </tr>
+                            <tr>
+                                <td>缓存内存使用</td>
+                                <td>{{memory_used}}</td>
+                            </tr>
+                            <tr>
+                                <td>Redis版本</td>
+                                <td>{{redis_version}}</td>
+                            </tr>
+                            <tr>
+                                <td>最近更新源</td>
+                                <td>{{latest_updated_source}}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    
+                    <div class="chart-container">
+                        <canvas id="cacheDistributionChart"></canvas>
+                    </div>
+                </div>
+                
+                <div id="sources" class="tab-content">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>源名称</th>
+                                <th>TTL (秒)</th>
+                                <th>条目数</th>
+                                <th>内存使用</th>
+                                <th>状态</th>
+                                <th>最后更新</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for source in sources %}
+                            <tr>
+                                <td>{{source.name}}</td>
+                                <td>{{source.ttl}}</td>
+                                <td>{{source.items}}</td>
+                                <td>{{source.memory}}</td>
+                                <td>
+                                    {% if source.status == "good" %}
+                                    <span class="badge badge-success">正常</span>
+                                    {% elif source.status == "warning" %}
+                                    <span class="badge badge-warning">警告</span>
+                                    {% else %}
+                                    <span class="badge badge-danger">异常</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{source.last_update}}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div id="empty" class="tab-content">
+                    {% if empty_source_list %}
+                    <div class="alert alert-warning">
+                        以下源没有任何缓存数据，可能需要重新获取:
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>源名称</th>
+                                <th>源ID</th>
+                                <th>最后尝试时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for source in empty_source_list %}
+                            <tr>
+                                <td>{{source.name}}</td>
+                                <td>{{source.id}}</td>
+                                <td>{{source.last_attempt}}</td>
+                                <td>
+                                    <button onclick="refreshSource('{{source.id}}')" class="btn btn-refresh">
+                                        刷新
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="alert alert-info">
+                        所有源都有缓存数据，很好!
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">性能指标</div>
+            <div class="card-body">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>指标</th>
+                            <th>值</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>平均缓存获取时间</td>
+                            <td>{{avg_fetch_time}} ms</td>
+                            <td>
+                                {% if avg_fetch_time < 100 %}
+                                <span class="badge badge-success">优秀</span>
+                                {% elif avg_fetch_time < 500 %}
+                                <span class="badge badge-warning">一般</span>
+                                {% else %}
+                                <span class="badge badge-danger">较慢</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Redis 连接状态</td>
+                            <td>{{redis_connected}}</td>
+                            <td>
+                                {% if redis_connected == "已连接" %}
+                                <span class="badge badge-success">正常</span>
+                                {% else %}
+                                <span class="badge badge-danger">断开</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>Redis 内存使用率</td>
+                            <td>{{redis_memory_usage}}%</td>
+                            <td>
+                                <div class="progress">
+                                    {% if redis_memory_usage < 70 %}
+                                    <div class="progress-bar" style="width: {{redis_memory_usage}}%"></div>
+                                    {% elif redis_memory_usage < 90 %}
+                                    <div class="progress-bar progress-bar-warning" style="width: {{redis_memory_usage}}%"></div>
+                                    {% else %}
+                                    <div class="progress-bar progress-bar-danger" style="width: {{redis_memory_usage}}%"></div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <div class="container">
+            <p>HeatLink 缓存监控系统 | 版本: {{version}} | 生成时间: {{timestamp}}</p>
+        </div>
+    </footer>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Tab switching functionality
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                // Remove active class from all tabs
+                document.querySelectorAll('.tab').forEach(t => {
+                    t.classList.remove('active');
+                });
+                
+                // Hide all tab contents
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                
+                // Add active class to clicked tab
+                tab.classList.add('active');
+                
+                // Show corresponding tab content
+                const tabId = tab.getAttribute('data-tab');
+                document.getElementById(tabId).classList.add('active');
+            });
+        });
+        
+        // Generate sample chart (this would be populated with actual data)
+        window.addEventListener('load', function() {
+            const ctx = document.getElementById('cacheDistributionChart').getContext('2d');
+            const cacheDistributionChart = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: {{chart_labels|safe}},
+                    datasets: [{
+                        data: {{chart_data|safe}},
+                        backgroundColor: [
+                            '#2ecc71',
+                            '#3498db',
+                            '#9b59b6',
+                            '#e74c3c',
+                            '#f1c40f',
+                            '#1abc9c',
+                            '#34495e',
+                            '#95a5a6'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                        },
+                        title: {
+                            display: true,
+                            text: '缓存条目分布'
+                        }
+                    }
+                }
+            });
+        });
+        
+        // Function to handle refresh button clicks (would be implemented in the actual app)
+        function refreshSource(sourceId) {
+            alert('刷新源 ' + sourceId + ' 的缓存 (在实际应用中会执行刷新操作)');
+        }
+    </script>
+</body>
+</html> 

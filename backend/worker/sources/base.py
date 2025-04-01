@@ -17,9 +17,12 @@ from bs4 import BeautifulSoup
 from worker.sources.config import settings
 from worker.sources.interface import NewsSourceInterface
 from worker.utils.proxy_manager import proxy_manager
+from app.core.logging_config import get_cache_logger
 
 # 设置日志
 logger = logging.getLogger(__name__)
+# 使用缓存专用日志记录器
+cache_logger = get_cache_logger()
 
 
 class NewsItemModel:
@@ -140,6 +143,19 @@ class NewsSource(ABC):
         cache_ttl: int = 900,  # 默认缓存15分钟
         config: Dict[str, Any] = None
     ):
+        """
+        初始化新闻源
+        
+        Args:
+            source_id: 源ID
+            name: 源名称
+            category: 分类
+            country: 国家/地区
+            language: 语言
+            update_interval: 更新间隔（秒）
+            cache_ttl: 缓存时间（秒）
+            config: 配置
+        """
         self.source_id = source_id
         self.name = name
         self.category = category
@@ -148,14 +164,65 @@ class NewsSource(ABC):
         self.update_interval = update_interval
         self.cache_ttl = cache_ttl
         self.config = config or {}
+        
+        # 加载自定义配置
+        if "update_interval" in self.config:
+            self.update_interval = self.config["update_interval"]
+        if "cache_ttl" in self.config:
+            self.cache_ttl = self.config["cache_ttl"]
+        
+        # 状态字段
+        self.last_update_time = 0
+        self.last_update_count = 0
+        self.error_count = 0
+        self.last_error = None
+        
+        # 历史记录
+        self.update_history = []
+        self.max_history_size = 10  # 保留最近10次更新记录
+        
+        # 自适应更新间隔机制
+        self.enable_adaptive = self.config.get("enable_adaptive", True)
+        self.adaptive_interval = self.update_interval
+        self.min_interval = self.config.get("min_interval", 600)  # 最小10分钟
+        self.max_interval = self.config.get("max_interval", 7200)  # 最大2小时
+        
+        # 是否使用代理
+        self.need_proxy = self.config.get("need_proxy", False)
+        self.proxy_group = self.config.get("proxy_group", "default")
+        
+        # 缓存相关字段 - 确保初始化
+        self._cached_news_items = []
+        self._last_cache_update = 0
+        
+        # 缓存保护与监控指标
+        self._cache_protection_count = 0  # 触发缓存保护的次数
+        self._cache_metrics = {
+            "empty_result_count": 0,      # 空结果次数
+            "cache_hit_count": 0,         # 缓存命中次数
+            "cache_miss_count": 0,        # 缓存未命中次数
+            "fetch_error_count": 0,       # 获取错误次数
+            "last_cache_size": 0,         # 最后一次缓存大小
+            "max_cache_size": 0,          # 历史最大缓存大小
+        }
+        self._cache_protection_stats = {
+            "empty_protection_count": 0,   # 空结果保护次数
+            "error_protection_count": 0,   # 错误保护次数
+            "shrink_protection_count": 0,  # 数量锐减保护次数
+            "last_protection_time": 0,     # 最后一次保护时间
+            "protection_history": []       # 保护历史记录
+        }
+        
+        # 记录缓存初始化状态
+        logger.debug(f"初始化NewsSource基类: {source_id}")
+        cache_logger.info(f"[BASE-CACHE-INIT] {self.source_id}: 初始化NewsSource基类")
+        cache_logger.info(f"[BASE-CACHE-INIT] {self.source_id}: 缓存设置 update_interval={self.update_interval}秒, cache_ttl={self.cache_ttl}秒")
+        cache_logger.info(f"[BASE-CACHE-INIT] {self.source_id}: 缓存字段初始化为: _cached_news_items=[] (空列表), _last_cache_update=0")
+        
         self._http_client = None
         self._last_fetch_time = 0
         self._last_fetch_count = 0
         self.priority = 0  # 默认优先级为0
-        
-        # 添加通用缓存字段
-        self._cached_news_items = []  # 缓存的新闻项
-        self._last_cache_update = 0   # 最后缓存更新时间
         
         # 自适应调度相关属性
         self.min_update_interval = 120  # 最小更新间隔(秒)，默认2分钟
@@ -163,10 +230,7 @@ class NewsSource(ABC):
         self.adaptive_interval = update_interval  # 当前的自适应间隔
         self.last_update_time = 0  # 上次更新时间(时间戳)
         self.last_update_count = 0  # 上次更新获取的新闻数量
-        self.update_history = []  # 更新历史记录
-        self.max_history_size = 10  # 保存的历史记录数量
         self.history_fingerprints = set()  # 用于去重的历史指纹
-        self.enable_adaptive = True  # 是否启用自适应调度
         self.performance_metrics = {}  # 性能指标记录
         
         # 初始化重试相关属性
@@ -204,9 +268,7 @@ class NewsSource(ABC):
         self.log_responses = self.config.get("log_responses", False)
         
         # 添加代理配置 - 数据库中的配置，优先级高于代码中的配置
-        self.need_proxy = self.config.get("need_proxy", False)  # 是否需要代理
         self.proxy_fallback = self.config.get("proxy_fallback", True)  # 代理失败是否尝试直连
-        self.proxy_group = self.config.get("proxy_group", "default")  # 使用的代理组
         
         # 固定需要代理的源列表
         self.proxy_required_sources = [
@@ -817,105 +879,238 @@ class NewsSource(ABC):
     
     async def get_news(self, force_update: bool = False) -> List[NewsItemModel]:
         """
-        获取新闻，支持强制更新和缓存机制
+        获取新闻，包含缓存逻辑
         
         Args:
-            force_update: 是否强制更新，忽略缓存
+            force_update: 是否强制更新
             
         Returns:
-            List[NewsItemModel]: 新闻列表
+            新闻项列表
         """
         start_time = time.time()
         
-        # 检查子类是否有自己的缓存判断逻辑
-        if hasattr(self, "is_cache_valid") and callable(self.is_cache_valid):
-            cache_valid = self.is_cache_valid()
-        else:
-            cache_valid = self._cached_news_items and (time.time() - self._last_cache_update) < self.cache_ttl
+        try:
+            # 获取当前缓存状态
+            has_cache = hasattr(self, '_cached_news_items') and isinstance(self._cached_news_items, list)
+            current_cache_size = len(self._cached_news_items) if has_cache else 0
             
-        # 检查是否需要更新：强制更新、缓存无效或满足更新条件
-        if force_update or not cache_valid or self.should_update():
-            try:
-                logger.debug(f"Fetching news for {self.source_id} (force_update={force_update}, cache_valid={cache_valid})")
-                
-                # 调用子类实现的fetch方法
-                news_items = await self.fetch()
-                
-                # 过滤重复内容
-                unique_items = []
-                for item in news_items:
-                    if not self.is_duplicate(item.title):
-                        unique_items.append(item)
-                
-                # 更新自适应间隔
-                self.update_adaptive_interval(len(unique_items), success=True)
-                
-                # 重置错误计数
-                self.error_count = 0
-                self.last_error = None
-                
-                # 更新缓存 - 使用更通用的方法
-                if hasattr(self, "update_cache") and callable(self.update_cache):
-                    await self.update_cache(unique_items)
-                else:
-                    self._cached_news_items = unique_items
-                    self._last_cache_update = time.time()
-                    logger.debug(f"Updated cache for {self.source_id} with {len(unique_items)} items")
-                
-                # 记录性能指标
-                end_time = time.time()
-                self.record_performance(f"get_news({self.source_id})", start_time, end_time)
-                
-                logger.debug(f"Fetched {len(unique_items)} news items for {self.source_id}")
-                return unique_items
+            # 记录缓存健康状态
+            cache_logger.debug(f"[CACHE-MONITOR] {self.source_id}: 开始获取新闻, force_update={force_update}")
+            cache_logger.debug(f"[CACHE-MONITOR] {self.source_id}: 缓存状态: 条目数={current_cache_size}, 上次更新={getattr(self, '_last_cache_update', 0)}")
             
-            except Exception as e:
-                logger.error(f"Error fetching news from {self.source_id}: {str(e)}")
-                
-                # 更新错误信息
-                self.error_count += 1
-                self.last_error = str(e)
-                
-                # 更新自适应间隔（失败）
-                self.update_adaptive_interval(0, success=False)
-                
-                # 记录性能指标
-                end_time = time.time()
-                self.record_performance(f"get_news({self.source_id}) [ERROR]", start_time, end_time)
-                
-                # 错误时仍返回缓存的数据（如果有）
-                if self._cached_news_items and len(self._cached_news_items) > 0:
-                    logger.info(f"Returning {len(self._cached_news_items)} cached items for {self.source_id} after fetch error")
-                    return self._cached_news_items
-                else:
-                    # 尝试再次调用fetch方法，确保不会返回空列表
-                    try:
-                        logger.debug(f"Trying to fetch again for {self.source_id} after error")
-                        retry_items = await self.fetch()
-                        if retry_items and len(retry_items) > 0:
-                            # 如果重试成功，更新缓存
-                            if hasattr(self, "update_cache") and callable(self.update_cache):
-                                await self.update_cache(retry_items)
-                            else:
-                                self._cached_news_items = retry_items
-                                self._last_cache_update = time.time()
-                            return retry_items
-                    except Exception as retry_e:
-                        logger.error(f"Retry fetch failed for {self.source_id}: {str(retry_e)}")
-                    
-                    # 如果重试失败，返回空列表
-                    return []
-        else:
-            # 不需要更新且缓存有效时，直接返回缓存数据
-            if self._cached_news_items and len(self._cached_news_items) > 0:
-                cache_age = time.time() - self._last_cache_update
-                update_due_in = self.adaptive_interval - (time.time() - self.last_update_time)
-                logger.debug(f"Using cache for {self.source_id}: {len(self._cached_news_items)} items, cache age: {cache_age:.2f}s, next update in {max(0, update_due_in):.2f}s")
-                return self._cached_news_items
+            # 计算缓存健康信息，用于日志记录和监控
+            news_items = []
+            cache_decision = ""
+            
+            # 生成缓存健康指标
+            if has_cache and hasattr(self, '_last_cache_update'):
+                cache_age = time.time() - self._last_cache_update if self._last_cache_update > 0 else float('inf')
+                cache_health = {
+                    "has_cache": bool(self._cached_news_items),
+                    "items_count": len(self._cached_news_items) if self._cached_news_items else 0,
+                    "cache_age": cache_age,
+                    "cache_ttl": self.cache_ttl,
+                    "is_expired": cache_age > self.cache_ttl
+                }
+                cache_logger.debug(f"[CACHE-MONITOR] {self.source_id}: 缓存健康: {cache_health}")
             else:
-                # 缓存无效或为空，强制更新一次
-                logger.debug(f"Cache is empty for {self.source_id}, forcing update")
-                return await self.get_news(force_update=True)
+                logger.warning(f"缓存字段缺失: {self.source_id}，可能未正确初始化")
+                cache_logger.warning(f"[CACHE-MONITOR] {self.source_id}: 缓存字段缺失，可能未正确初始化")
+                cache_health = {"has_cache_fields": False}
+            
+            # 如果强制更新或缓存无效，则获取新数据
+            if force_update or not self.is_cache_valid():
+                if force_update:
+                    cache_decision = "强制更新"
+                    self._cache_metrics["cache_miss_count"] += 1
+                else:
+                    cache_decision = "缓存无效"
+                    self._cache_metrics["cache_miss_count"] += 1
+                
+                cache_logger.info(f"[CACHE-DEBUG] {self.source_id}: 需要更新数据 ({cache_decision})")
+                
+                try:
+                    news_items = await self.fetch()
+                    
+                    # 保存当前缓存大小以用于后续保护决策
+                    current_items_count = current_cache_size
+                    new_items_count = len(news_items) if news_items else 0
+                    
+                    # 增强的缓存保护: 如果fetch返回空列表但缓存中有数据，保留现有缓存
+                    if not news_items and hasattr(self, '_cached_news_items') and self._cached_news_items:
+                        logger.debug(f"缓存保护触发: {self.source_id} - 使用现有缓存替代空结果")
+                        cache_logger.warning(f"[CACHE-PROTECTION] {self.source_id}: fetch()返回空列表，但缓存中有 {len(self._cached_news_items)} 条数据，将使用缓存")
+                        news_items = self._cached_news_items.copy()
+                        
+                        # 记录此类保护操作
+                        self._cache_protection_count += 1
+                        self._cache_metrics["empty_result_count"] += 1
+                        self._cache_protection_stats["empty_protection_count"] += 1
+                        self._cache_protection_stats["last_protection_time"] = time.time()
+                        self._cache_protection_stats["protection_history"].append({
+                            "time": time.time(),
+                            "type": "empty_protection",
+                            "cache_size": len(self._cached_news_items)
+                        })
+                        
+                        # 如果频繁发生保护操作，记录警告
+                        if self._cache_protection_count > 3:
+                            logger.warning(f"缓存保护频繁触发: {self.source_id} - 已触发 {self._cache_protection_count} 次")
+                            cache_logger.warning(f"[CACHE-ALERT] {self.source_id}: 已触发缓存保护 {self._cache_protection_count} 次，可能需要检查数据源")
+                    
+                    # 增强的缓存保护：如果新闻条目数量相比缓存大幅减少（超过70%），使用缓存
+                    elif (current_items_count > 5 and new_items_count > 0 and 
+                          new_items_count < current_items_count * 0.3):
+                        logger.debug(f"缓存保护触发: {self.source_id} - 新数据数量大幅减少")
+                        cache_logger.warning(f"[CACHE-PROTECTION] {self.source_id}: fetch()返回 {new_items_count} 条数据，比缓存中的 {current_items_count} 条减少了 {(current_items_count - new_items_count) / current_items_count:.1%}，将使用缓存")
+                        news_items = self._cached_news_items.copy()
+                        
+                        # 记录此类保护操作
+                        self._cache_protection_stats["shrink_protection_count"] += 1
+                        self._cache_protection_stats["last_protection_time"] = time.time()
+                        self._cache_protection_stats["protection_history"].append({
+                            "time": time.time(),
+                            "type": "shrink_protection",
+                            "old_size": current_items_count,
+                            "new_size": new_items_count
+                        })
+                    else:
+                        # 更新缓存
+                        await self.update_cache(news_items)
+                        
+                        # 更新缓存指标
+                        self._cache_metrics["last_cache_size"] = len(news_items) if news_items else 0
+                        if self._cache_metrics["last_cache_size"] > self._cache_metrics["max_cache_size"]:
+                            self._cache_metrics["max_cache_size"] = self._cache_metrics["last_cache_size"]
+                
+                except Exception as e:
+                    logger.error(f"获取 {self.source_id} 的新闻时出错: {str(e)}", exc_info=True)
+                    self._cache_metrics["fetch_error_count"] += 1
+                    
+                    # 增强的错误处理: 在出错情况下，如果有缓存数据，则使用缓存
+                    if hasattr(self, '_cached_news_items') and self._cached_news_items:
+                        logger.info(f"使用缓存作为错误恢复: {self.source_id}")
+                        cache_logger.warning(f"[CACHE-PROTECTION] {self.source_id}: fetch()出错，使用缓存的 {len(self._cached_news_items)} 条数据")
+                        news_items = self._cached_news_items.copy()
+                        cache_decision = "出错后使用缓存"
+                        
+                        # 记录错误保护操作
+                        self._cache_protection_stats["error_protection_count"] += 1
+                        self._cache_protection_stats["last_protection_time"] = time.time()
+                        self._cache_protection_stats["protection_history"].append({
+                            "time": time.time(),
+                            "type": "error_protection",
+                            "error": str(e),
+                            "cache_size": len(self._cached_news_items)
+                        })
+                    else:
+                        news_items = []
+            else:
+                # 使用缓存数据
+                cache_decision = "使用缓存"
+                self._cache_metrics["cache_hit_count"] += 1
+                cache_logger.info(f"[CACHE-DEBUG] {self.source_id}: 使用缓存数据，{len(self._cached_news_items)}条，缓存年龄: {time.time() - self._last_cache_update:.2f}秒")
+                news_items = self._cached_news_items.copy()
+            
+            # 计算性能指标
+            elapsed = time.time() - start_time
+            cache_logger.debug(f"[CACHE-MONITOR] {self.source_id}: 获取完成，决策={cache_decision}，耗时={elapsed:.3f}秒，获取 {len(news_items)} 条新闻")
+            
+            # 记录获取结果
+            self.update_metrics(len(news_items))
+            return news_items
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"获取新闻异常: {self.source_id} - {str(e)}", exc_info=True)
+            cache_logger.error(f"[CACHE-MONITOR] {self.source_id}: 获取新闻异常: {str(e)}, 耗时={elapsed:.3f}秒", exc_info=True)
+            self.update_metrics(0, success=False, error=e)
+            return []
+    
+    def is_cache_valid(self) -> bool:
+        """
+        检查缓存是否有效，默认实现
+        
+        Returns:
+            bool: 缓存是否有效
+        """
+        # 检查是否有缓存内容
+        has_cached_items = hasattr(self, '_cached_news_items') and bool(self._cached_news_items)
+        
+        # 检查缓存时间是否在TTL内
+        if not hasattr(self, '_last_cache_update'):
+            cache_ttl_valid = False
+        else:
+            cache_age = time.time() - self._last_cache_update if self._last_cache_update > 0 else float('inf')
+            cache_ttl_valid = cache_age < self.cache_ttl
+        
+        # 记录详细的缓存状态信息
+        cache_logger.debug(f"[CACHE-DEBUG] {self.source_id}: 缓存验证详情:")
+        cache_logger.debug(f"[CACHE-DEBUG] {self.source_id}: - 有缓存内容: {has_cached_items}")
+        if hasattr(self, '_cached_news_items'):
+            cache_logger.debug(f"[CACHE-DEBUG] {self.source_id}: - 缓存条目数: {len(self._cached_news_items) if self._cached_news_items else 0}")
+        cache_logger.debug(f"[CACHE-DEBUG] {self.source_id}: - 上次更新时间: {getattr(self, '_last_cache_update', 0)}")
+        if hasattr(self, '_last_cache_update') and self._last_cache_update > 0:
+            cache_logger.debug(f"[CACHE-DEBUG] {self.source_id}: - 缓存年龄: {time.time() - self._last_cache_update:.2f}秒")
+        cache_logger.debug(f"[CACHE-DEBUG] {self.source_id}: - 缓存TTL: {self.cache_ttl}秒")
+        cache_logger.debug(f"[CACHE-DEBUG] {self.source_id}: - TTL验证: {cache_ttl_valid}")
+        
+        # 综合判断
+        cache_valid = has_cached_items and cache_ttl_valid
+        cache_logger.info(f"[CACHE-DEBUG] {self.source_id}: 缓存有效: {cache_valid}")
+        
+        return cache_valid
+    
+    async def update_cache(self, news_items: List[NewsItemModel]) -> None:
+        """
+        更新缓存，标准实现
+        
+        Args:
+            news_items: 新闻项列表
+        """
+        # 增强的缓存保护：如果news_items为空且已有缓存数据，保留现有缓存
+        if not news_items and hasattr(self, '_cached_news_items') and self._cached_news_items:
+            logger.debug(f"缓存保护: {self.source_id} - 保留现有缓存而非使用空数据")
+            cache_logger.warning(f"[CACHE-PROTECTION] {self.source_id}: 更新缓存时收到空列表，保留现有 {len(self._cached_news_items)} 条缓存数据")
+            return
+            
+        # 更新前记录状态
+        old_count = len(self._cached_news_items) if hasattr(self, '_cached_news_items') and self._cached_news_items else 0
+        old_time = getattr(self, '_last_cache_update', 0)
+        
+        # 更新缓存
+        self._cached_news_items = news_items
+        self._last_cache_update = time.time()
+        
+        # 记录更新后的状态
+        cache_logger.info(f"[CACHE-DEBUG] {self.source_id}: 缓存已更新: {old_count} -> {len(news_items)} 条，时间戳: {old_time} -> {self._last_cache_update}")
+        
+        # 检查是否有明显异常
+        if len(news_items) == 0 and old_count > 0:
+            logger.warning(f"缓存更新警告: {self.source_id} - 数据条目从 {old_count} 减少至 0")
+            cache_logger.warning(f"[CACHE-ALERT] {self.source_id}: 缓存更新异常: 从 {old_count} 条减少到 0 条")
+            
+        # 如果新闻数量有明显变化，记录信息
+        if old_count > 0 and abs(len(news_items) - old_count) / old_count > 0.5:  # 50%的变化
+            cache_logger.info(f"[CACHE-MONITOR] {self.source_id}: 缓存内容变化显著: {old_count} -> {len(news_items)} 条，变化率: {(len(news_items) - old_count) / old_count:.2%}")
+    
+    async def clear_cache(self) -> None:
+        """
+        清除缓存，标准实现
+        """
+        old_count = len(self._cached_news_items) if hasattr(self, '_cached_news_items') and self._cached_news_items else 0
+        
+        if hasattr(self, '_cached_news_items'):
+            self._cached_news_items = []
+        
+        if hasattr(self, '_last_cache_update'):
+            self._last_cache_update = 0
+            
+        # 记录清除操作
+        cache_logger.info(f"[CACHE-DEBUG] {self.source_id}: 缓存已清除，之前有 {old_count} 条数据")
+        
+        # 重置保护计数器
+        if hasattr(self, '_cache_protection_count'):
+            self._cache_protection_count = 0
     
     # 实现接口中的方法
     def update_metrics(self, news_count: int, success: bool = True, error: Optional[Exception] = None) -> None:
@@ -954,37 +1149,6 @@ class NewsSource(ABC):
         if len(self.update_history) > self.max_history_size:
             self.update_history = self.update_history[-self.max_history_size:]
     
-    def is_cache_valid(self) -> bool:
-        """
-        检查缓存是否有效
-        
-        Returns:
-            bool: 缓存是否有效
-        """
-        return (
-            self._cached_news_items 
-            and (time.time() - self._last_cache_update) < self.cache_ttl
-        )
-    
-    async def update_cache(self, news_items: List[NewsItemModel]) -> None:
-        """
-        更新缓存
-        
-        Args:
-            news_items: 新闻项列表
-        """
-        self._cached_news_items = news_items
-        self._last_cache_update = time.time()
-        logger.debug(f"Updated cache for {self.source_id} with {len(news_items)} items")
-    
-    async def clear_cache(self) -> None:
-        """
-        清除缓存
-        """
-        self._cached_news_items = []
-        self._last_cache_update = 0
-        logger.debug(f"Cleared cache for {self.source_id}")
-    
     async def close(self) -> None:
         """
         关闭资源
@@ -1000,4 +1164,53 @@ class NewsSource(ABC):
             except Exception as e:
                 logger.error(f"Error closing HTTP client for {self.source_id}: {str(e)}")
         
-        logger.debug(f"Closed resources for {self.source_id}") 
+        logger.debug(f"Closed resources for {self.source_id}")
+    
+    def cache_status(self) -> Dict[str, Any]:
+        """
+        获取缓存状态的详细信息，用于监控
+        
+        Returns:
+            包含缓存状态信息的字典
+        """
+        # 计算缓存年龄
+        cache_age = time.time() - self._last_cache_update if self._last_cache_update > 0 else float('inf')
+        
+        # 构建返回结果
+        status = {
+            "source_id": self.source_id,
+            "source_name": self.name,
+            "cache_config": {
+                "update_interval": self.update_interval,
+                "cache_ttl": self.cache_ttl,
+                "adaptive_enabled": self.enable_adaptive,
+                "current_adaptive_interval": self.adaptive_interval
+            },
+            "cache_state": {
+                "has_items": bool(self._cached_news_items),
+                "items_count": len(self._cached_news_items) if self._cached_news_items else 0,
+                "last_update": self._last_cache_update,
+                "cache_age_seconds": cache_age,
+                "is_expired": cache_age > self.cache_ttl,
+                "valid": self.is_cache_valid()
+            },
+            "protection_stats": {
+                "protection_count": self._cache_protection_count,
+                "empty_protection_count": self._cache_protection_stats["empty_protection_count"],
+                "error_protection_count": self._cache_protection_stats["error_protection_count"], 
+                "shrink_protection_count": self._cache_protection_stats["shrink_protection_count"],
+                "last_protection_time": self._cache_protection_stats["last_protection_time"],
+                "recent_protections": self._cache_protection_stats["protection_history"][-5:] if self._cache_protection_stats["protection_history"] else []
+            },
+            "metrics": {
+                "cache_hit_count": self._cache_metrics["cache_hit_count"],
+                "cache_miss_count": self._cache_metrics["cache_miss_count"],
+                "hit_ratio": self._cache_metrics["cache_hit_count"] / max(1, self._cache_metrics["cache_hit_count"] + self._cache_metrics["cache_miss_count"]),
+                "empty_result_count": self._cache_metrics["empty_result_count"],
+                "fetch_error_count": self._cache_metrics["fetch_error_count"],
+                "current_cache_size": self._cache_metrics["last_cache_size"],
+                "max_cache_size": self._cache_metrics["max_cache_size"]
+            }
+        }
+        
+        return status 

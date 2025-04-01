@@ -5,8 +5,12 @@ import time
 from typing import Dict, Any, Optional, List, Union
 
 import aioredis
+from app.core.logging_config import get_cache_logger
 
+# 保留主日志记录器用于关键错误信息
 logger = logging.getLogger(__name__)
+# 使用缓存专用日志记录器
+cache_logger = get_cache_logger()
 
 
 class CacheManager:
@@ -39,7 +43,7 @@ class CacheManager:
     def _debug_log(self, message: str):
         """仅在启用详细日志的情况下记录DEBUG日志"""
         if self.verbose_logging:
-            logger.debug(message)
+            cache_logger.debug(f"[CACHE] {message}")
     
     async def initialize(self):
         """
@@ -52,14 +56,23 @@ class CacheManager:
         if self.redis_url:
             try:
                 self.redis = await aioredis.create_redis_pool(self.redis_url)
-                logger.info(f"Connected to Redis: {self.redis_url}")
+                # 记录重要信息到主日志，但格式更简洁
+                logger.info(f"Redis连接已建立: {self.redis_url}")
+                # 详细信息记录到缓存专用日志
+                cache_logger.info(f"[BASE-CACHE-INIT] 已连接到Redis: {self.redis_url}")
             except Exception as e:
-                logger.error(f"Failed to connect to Redis: {str(e)}")
+                # 错误信息保留在主日志中，确保错误不被忽略
+                error_msg = f"Redis连接失败: {str(e)}"
+                logger.error(error_msg)
+                cache_logger.error(f"[BASE-CACHE-INIT] {error_msg}")
                 self.redis = None
         
         # 初始化完成
         self.initialized = True
-        logger.info(f"Cache manager initialized, memory cache: {self.enable_memory_cache}, Redis: {self.redis is not None}")
+        # 简化主日志中的信息
+        logger.info(f"缓存管理器初始化完成: 内存缓存={self.enable_memory_cache}, Redis={self.redis is not None}")
+        # 详细信息记录到缓存专用日志
+        cache_logger.info(f"[BASE-CACHE-INIT] 缓存管理器初始化完成，内存缓存: {self.enable_memory_cache}, Redis: {self.redis is not None}")
     
     async def close(self):
         """
@@ -70,7 +83,10 @@ class CacheManager:
             self.redis.close()
             await self.redis.wait_closed()
             self.redis = None
-            logger.info("Redis connection closed")
+            # 简化主日志信息
+            logger.info("Redis连接已关闭")
+            # 详细信息记录到缓存专用日志
+            cache_logger.info("[BASE-CACHE-INIT] Redis连接已关闭")
         
         # 清空内存缓存
         self.memory_cache.clear()
@@ -78,7 +94,10 @@ class CacheManager:
         # 重置初始化标志
         self.initialized = False
         
-        logger.info("Cache manager closed")
+        # 简化主日志信息
+        logger.info("缓存管理器已关闭")
+        # 详细信息记录到缓存专用日志
+        cache_logger.info("[BASE-CACHE-INIT] 缓存管理器已关闭")
     
     async def get(self, key: str) -> Optional[Any]:
         """
@@ -94,7 +113,7 @@ class CacheManager:
             if cache_item:
                 # 检查是否过期
                 if cache_item.get("expire_time", 0) > time.time():
-                    self._debug_log(f"Memory cache hit: {key}")
+                    self._debug_log(f"内存缓存命中: {key}")
                     return cache_item.get("data")
                 else:
                     # 过期，删除缓存
@@ -121,15 +140,21 @@ class CacheManager:
                                     "expire_time": expire_time
                                 }
                         
-                        self._debug_log(f"Redis cache hit: {key}")
+                        self._debug_log(f"Redis缓存命中: {key}")
                         return result
                     except Exception as e:
-                        logger.error(f"Failed to deserialize Redis data: {str(e)}")
+                        # 错误信息保留在主日志中
+                        error_msg = f"Redis数据反序列化失败: {str(e)}"
+                        logger.error(error_msg)
+                        cache_logger.error(f"[CACHE-ERROR] {error_msg}")
             except Exception as e:
-                logger.error(f"Failed to get data from Redis: {str(e)}")
+                # 错误信息保留在主日志中
+                error_msg = f"从Redis获取数据失败: {str(e)}"
+                logger.error(error_msg)
+                cache_logger.error(f"[CACHE-ERROR] {error_msg}")
         
         # 缓存未命中
-        self._debug_log(f"Cache miss: {key}")
+        self._debug_log(f"缓存未命中: {key}")
         return None
     
     async def set(self, key: str, data: Any, ttl: Optional[int] = None):
@@ -163,12 +188,15 @@ class CacheManager:
                 
                 # 只记录操作成功的简要日志，如果是缓存批量操作，避免过多日志
                 if self.verbose_logging:
-                    self._debug_log(f"Set Redis cache: {key}, ttl: {ttl}s")
+                    self._debug_log(f"Redis缓存已更新: {key}, TTL: {ttl}秒")
                 elif key.startswith("sources:all") or key.startswith("categories:all"):
-                    # 只记录关键缓存操作的日志
-                    self._debug_log(f"Set Redis cache for key: {key}")
+                    # 只记录关键缓存操作的日志到缓存专用日志
+                    cache_logger.info(f"[CACHE-UPDATE] 关键数据已更新: {key}")
             except Exception as e:
-                logger.error(f"Failed to set data to Redis: {str(e)}")
+                # 错误信息保留在主日志中
+                error_msg = f"向Redis存入数据失败: {str(e)}"
+                logger.error(error_msg)
+                cache_logger.error(f"[CACHE-ERROR] {error_msg}")
     
     async def delete(self, key: str):
         """
@@ -186,9 +214,12 @@ class CacheManager:
         if self.redis:
             try:
                 await self.redis.delete(key)
-                self._debug_log(f"Deleted Redis cache: {key}")
+                self._debug_log(f"Redis缓存已删除: {key}")
             except Exception as e:
-                logger.error(f"Failed to delete data from Redis: {str(e)}")
+                # 错误信息保留在主日志中
+                error_msg = f"从Redis删除数据失败: {str(e)}"
+                logger.error(error_msg)
+                cache_logger.error(f"[CACHE-ERROR] {error_msg}")
     
     async def clear(self, pattern: str = "*"):
         """
@@ -216,9 +247,15 @@ class CacheManager:
                 if keys:
                     # 删除键
                     await self.redis.delete(*keys)
-                    logger.info(f"Cleared Redis cache, pattern: {pattern}, count: {len(keys)}")
+                    # 保留简要信息到主日志
+                    logger.info(f"已清空Redis缓存, 模式: {pattern}, 数量: {len(keys)}")
+                    # 详细信息记录到缓存专用日志
+                    cache_logger.info(f"[CACHE-CLEAR] 已清空Redis缓存, 模式: {pattern}, 数量: {len(keys)}")
             except Exception as e:
-                logger.error(f"Failed to clear Redis cache: {str(e)}")
+                # 错误信息保留在主日志中
+                error_msg = f"清空Redis缓存失败: {str(e)}"
+                logger.error(error_msg)
+                cache_logger.error(f"[CACHE-ERROR] {error_msg}")
     
     async def get_stats(self) -> Dict[str, Any]:
         """
@@ -248,9 +285,14 @@ class CacheManager:
                     "used_memory": info.get("used_memory_human", ""),
                     "used_memory_peak": info.get("used_memory_peak_human", ""),
                     "total_connections_received": info.get("total_connections_received", 0),
-                    "total_commands_processed": info.get("total_commands_processed", 0)
                 }
+                
+                # 记录到缓存专用日志
+                cache_logger.info(f"[CACHE-STATS] Redis统计信息: 键数量={len(keys)}, 内存使用={info.get('used_memory_human', '')}")
             except Exception as e:
-                logger.error(f"Failed to get Redis stats: {str(e)}")
+                # 错误信息保留在主日志中
+                error_msg = f"获取Redis统计信息失败: {str(e)}"
+                logger.error(error_msg)
+                cache_logger.error(f"[CACHE-ERROR] {error_msg}")
         
         return stats 

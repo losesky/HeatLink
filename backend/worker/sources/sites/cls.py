@@ -119,9 +119,6 @@ class CLSNewsSource(RESTNewsSource):
         # WebDriver实例，需要时才初始化
         self._driver = None
         self._driver_pid = None
-        
-        # 设置是否包含文章内容 (合并cls-article功能)
-        self.include_articles = True
     
     async def fetch(self) -> List[NewsItemModel]:
         """

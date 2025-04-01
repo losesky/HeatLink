@@ -143,9 +143,6 @@ class NewsSourceFactory:
             return CoolApkAppNewsSource(**kwargs)
         elif source_type == "cls":
             return CLSNewsSource(**kwargs)
-        elif source_type == "cls-article":  # 处理被合并的源的兼容性
-            logger.info("cls-article已被合并到cls中，使用cls源替代")
-            return CLSNewsSource(source_id="cls", **kwargs)
         elif source_type == "bbc_world":
             return BBCWorldNewsSource(**kwargs)
         elif source_type == "bloomberg":

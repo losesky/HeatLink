@@ -1,0 +1,1271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis 缓存监控工具 - HeatLink</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <style>
+        .metric-card {
+            background-color: white;
+            border-radius: 0.375rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            padding: 1rem;
+            transition-property: all;
+            transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+            transition-duration: 200ms;
+        }
+        .metric-card:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .metric-label {
+            font-size: 0.875rem;
+            color: #4b5563;
+            margin-bottom: 0.5rem;
+        }
+        .metric-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #111827;
+        }
+        .chart-container {
+            background-color: white;
+            border-radius: 0.375rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            padding: 1rem;
+            height: 300px;
+        }
+        .cache-item {
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background-color: white;
+            transition: all 0.2s;
+        }
+        .cache-item:hover {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .cache-fresh {
+            border-left: 4px solid #10b981; /* 绿色 - 新鲜缓存 */
+        }
+        .cache-expiring {
+            border-left: 4px solid #f59e0b; /* 黄色 - 即将过期 */
+        }
+        .cache-expired {
+            border-left: 4px solid #ef4444; /* 红色 - 已过期 */
+        }
+        .cache-empty {
+            border-left: 4px solid #9ca3af; /* 灰色 - 无缓存 */
+            background-color: #f9fafb;
+        }
+        .tab-button {
+            padding: 0.75rem 1.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .tab-active {
+            background-color: white;
+            color: #111827;
+            border-top-left-radius: 0.375rem;
+            border-top-right-radius: 0.375rem;
+            border-bottom: 2px solid #3b82f6;
+        }
+        .tab-inactive {
+            background-color: transparent;
+            color: #4b5563;
+        }
+        .tab-inactive:hover {
+            background-color: rgba(255, 255, 255, 0.5);
+            color: #111827;
+        }
+        .tab-panel {
+            display: block;
+        }
+        .hidden {
+            display: none;
+        }
+        .action-button {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .button-primary {
+            background-color: #3b82f6;
+            color: white;
+            border: 1px solid #3b82f6;
+        }
+        .button-primary:hover {
+            background-color: #2563eb;
+            border-color: #2563eb;
+        }
+        .button-secondary {
+            background-color: #f3f4f6;
+            color: #1f2937;
+            border: 1px solid #d1d5db;
+        }
+        .button-secondary:hover {
+            background-color: #e5e7eb;
+        }
+        .button-danger {
+            background-color: #ef4444;
+            color: white;
+            border: 1px solid #ef4444;
+        }
+        .button-danger:hover {
+            background-color: #dc2626;
+            border-color: #dc2626;
+        }
+        /* 消息状态样式 */
+        #status-message {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            z-index: 50;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            opacity: 0.9;
+            max-width: 200px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <!-- 页面标题 -->
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">Redis 缓存监控工具</h1>
+                <p class="text-gray-600">实时监控与管理 HeatLink 系统中的 Redis 缓存</p>
+            </div>
+            <div class="flex space-x-3">
+                <button id="refreshBtn" class="action-button button-primary">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    刷新数据
+                </button>
+                <button id="generateReportBtn" class="action-button button-secondary">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    生成报告
+                </button>
+            </div>
+        </div>
+
+        <!-- 功能选项卡 -->
+        <div class="bg-gray-200 rounded-t-lg">
+            <nav class="flex">
+                <button class="tab-button tab-active" data-tab="overview">缓存概览</button>
+                <button class="tab-button tab-inactive" data-tab="sources">源缓存详情</button>
+                <button class="tab-button tab-inactive" data-tab="management">缓存管理</button>
+                <button class="tab-button tab-inactive" data-tab="statistics">性能统计</button>
+            </nav>
+        </div>
+
+        <!-- 内容区域 -->
+        <div class="bg-white rounded-b-lg shadow-md p-6">
+            <!-- 概览面板 -->
+            <div id="overview-panel" class="tab-panel">
+                <!-- 缓存概览指标 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    <div class="metric-card">
+                        <div class="metric-label">总缓存键数</div>
+                        <div id="total-keys" class="metric-value">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">总新闻条目数</div>
+                        <div id="total-items" class="metric-value">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">平均 TTL</div>
+                        <div id="average-ttl" class="metric-value">--</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">内存用量</div>
+                        <div id="memory-usage" class="metric-value">--</div>
+                    </div>
+                </div>
+
+                <!-- 图表区域 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="chart-container">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-4">缓存分布</h3>
+                        <canvas id="cache-distribution-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-4">TTL 分布</h3>
+                        <canvas id="ttl-distribution-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 无缓存源列表 -->
+                <div class="mt-8">
+                    <h3 class="text-lg font-semibold text-gray-700 mb-4">无缓存源列表</h3>
+                    <div id="no-cache-sources" class="bg-gray-50 p-4 rounded-lg">
+                        <p class="text-gray-500">加载中...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 其他面板 -->
+            <div id="sources-panel" class="tab-panel hidden">
+                <!-- 源缓存详情 -->
+                <div class="mb-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-gray-700">源缓存详情</h3>
+                        <div class="flex space-x-2">
+                            <input type="text" id="source-search" placeholder="搜索源..." class="border rounded-md px-3 py-2 text-sm">
+                            <select id="source-filter" class="border rounded-md px-3 py-2 text-sm">
+                                <option value="all">全部源</option>
+                                <option value="cached">有缓存</option>
+                                <option value="no-cache">无缓存</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div id="source-cache-list" class="space-y-4">
+                        <p class="text-gray-500">加载中...</p>
+                    </div>
+                </div>
+                
+                <!-- 源缓存详情模板 -->
+                <template id="cache-item-template">
+                    <div class="cache-item">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h4 class="text-lg font-medium text-gray-900 source-name"></h4>
+                                <p class="text-sm text-gray-500 cache-key"></p>
+                            </div>
+                            <div class="flex space-x-2">
+                                <button class="refresh-source-btn action-button button-primary text-xs">刷新</button>
+                                <button class="clear-source-btn action-button button-danger text-xs">清除</button>
+                                <button class="view-source-btn action-button button-secondary text-xs">查看</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-4 mt-4">
+                            <div>
+                                <span class="text-sm text-gray-500">条目数量:</span>
+                                <span class="text-sm font-medium cache-items-count">-</span>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-500">剩余TTL:</span>
+                                <span class="text-sm font-medium cache-ttl">-</span>
+                            </div>
+                            <div>
+                                <span class="text-sm text-gray-500">内存占用:</span>
+                                <span class="text-sm font-medium cache-memory">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div id="management-panel" class="tab-panel hidden">
+                <!-- 精简管理面板，仅保留最基本功能 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white rounded-lg shadow-md p-6">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-4">清理缓存</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label for="clear-pattern" class="block text-sm font-medium text-gray-700 mb-1">缓存键模式</label>
+                                <input type="text" id="clear-pattern" value="source:*" placeholder="例如: source:* 或 source:36kr" class="w-full border rounded-md px-3 py-2">
+                            </div>
+                            <button id="clear-cache-btn" class="action-button button-danger w-full justify-center">清理缓存</button>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow-md p-6">
+                        <h3 class="text-lg font-semibold text-gray-700 mb-4">刷新缓存</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label for="refresh-sources" class="block text-sm font-medium text-gray-700 mb-1">选择源</label>
+                                <select id="refresh-sources" class="w-full border rounded-md px-3 py-2">
+                                    <option value="all">所有源</option>
+                                    <option value="36kr">36氪</option>
+                                    <option value="zhihu_daily">知乎日报</option>
+                                    <option value="github">GitHub</option>
+                                </select>
+                            </div>
+                            <button id="refresh-cache-btn" class="action-button button-primary w-full justify-center">刷新缓存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="statistics-panel" class="tab-panel hidden">
+                <!-- Redis性能统计面板 -->
+                <div id="panel-performance-stats" class="bg-gray-100 p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-bold mb-4">Redis性能统计</h2>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <!-- 服务器信息 -->
+                        <div class="bg-white p-4 rounded shadow-sm">
+                            <h3 class="text-lg font-semibold mb-2">服务器信息</h3>
+                            <div class="space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Redis版本:</span>
+                                    <span id="redis-version" class="font-medium">--</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">运行时间:</span>
+                                    <span id="redis-uptime" class="font-medium">--</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">连接客户端:</span>
+                                    <span id="redis-connections" class="font-medium">0</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">阻塞客户端:</span>
+                                    <span id="redis-blocked-clients" class="font-medium">0</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 内存使用 -->
+                        <div class="bg-white p-4 rounded shadow-sm">
+                            <h3 class="text-lg font-semibold mb-2">内存使用</h3>
+                            <div class="space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">当前使用:</span>
+                                    <span id="redis-memory" class="font-medium">--</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">峰值使用:</span>
+                                    <span id="redis-memory-peak" class="font-medium">--</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">Lua内存:</span>
+                                    <span id="redis-memory-lua" class="font-medium">--</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">碎片率:</span>
+                                    <span id="redis-fragmentation" class="font-medium">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <!-- 命令统计 -->
+                        <div class="bg-white p-4 rounded shadow-sm">
+                            <h3 class="text-lg font-semibold mb-2">命令统计</h3>
+                            <div class="space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">总连接数:</span>
+                                    <span id="redis-total-connections" class="font-medium">0</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">总命令数:</span>
+                                    <span id="redis-total-commands" class="font-medium">0</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">每秒操作数:</span>
+                                    <span id="redis-ops-per-sec" class="font-medium">0</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">拒绝连接数:</span>
+                                    <span id="redis-rejected-connections" class="font-medium">0</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 键空间统计 -->
+                        <div class="bg-white p-4 rounded shadow-sm">
+                            <h3 class="text-lg font-semibold mb-2">键空间统计</h3>
+                            <div class="space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">缓存命中率:</span>
+                                    <span id="redis-hit-rate" class="font-medium">0%</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">命中次数:</span>
+                                    <span id="redis-keyspace-hits" class="font-medium">0</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">未命中次数:</span>
+                                    <span id="redis-keyspace-misses" class="font-medium">0</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">过期键数:</span>
+                                    <span id="redis-expired-keys" class="font-medium">0</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-gray-600">驱逐键数:</span>
+                                    <span id="redis-evicted-keys" class="font-medium">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 缓存摘要 -->
+                    <div id="redis-summary" class="mb-6">
+                        <!-- 摘要内容将在JavaScript中动态生成 -->
+                    </div>
+                    
+                    <!-- 数据库信息 -->
+                    <div class="bg-white p-4 rounded shadow-sm">
+                        <h3 class="text-lg font-semibold mb-2">数据库信息</h3>
+                        <div id="redis-databases" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+                            <div class="animate-pulse bg-gray-200 h-16 rounded"></div>
+                            <div class="animate-pulse bg-gray-200 h-16 rounded"></div>
+                            <div class="animate-pulse bg-gray-200 h-16 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 状态消息 -->
+        <div id="status-message" class="fixed top-4 right-4 p-2 rounded-md shadow-md hidden"></div>
+    </div>
+
+    <!-- 简化的脚本 -->
+    <script>
+        // 全局变量
+        let chartInstances = {};
+        
+        // 页面加载后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 页面加载时初始化
+            initTabs();
+            
+            // 初始化管理面板功能
+            setupManagementPanel();
+            
+            // 添加选项卡切换事件处理
+            const tabButtons = document.querySelectorAll('.tab-button');
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const tabName = button.getAttribute('data-tab');
+                    
+                    // 根据选项卡加载相应数据
+                    if (tabName === 'sources') {
+                        loadSourceCacheDetails();
+                    } else if (tabName === 'management') {
+                        setupManagementPanel();
+                    } else if (tabName === 'statistics') {
+                        // 加载性能统计数据
+                        getPerformanceStats();
+                    }
+                });
+            });
+            
+            // 搜索框输入事件
+            const sourceSearch = document.getElementById('source-search');
+            if (sourceSearch) {
+                sourceSearch.addEventListener('input', function() {
+                    searchAndFilterSources();
+                });
+            }
+            
+            // 过滤下拉框更改事件
+            const sourceFilter = document.getElementById('source-filter');
+            if (sourceFilter) {
+                sourceFilter.addEventListener('change', function() {
+                    searchAndFilterSources();
+                });
+            }
+            
+            // 刷新按钮事件
+            document.getElementById('refreshBtn').addEventListener('click', function() {
+                refreshData();
+                
+                // 如果在源缓存详情页面，也刷新源列表
+                const sourcesPanel = document.getElementById('sources-panel');
+                if (sourcesPanel && !sourcesPanel.classList.contains('hidden')) {
+                    loadSourceCacheDetails();
+                }
+                
+                // 如果在性能统计页面，刷新性能数据
+                const statsPanel = document.getElementById('statistics-panel');
+                if (statsPanel && !statsPanel.classList.contains('hidden')) {
+                    getPerformanceStats();
+                }
+            });
+            
+            // 生成报告按钮事件
+            document.getElementById('generateReportBtn').addEventListener('click', function() {
+                generateReport();
+            });
+            
+            // 初始加载数据
+            refreshData();
+            
+            // 预加载源列表数据，用于刷新下拉框
+            fetch('/api/cache/stats')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.sources && data.sources.length > 0) {
+                        const refreshSourcesSelect = document.getElementById('refresh-sources');
+                        if (refreshSourcesSelect) {
+                            // 清空下拉框，只保留"所有源"选项
+                            refreshSourcesSelect.innerHTML = '<option value="all">所有源</option>';
+                            
+                            // 添加源选项
+                            data.sources.forEach(source => {
+                                const option = document.createElement('option');
+                                option.value = source.id;
+                                option.textContent = source.name || source.id;
+                                refreshSourcesSelect.appendChild(option);
+                            });
+                        }
+                    }
+                })
+                .catch(error => console.error('加载源列表失败:', error));
+        });
+        
+        // 初始化选项卡功能
+        function initTabs() {
+            const tabButtons = document.querySelectorAll('.tab-button');
+            const tabPanels = document.querySelectorAll('.tab-panel');
+            
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    // 移除所有活动状态
+                    tabButtons.forEach(btn => {
+                        btn.classList.remove('tab-active');
+                        btn.classList.add('tab-inactive');
+                    });
+                    
+                    // 隐藏所有面板
+                    tabPanels.forEach(panel => {
+                        panel.classList.add('hidden');
+                    });
+                    
+                    // 设置当前选项卡为活动状态
+                    button.classList.remove('tab-inactive');
+                    button.classList.add('tab-active');
+                    
+                    // 显示对应面板
+                    const tabName = button.getAttribute('data-tab');
+                    const panel = document.getElementById(`${tabName}-panel`);
+                    if (panel) {
+                        panel.classList.remove('hidden');
+                    }
+                });
+            });
+        }
+        
+        // 刷新数据
+        function refreshData() {
+            showMessage('正在刷新缓存数据...', 'info');
+            
+            // 使用Promise.all同时获取缓存统计和性能数据
+            Promise.all([
+                // 获取缓存统计数据
+                fetch('/api/cache/stats')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('获取缓存数据失败');
+                        }
+                        return response.json();
+                    }),
+                // 获取性能数据
+                fetch('/api/cache/performance')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('获取性能数据失败');
+                        }
+                        return response.json();
+                    })
+            ])
+            .then(([statsData, performanceData]) => {
+                // 更新界面
+                updateUI(statsData);
+                // 更新性能统计
+                if (performanceData.success) {
+                    updatePerformanceUI(performanceData.metrics);
+                }
+                showMessage('数据刷新成功', 'success');
+            })
+            .catch(error => {
+                console.error('数据刷新失败:', error);
+                showMessage('数据刷新失败: ' + error.message, 'error');
+            });
+        }
+        
+        // 更新界面
+        function updateUI(data) {
+            // 更新概览面板
+            document.getElementById('total-keys').textContent = data.total_keys;
+            document.getElementById('total-items').textContent = data.total_items;
+            document.getElementById('average-ttl').textContent = `${data.average_ttl}s`;
+            document.getElementById('memory-usage').textContent = data.memory_usage;
+            
+            // 更新无缓存源列表
+            const noCacheEl = document.getElementById('no-cache-sources');
+            if (noCacheEl) {
+                if (data.no_cache_sources && data.no_cache_sources.length > 0) {
+                    noCacheEl.innerHTML = '';
+                    data.no_cache_sources.forEach(source => {
+                        const div = document.createElement('div');
+                        div.className = 'text-sm text-gray-700 py-1';
+                        div.textContent = source;
+                        noCacheEl.appendChild(div);
+                    });
+                } else {
+                    noCacheEl.innerHTML = '<p class="text-gray-500">所有源都有缓存数据</p>';
+                }
+            }
+            
+            // 更新图表
+            try {
+                updateCharts(data);
+            } catch (e) {
+                console.error('更新图表失败:', e);
+            }
+        }
+        
+        // 获取性能统计数据
+        function getPerformanceStats() {
+            showMessage('正在获取性能统计数据...', 'info');
+            
+            fetch('/api/cache/performance')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取性能统计数据失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        updatePerformanceUI(data.metrics);
+                        showMessage('性能统计数据获取成功', 'success');
+                    } else {
+                        showMessage('性能统计数据获取失败: ' + data.message, 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('获取性能统计数据失败:', error);
+                    showMessage('获取性能统计数据失败: ' + error.message, 'error');
+                });
+        }
+        
+        // 更新性能统计UI
+        function updatePerformanceUI(metrics) {
+            if (!metrics) return;
+            
+            // 服务器信息
+            document.getElementById('redis-version').textContent = metrics.server.redis_version || '未知';
+            document.getElementById('redis-uptime').textContent = formatUptime(metrics.server.uptime_in_seconds) || '未知';
+            document.getElementById('redis-connections').textContent = metrics.server.connected_clients || '0';
+            document.getElementById('redis-blocked-clients').textContent = metrics.server.blocked_clients || '0';
+            
+            // 内存使用
+            document.getElementById('redis-memory').textContent = metrics.memory.used_memory_human || '未知';
+            document.getElementById('redis-memory-peak').textContent = metrics.memory.used_memory_peak_human || '未知';
+            document.getElementById('redis-memory-lua').textContent = formatSize(metrics.memory.used_memory_lua) || '未知';
+            document.getElementById('redis-fragmentation').textContent = metrics.memory.mem_fragmentation_ratio.toFixed(2) || '未知';
+            
+            // 命令统计
+            document.getElementById('redis-total-connections').textContent = formatNumber(metrics.stats.total_connections_received) || '0';
+            document.getElementById('redis-total-commands').textContent = formatNumber(metrics.stats.total_commands_processed) || '0';
+            document.getElementById('redis-ops-per-sec').textContent = metrics.stats.instantaneous_ops_per_sec || '0';
+            document.getElementById('redis-rejected-connections').textContent = formatNumber(metrics.stats.rejected_connections) || '0';
+            
+            // 键空间统计
+            document.getElementById('redis-keyspace-hits').textContent = formatNumber(metrics.stats.keyspace_hits) || '0';
+            document.getElementById('redis-keyspace-misses').textContent = formatNumber(metrics.stats.keyspace_misses) || '0';
+            document.getElementById('redis-hit-rate').textContent = `${metrics.stats.hit_rate || 0}%`;
+            document.getElementById('redis-expired-keys').textContent = formatNumber(metrics.stats.expired_keys) || '0';
+            document.getElementById('redis-evicted-keys').textContent = formatNumber(metrics.stats.evicted_keys) || '0';
+            
+            // 数据库信息
+            const databasesEl = document.getElementById('redis-databases');
+            if (databasesEl && metrics.databases) {
+                databasesEl.innerHTML = '';
+                
+                if (Object.keys(metrics.databases).length === 0) {
+                    databasesEl.innerHTML = '<div class="text-gray-500 text-center py-4">无数据库信息</div>';
+                } else {
+                    // 遍历数据库信息
+                    for (const [dbName, dbInfo] of Object.entries(metrics.databases)) {
+                        const dbDiv = document.createElement('div');
+                        dbDiv.className = 'bg-gray-50 rounded p-3 border border-gray-200';
+                        
+                        const keys = parseInt(dbInfo.keys) || 0;
+                        const expires = parseInt(dbInfo.expires) || 0;
+                        const avgTtl = parseInt(dbInfo.avg_ttl) || 0;
+                        
+                        dbDiv.innerHTML = `
+                            <div class="font-medium text-gray-700 mb-2">${dbName}</div>
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div class="text-gray-600">键数量:</div>
+                                <div class="text-right font-medium">${formatNumber(keys)}</div>
+                                <div class="text-gray-600">过期键:</div>
+                                <div class="text-right font-medium">${formatNumber(expires)}</div>
+                                <div class="text-gray-600">平均TTL:</div>
+                                <div class="text-right font-medium">${formatTTL(avgTtl)}</div>
+                            </div>
+                        `;
+                        
+                        databasesEl.appendChild(dbDiv);
+                    }
+                }
+            }
+            
+            // 更新摘要信息
+            if (metrics.summary) {
+                const summaryEl = document.getElementById('redis-summary');
+                if (summaryEl) {
+                    summaryEl.innerHTML = `
+                        <div class="bg-blue-50 rounded p-4 border border-blue-200">
+                            <h3 class="text-lg font-semibold text-blue-800 mb-2">缓存摘要</h3>
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div class="text-blue-700">总键数:</div>
+                                <div class="text-right font-medium">${formatNumber(metrics.summary.total_keys)}</div>
+                                <div class="text-blue-700">数据库数量:</div>
+                                <div class="text-right font-medium">${metrics.summary.total_databases}</div>
+                                <div class="text-blue-700">内存使用:</div>
+                                <div class="text-right font-medium">${metrics.summary.memory_usage}</div>
+                                <div class="text-blue-700">更新时间:</div>
+                                <div class="text-right font-medium">${formatDateTime(metrics.timestamp)}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        }
+        
+        // 格式化运行时间
+        function formatUptime(seconds) {
+            if (!seconds) return '未知';
+            
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const remainingSeconds = seconds % 60;
+            
+            let result = '';
+            if (days > 0) result += `${days}天 `;
+            if (hours > 0 || days > 0) result += `${hours}小时 `;
+            if (minutes > 0 || hours > 0 || days > 0) result += `${minutes}分钟 `;
+            result += `${remainingSeconds}秒`;
+            
+            return result;
+        }
+        
+        // 格式化TTL
+        function formatTTL(milliseconds) {
+            if (!milliseconds) return '无';
+            
+            const seconds = Math.floor(milliseconds / 1000);
+            if (seconds < 60) return `${seconds}秒`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时`;
+            return `${Math.floor(seconds / 86400)}天`;
+        }
+        
+        // 格式化字节数为可读大小
+        function formatSize(bytes) {
+            if (bytes === undefined || bytes === null) return '0 B';
+            if (bytes === 0) return '0 B';
+            
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            
+            return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[Math.min(i, sizes.length - 1)];
+        }
+        
+        // 格式化数字（添加千位分隔符）
+        function formatNumber(num) {
+            if (num === undefined || num === null) return '0';
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        }
+        
+        // 格式化日期时间
+        function formatDateTime(timestamp) {
+            if (!timestamp) return '未知';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString();
+        }
+        
+        // 更新图表
+        function updateCharts(data) {
+            try {
+                // 缓存分布图表
+                const cacheDistCanvas = document.getElementById('cache-distribution-chart');
+                if (cacheDistCanvas) {
+                    const ctx = cacheDistCanvas.getContext('2d');
+                    if (chartInstances.cacheDistribution) {
+                        chartInstances.cacheDistribution.destroy();
+                    }
+                    
+                    if (data.sources) {
+                        const cachedCount = data.sources.filter(s => s.has_cache).length;
+                        const noCacheCount = data.no_cache_sources ? data.no_cache_sources.length : 0;
+                        
+                        chartInstances.cacheDistribution = new Chart(ctx, {
+                            type: 'doughnut',
+                            data: {
+                                labels: ['有缓存源', '无缓存源'],
+                                datasets: [{
+                                    data: [cachedCount, noCacheCount],
+                                    backgroundColor: ['#4ade80', '#f87171']
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: {
+                                        position: 'bottom'
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+                
+                // TTL分布图表
+                const ttlCanvas = document.getElementById('ttl-distribution-chart');
+                if (ttlCanvas) {
+                    const ctx = ttlCanvas.getContext('2d');
+                    if (chartInstances.ttlDistribution) {
+                        chartInstances.ttlDistribution.destroy();
+                    }
+                    
+                    // 计算TTL分布
+                    let ttlDistribution = [0, 0, 0, 0]; // [<5分钟, 5-15分钟, 15-30分钟, >30分钟]
+                    
+                    if (data.sources) {
+                        data.sources.forEach(source => {
+                            if (source.has_cache && source.ttl > 0) {
+                                if (source.ttl < 300) { // < 5分钟
+                                    ttlDistribution[0]++;
+                                } else if (source.ttl < 900) { // 5-15分钟
+                                    ttlDistribution[1]++;
+                                } else if (source.ttl < 1800) { // 15-30分钟
+                                    ttlDistribution[2]++;
+                                } else { // > 30分钟
+                                    ttlDistribution[3]++;
+                                }
+                            }
+                        });
+                    }
+                    
+                    chartInstances.ttlDistribution = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: ['< 5分钟', '5-15分钟', '15-30分钟', '> 30分钟'],
+                            datasets: [{
+                                label: '源数量',
+                                data: ttlDistribution,
+                                backgroundColor: '#60a5fa'
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: false
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: {
+                                        precision: 0
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('图表创建失败:', e);
+            }
+        }
+        
+        // 生成报告
+        function generateReport() {
+            showMessage('正在生成缓存报告...', 'info');
+            
+            // 调用生成报告API
+            fetch('/api/cache/keys')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取缓存键失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    showMessage(`共发现 ${data.count} 个缓存键，生成报告完成`, 'success');
+                })
+                .catch(error => {
+                    console.error('生成报告失败:', error);
+                    showMessage('生成报告失败: ' + error.message, 'error');
+                });
+        }
+        
+        // 显示状态消息
+        function showMessage(message, type = 'info') {
+            const messageEl = document.getElementById('status-message');
+            if (!messageEl) return;
+            
+            // 简化长消息
+            let displayMessage = message;
+            if (message.includes('数据刷新成功')) {
+                displayMessage = '数据刷新成功';
+            } else if (message.includes('刷新缓存数据')) {
+                displayMessage = '正在刷新...';
+            } else if (message.length > 20) {
+                // 截断长消息
+                displayMessage = message.substring(0, 20) + '...';
+            }
+            
+            messageEl.textContent = displayMessage;
+            messageEl.classList.remove('hidden', 'bg-blue-500', 'bg-green-500', 'bg-red-500', 'bg-yellow-500');
+            
+            switch(type) {
+                case 'success':
+                    messageEl.classList.add('bg-green-500');
+                    break;
+                case 'error':
+                    messageEl.classList.add('bg-red-500');
+                    break;
+                case 'warning':
+                    messageEl.classList.add('bg-yellow-500');
+                    break;
+                default:
+                    messageEl.classList.add('bg-blue-500');
+            }
+            
+            messageEl.classList.remove('hidden');
+            messageEl.classList.add('text-white');
+            
+            // 1.5秒后隐藏消息
+            setTimeout(() => {
+                if (messageEl) {
+                    messageEl.classList.add('hidden');
+                }
+            }, 1500);
+        }
+
+        // 添加源缓存详情功能
+        function loadSourceCacheDetails() {
+            const sourceListEl = document.getElementById('source-cache-list');
+            if (!sourceListEl) return;
+            
+            sourceListEl.innerHTML = '<p class="text-gray-500">加载中...</p>';
+            
+            fetch('/api/cache/stats')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取源缓存详情失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data.sources || data.sources.length === 0) {
+                        sourceListEl.innerHTML = '<p class="text-gray-500">没有找到源缓存信息</p>';
+                        return;
+                    }
+                    
+                    // 保存源列表到全局变量，方便搜索和过滤
+                    window.allSources = data.sources;
+                    
+                    // 对源列表按照TTL从小到大排序，将有缓存的源排在前面
+                    let sources = [...data.sources].sort((a, b) => {
+                        // 如果a没有缓存但b有缓存，a排后面
+                        if (!a.has_cache && b.has_cache) return 1;
+                        // 如果b没有缓存但a有缓存，b排后面
+                        if (a.has_cache && !b.has_cache) return -1;
+                        // 如果都有缓存，按TTL从小到大排序
+                        if (a.has_cache && b.has_cache) return a.ttl - b.ttl;
+                        // 如果都没有缓存，保持原顺序
+                        return 0;
+                    });
+                    
+                    // 显示源列表
+                    displaySourceList(sources);
+                })
+                .catch(error => {
+                    console.error('获取源缓存详情失败:', error);
+                    sourceListEl.innerHTML = `<p class="text-red-500">加载失败: ${error.message}</p>`;
+                });
+        }
+
+        // 显示源列表
+        function displaySourceList(sources) {
+            const sourceListEl = document.getElementById('source-cache-list');
+            if (!sourceListEl) return;
+            
+            // 清空列表
+            sourceListEl.innerHTML = '';
+            
+            if (sources.length === 0) {
+                sourceListEl.innerHTML = '<p class="text-gray-500">没有找到匹配的源</p>';
+                return;
+            }
+            
+            // 添加源缓存详情
+            sources.forEach(source => {
+                const template = document.getElementById('cache-item-template');
+                if (!template) return;
+                
+                const clone = template.content.cloneNode(true);
+                
+                // 设置缓存状态样式
+                const cacheItem = clone.querySelector('.cache-item');
+                if (cacheItem) {
+                    if (!source.has_cache) {
+                        cacheItem.classList.add('cache-empty');
+                    } else if (source.ttl < 300) { // < 5分钟
+                        cacheItem.classList.add('cache-expired');
+                    } else if (source.ttl < 900) { // < 15分钟
+                        cacheItem.classList.add('cache-expiring');
+                    } else {
+                        cacheItem.classList.add('cache-fresh');
+                    }
+                    
+                    // 添加源ID作为data属性方便搜索
+                    cacheItem.setAttribute('data-source-id', source.id);
+                    cacheItem.setAttribute('data-cache-status', source.has_cache ? 'cached' : 'no-cache');
+                }
+                
+                // 设置源名称和缓存键
+                clone.querySelector('.source-name').textContent = source.name;
+                clone.querySelector('.cache-key').textContent = source.cache_key;
+                
+                // 设置缓存状态信息
+                clone.querySelector('.cache-items-count').textContent = source.items_count;
+                clone.querySelector('.cache-ttl').textContent = source.ttl > 0 ? `${source.ttl}秒` : '无';
+                clone.querySelector('.cache-memory').textContent = source.memory;
+                
+                // 添加按钮事件处理
+                const refreshBtn = clone.querySelector('.refresh-source-btn');
+                if (refreshBtn) {
+                    refreshBtn.addEventListener('click', function() {
+                        refreshSourceCache(source.id);
+                    });
+                }
+                
+                const clearBtn = clone.querySelector('.clear-source-btn');
+                if (clearBtn) {
+                    clearBtn.addEventListener('click', function() {
+                        clearSourceCache(source.id);
+                    });
+                }
+                
+                const viewBtn = clone.querySelector('.view-source-btn');
+                if (viewBtn) {
+                    viewBtn.addEventListener('click', function() {
+                        viewSourceCache(source.id);
+                    });
+                }
+                
+                // 将克隆后的元素添加到列表中
+                sourceListEl.appendChild(clone);
+            });
+        }
+
+        // 搜索和过滤源列表
+        function searchAndFilterSources() {
+            // 如果源列表未加载，不执行任何操作
+            if (!window.allSources) return;
+            
+            const searchTerm = document.getElementById('source-search').value.toLowerCase().trim();
+            const filterValue = document.getElementById('source-filter').value;
+            
+            // 根据搜索词和过滤条件筛选源
+            const filteredSources = window.allSources.filter(source => {
+                // 搜索条件：名称或ID包含搜索词
+                const matchesSearch = !searchTerm || 
+                    source.name.toLowerCase().includes(searchTerm) || 
+                    source.id.toLowerCase().includes(searchTerm);
+                
+                // 过滤条件
+                let matchesFilter = true;
+                if (filterValue === 'cached') {
+                    matchesFilter = source.has_cache;
+                } else if (filterValue === 'no-cache') {
+                    matchesFilter = !source.has_cache;
+                }
+                
+                return matchesSearch && matchesFilter;
+            });
+            
+            // 显示筛选后的源列表
+            displaySourceList(filteredSources);
+        }
+        
+        // 刷新特定源的缓存
+        function refreshSourceCache(sourceId) {
+            showMessage(`正在刷新源缓存: ${sourceId}...`, 'info');
+            
+            fetch('/api/cache/refresh?sources=' + sourceId, {
+                method: 'POST'
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('刷新缓存失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    showMessage(`源缓存刷新已开始: ${sourceId}`, 'success');
+                    // 两秒后刷新页面数据
+                    setTimeout(refreshData, 2000);
+                })
+                .catch(error => {
+                    console.error('刷新源缓存失败:', error);
+                    showMessage('刷新源缓存失败: ' + error.message, 'error');
+                });
+        }
+        
+        // 清除特定源的缓存
+        function clearSourceCache(sourceId) {
+            if (!confirm(`确定要清除源 ${sourceId} 的缓存吗？`)) {
+                return;
+            }
+            
+            showMessage(`正在清除源缓存: ${sourceId}...`, 'info');
+            
+            fetch(`/api/cache/clear?pattern=source:${sourceId}&force=true`, {
+                method: 'DELETE'
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('清除缓存失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    showMessage(`已清除源缓存: ${sourceId}`, 'success');
+                    // 刷新页面数据
+                    refreshData();
+                })
+                .catch(error => {
+                    console.error('清除源缓存失败:', error);
+                    showMessage('清除源缓存失败: ' + error.message, 'error');
+                });
+        }
+        
+        // 查看源缓存内容
+        function viewSourceCache(sourceId) {
+            showMessage(`正在加载源缓存内容: ${sourceId}...`, 'info');
+            
+            // 在新标签页打开源数据详情
+            window.open(`/api/cache/source/${sourceId}`, '_blank');
+        }
+        
+        // 添加管理面板的功能
+        function setupManagementPanel() {
+            // 清理缓存按钮
+            const clearCacheBtn = document.getElementById('clear-cache-btn');
+            if (clearCacheBtn) {
+                clearCacheBtn.addEventListener('click', function() {
+                    const pattern = document.getElementById('clear-pattern').value;
+                    if (!pattern) {
+                        showMessage('请输入缓存键模式', 'warning');
+                        return;
+                    }
+                    
+                    if (!confirm(`确定要清除匹配模式为 "${pattern}" 的缓存吗？`)) {
+                        return;
+                    }
+                    
+                    showMessage(`正在清除缓存: ${pattern}...`, 'info');
+                    
+                    fetch(`/api/cache/clear?pattern=${pattern}&force=true`, {
+                        method: 'DELETE'
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('清除缓存失败');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            showMessage(`已清除 ${data.deleted_count} 个缓存键`, 'success');
+                            // 刷新页面数据
+                            refreshData();
+                        })
+                        .catch(error => {
+                            console.error('清除缓存失败:', error);
+                            showMessage('清除缓存失败: ' + error.message, 'error');
+                        });
+                });
+            }
+            
+            // 刷新缓存按钮
+            const refreshCacheBtn = document.getElementById('refresh-cache-btn');
+            if (refreshCacheBtn) {
+                refreshCacheBtn.addEventListener('click', function() {
+                    const select = document.getElementById('refresh-sources');
+                    const source = select ? select.value : 'all';
+                    
+                    let sourcesParam = '';
+                    if (source !== 'all') {
+                        sourcesParam = '?sources=' + source;
+                    }
+                    
+                    showMessage(`正在刷新缓存: ${source === 'all' ? '所有源' : source}...`, 'info');
+                    
+                    fetch('/api/cache/refresh' + sourcesParam, {
+                        method: 'POST'
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('刷新缓存失败');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            showMessage(data.message, 'success');
+                            // 两秒后刷新页面数据
+                            setTimeout(refreshData, 2000);
+                        })
+                        .catch(error => {
+                            console.error('刷新缓存失败:', error);
+                            showMessage('刷新缓存失败: ' + error.message, 'error');
+                        });
+                });
+            }
+            
+            // 加载源列表到下拉框
+            const refreshSourcesSelect = document.getElementById('refresh-sources');
+            if (refreshSourcesSelect) {
+                fetch('/api/cache/stats')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('获取源列表失败');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        // 清空下拉框
+                        refreshSourcesSelect.innerHTML = '<option value="all">所有源</option>';
+                        
+                        // 添加源选项
+                        if (data.sources && data.sources.length > 0) {
+                            data.sources.forEach(source => {
+                                const option = document.createElement('option');
+                                option.value = source.id;
+                                option.textContent = source.name;
+                                refreshSourcesSelect.appendChild(option);
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取源列表失败:', error);
+                    });
+            }
+        }
+    </script>
+</body>
+</html> 

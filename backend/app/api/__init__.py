@@ -16,7 +16,8 @@ from app.api.endpoints import (
     health,
     source_test,
     test,
-    proxies
+    proxies,
+    cache  # 导入新的缓存API模块
 )
 
 # 注册路由
@@ -34,3 +35,4 @@ api_router.include_router(external.router, prefix="/external", tags=["external"]
 api_router.include_router(source_test.router, prefix="/source-test", tags=["source-test"])
 api_router.include_router(test.router, prefix="/test", tags=["test"])
 api_router.include_router(proxies.router, prefix="/proxies", tags=["proxies"])
+api_router.include_router(cache.router, prefix="/cache", tags=["cache"])  # 注册缓存API路由

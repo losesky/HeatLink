@@ -7,6 +7,7 @@
 import os
 import logging
 import logging.config
+import logging.handlers
 from app.core.config import settings
 
 def configure_logging():
@@ -70,6 +71,9 @@ def configure_logging():
         "app": logging.INFO,  # 应用核心
         "worker": logging.INFO,  # 工作线程
         "main": logging.INFO,  # 主程序
+        
+        # 缓存相关日志 - 将日志级别设置为INFO，但通过处理器重定向到专门的文件
+        "cache": logging.INFO,  # 缓存管理器专用日志
     }
     
     # 应用模块级别设置
@@ -83,10 +87,33 @@ def configure_logging():
         # API端点可以看到DEBUG信息
         logging.getLogger("app.api").setLevel(logging.DEBUG)
     
+    # 设置缓存日志处理器
+    # 创建日志目录
+    log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../logs'))
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # 配置缓存日志处理器
+    cache_logger = logging.getLogger('cache')
+    cache_logger.propagate = False  # 防止日志传递到父logger，避免在控制台显示
+    
+    # 创建文件处理器
+    cache_log_file = os.path.join(log_dir, 'cache.log')
+    cache_handler = logging.handlers.RotatingFileHandler(
+        cache_log_file, maxBytes=10*1024*1024, backupCount=5
+    )
+    cache_handler.setFormatter(logging.Formatter(log_format))
+    cache_logger.addHandler(cache_handler)
+    
     # 返回根日志器，通常不需要使用
     return logging.getLogger()
 
 
 def get_logger(name):
     """获取指定名称的日志器"""
-    return logging.getLogger(name) 
+    return logging.getLogger(name)
+
+
+def get_cache_logger():
+    """获取缓存专用日志器"""
+    return logging.getLogger('cache') 

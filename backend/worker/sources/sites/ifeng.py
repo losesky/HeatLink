@@ -512,73 +512,55 @@ class IfengBaseSource(WebNewsSource):
     
     async def fetch(self) -> List[NewsItemModel]:
         """
-        从网页抓取新闻
+        获取新闻
+        
+        Returns:
+            新闻项列表
         """
         logger.info(f"开始获取 {self.name} 数据")
-        start_time = time.time()
-        
-        # 重置备用标志
-        self._tried_http_fallback = False
-        
         try:
-            # 首先检查缓存是否有效
-            if self.is_cache_valid():
-                logger.info(f"从缓存获取到 {len(self._cached_news_items)} 条数据，用时: {time.time() - start_time:.2f}秒")
-                return self._cached_news_items.copy()
+            start_time = time.time()
             
-            # 设置整体超时
-            overall_timeout = self.config.get("overall_timeout", 60)
-            
-            # 创建异步任务
-            fetch_task = asyncio.create_task(self._fetch_impl())
-            
-            # 使用超时控制
             try:
-                # 等待获取结果，设置超时
-                news_items = await asyncio.wait_for(fetch_task, timeout=overall_timeout)
+                # 实际获取新闻的实现，调用_fetch_impl
+                news_items = await self._fetch_impl()
+                logger.info(f"成功获取 {len(news_items) if news_items else 0} 条 {self.name} 数据，耗时 {time.time() - start_time:.2f} 秒")
                 
-                # 记录执行时间
-                elapsed = time.time() - start_time
-                logger.info(f"成功获取 {len(news_items)} 条数据，用时: {elapsed:.2f}秒")
-                
-                # 更新缓存
-                await self.update_cache(news_items)
+                # 注意：这里不再手动更新缓存
+                # 缓存更新由基类的get_news方法负责
                 
                 return news_items
                 
-            except asyncio.TimeoutError:
-                logger.warning(f"获取数据超时 ({overall_timeout}秒)，尝试使用备用方法")
+            except Exception as e:
+                logger.error(f"获取 {self.name} 数据时出错: {str(e)}", exc_info=True)
                 
-                # 如果使用Selenium超时，尝试HTTP备用方法
-                if self.config.get("use_http_fallback", True) and not self._tried_http_fallback:
-                    logger.info("尝试使用HTTP备用方法获取数据")
-                    fallback_items = await self._fetch_with_http_fallback()
-                    if fallback_items:
-                        # 更新缓存
-                        await self.update_cache(fallback_items)
-                        
-                        elapsed = time.time() - start_time
-                        logger.info(f"通过HTTP备用方法成功获取 {len(fallback_items)} 条数据，总用时: {elapsed:.2f}秒")
-                        
-                        return fallback_items
+                # HTTP备用获取
+                if self.config.get("use_http_fallback", False) and not self._tried_http_fallback:
+                    logger.warning(f"尝试使用HTTP备用方式获取 {self.name} 数据")
+                    self._tried_http_fallback = True
+                    try:
+                        news_items = await self._fetch_with_http_fallback()
+                        if news_items:
+                            logger.info(f"使用HTTP备用方式成功获取 {len(news_items)} 条 {self.name} 数据")
+                            return news_items
+                    except Exception as fallback_e:
+                        logger.error(f"HTTP备用获取 {self.name} 数据失败: {str(fallback_e)}")
                 
-                # 如果有缓存，返回缓存
-                if self._cached_news_items:
-                    logger.info(f"返回缓存的 {len(self._cached_news_items)} 条数据")
-                    return self._cached_news_items.copy()
+                # 如果备用方式也失败，且有缓存，可以在这记录失败但不操作缓存
+                # 缓存保护由基类的get_news方法负责
+                if hasattr(self, '_cached_news_items') and self._cached_news_items:
+                    logger.warning(f"获取 {self.name} 数据失败，记录错误但不修改缓存")
                 
-                logger.error("获取数据完全失败")
-                return []
-        except Exception as e:
-            elapsed = time.time() - start_time
-            logger.error(f"获取数据时发生错误: {str(e)}，用时: {elapsed:.2f}秒")
+                # 错误记录放这里，但让基类处理缓存保护
+                raise e
+                
+        finally:
+            # 重置HTTP备用标志
+            self._tried_http_fallback = False
             
-            # 如果有缓存，返回缓存
-            if self._cached_news_items:
-                logger.info(f"错误后返回缓存的 {len(self._cached_news_items)} 条数据")
-                return self._cached_news_items.copy()
-            
-            return []
+            # 如果有错误，不在这里处理缓存，让基类的get_news方法负责处理
+        
+        return []
     
     async def _fetch_impl(self) -> List[NewsItemModel]:
         """
@@ -663,12 +645,44 @@ class IfengBaseSource(WebNewsSource):
             bool: 缓存是否有效
         """
         if not self.config.get("use_cache", True):
+            logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: 配置禁用缓存，直接返回False")
             return False
             
-        return (
-            self._cached_news_items 
-            and (time.time() - self._last_cache_update) < self._cache_ttl
-        )
+        has_cached_items = bool(self._cached_news_items)
+        cache_age = time.time() - self._last_cache_update if self._last_cache_update > 0 else float('inf')
+        
+        # 增强缓存有效期检查逻辑 - 针对特定源应用额外灵活的规则
+        if self.source_id in ["ifeng-tech", "ifeng-studio"]:
+            # 对于凤凰科技和凤凰工作室源，延长缓存有效期
+            # 只要缓存年龄不超过配置的TTL的1.5倍，就认为有效
+            cache_ttl_valid = cache_age < (self._cache_ttl * 1.5)
+            logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: 应用增强的缓存TTL检查 (1.5倍TTL)")
+        else:
+            # 标准TTL检查
+            cache_ttl_valid = cache_age < self._cache_ttl
+        
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: 缓存状态检查")
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: _cached_news_items={'有' if has_cached_items else '无'}, 条目数={len(self._cached_news_items) if self._cached_news_items else 0}")
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: _last_cache_update={self._last_cache_update}, 缓存年龄={cache_age:.2f}秒")
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: _cache_ttl={self._cache_ttl}秒, 是否未过期={cache_ttl_valid}")
+        
+        # 针对特定源的额外检查
+        if self.source_id in ["ifeng-tech", "ifeng-studio"] and has_cached_items:
+            # 即使缓存过期，如果内容丰富(超过5条)，仍然可以考虑有效以防止频繁获取失败
+            # 但前提是缓存年龄不超过TTL的3倍(极端保护)
+            if len(self._cached_news_items) > 5 and cache_age < (self._cache_ttl * 3):
+                extreme_protection = True
+                logger.warning(f"[IFENG-CACHE-PROTECTION] {self.source_id}: 启用极端缓存保护! 缓存年龄: {cache_age:.2f}秒, 但内容丰富({len(self._cached_news_items)}条)")
+            else:
+                extreme_protection = False
+        else:
+            extreme_protection = False
+        
+        # 标准判断 + 极端保护
+        cache_valid = (has_cached_items and cache_ttl_valid) or extreme_protection
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: 最终缓存有效性={cache_valid}, 极端保护={extreme_protection}")
+        
+        return cache_valid
     
     async def update_cache(self, news_items: List[NewsItemModel]) -> None:
         """
@@ -677,9 +691,49 @@ class IfengBaseSource(WebNewsSource):
         Args:
             news_items: 新闻项列表
         """
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: 开始更新缓存，新闻条目数={len(news_items) if news_items else 0}")
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: 缓存前状态: _cached_news_items条目数={len(self._cached_news_items) if self._cached_news_items else 0}, _last_cache_update={self._last_cache_update}")
+        
+        # 增强的缓存保护逻辑
+        has_existing_cache = bool(self._cached_news_items)
+        existing_items_count = len(self._cached_news_items) if self._cached_news_items else 0
+        new_items_count = len(news_items) if news_items else 0
+        
+        # 情况1: 如果news_items为空且已有缓存，保留现有缓存
+        if not news_items and has_existing_cache:
+            logger.warning(f"[IFENG-CACHE-PROTECTION] {self.source_id}: 新闻条目为空，保留现有缓存({existing_items_count}条)，不更新")
+            return
+        
+        # 情况2: 如果新抓取的内容明显少于现有缓存（减少50%以上），且现有缓存足够丰富（超过5条），保留现有缓存
+        if has_existing_cache and existing_items_count > 5 and new_items_count > 0:
+            # 计算减少率
+            reduction_rate = (existing_items_count - new_items_count) / existing_items_count
+            
+            if reduction_rate > 0.5:  # 减少超过50%
+                # 适用于特定源的更强保护
+                if self.source_id in ["ifeng-tech", "ifeng-studio"]:
+                    logger.warning(f"[IFENG-CACHE-PROTECTION] {self.source_id}: 新闻条目数显著减少 ({existing_items_count} -> {new_items_count}, 减少{reduction_rate:.1%})，保留现有缓存")
+                    # 记录保护事件
+                    protection_event = {
+                        "time": time.time(),
+                        "type": "content_reduction",
+                        "old_count": existing_items_count,
+                        "new_count": new_items_count,
+                        "reduction_rate": reduction_rate
+                    }
+                    # 如果有保护统计字段则更新
+                    if hasattr(self, '_cache_protection_stats'):
+                        self._cache_protection_stats["shrink_protection_count"] = self._cache_protection_stats.get("shrink_protection_count", 0) + 1
+                        if "protection_history" in self._cache_protection_stats:
+                            self._cache_protection_stats["protection_history"].append(protection_event)
+                    return
+        
+        # 标准更新流程
         async with self._cache_lock:
             self._cached_news_items = news_items
             self._last_cache_update = time.time()
+            
+        logger.info(f"[IFENG-CACHE-DEBUG] {self.source_id}: 缓存已更新，新状态: _cached_news_items条目数={len(self._cached_news_items) if self._cached_news_items else 0}, _last_cache_update={self._last_cache_update}")
         logger.debug(f"更新 {self.source_id} 缓存，共 {len(news_items)} 条数据")
 
 
@@ -696,7 +750,7 @@ class IfengStudioSource(IfengBaseSource):
         name: str = "凤凰财经全球快报",
         url: str = "https://finance.ifeng.com/studio",
         update_interval: int = 900,  # 15分钟更新一次，财经快讯更新频繁
-        cache_ttl: int = 600,  # 10分钟
+        cache_ttl: int = 900,  # 15分钟缓存有效期，与更新间隔相同
         category: str = "finance",
         country: str = "CN",
         language: str = "zh-CN",
@@ -711,6 +765,8 @@ class IfengStudioSource(IfengBaseSource):
             "save_debug_info": DEBUG_MODE,
             # HTTP备用
             "use_http_fallback": True,
+            # 强制启用缓存
+            "use_cache": True,
         })
         
         # 强制统一source_id
@@ -1129,7 +1185,7 @@ class IfengTechSource(IfengBaseSource):
         name: str = "凤凰科技",
         url: str = "https://tech.ifeng.com/",
         update_interval: int = 1800,  # 30分钟更新一次
-        cache_ttl: int = 900,  # 15分钟
+        cache_ttl: int = 1200,  # 20分钟缓存有效期，延长TTL提高缓存命中率
         category: str = "technology",
         country: str = "CN",
         language: str = "zh-CN",
@@ -1139,12 +1195,14 @@ class IfengTechSource(IfengBaseSource):
         config = config or {}
         config.update({
             # 设置合理的超时时间
-            "selenium_timeout": 5,  # 科技新闻页面加载时间较长
+            "selenium_timeout": 5,  # 适当减少超时时间
             # 调试配置
             "save_debug_info": DEBUG_MODE,
             # HTTP备用
             "use_http_fallback": True,
-            # 设置最大获取新闻数
+            # 强制启用缓存
+            "use_cache": True,
+            # 指定最大获取条目数
             "max_items": 30,
         })
         
