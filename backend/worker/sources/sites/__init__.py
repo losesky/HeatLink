@@ -31,7 +31,7 @@ from worker.sources.sites.wallstreetcn import (
 from worker.sources.sites.kr36 import Kr36NewsSource
 # 新增适配器
 from worker.sources.sites.coolapk import CoolApkNewsSource, CoolApkFeedNewsSource, CoolApkAppNewsSource
-from worker.sources.sites.cls import CLSNewsSource, CLSArticleNewsSource
+from worker.sources.sites.cls import CLSNewsSource
 # 添加BBC世界新闻适配器
 from worker.sources.sites.bbc import BBCWorldNewsSource
 # 添加新创建的澎湃新闻Selenium适配器
@@ -42,9 +42,11 @@ from worker.sources.sites.zhihu_daily import ZhihuDailyNewsSource
 from worker.sources.sites.bloomberg import (
     BloombergNewsSource,
     BloombergMarketsNewsSource,
-    BloombergTechnologyNewsSource, 
-    BloombergChinaNewsSource
+    BloombergTechnologyNewsSource
 )
+# 添加第一财经新闻适配器
+from worker.sources.sites.yicai import YiCaiBriefSource, YiCaiNewsSource
+from worker.sources.sites.ifeng import IfengStudioSource, IfengTechSource
 
 # 导出所有新闻源适配器
 __all__ = [
@@ -82,12 +84,14 @@ __all__ = [
     "CoolApkFeedNewsSource",
     "CoolApkAppNewsSource",
     "CLSNewsSource",
-    "CLSArticleNewsSource",
     "BBCWorldNewsSource",
     "ThePaperSeleniumSource",
     "ZhihuDailyNewsSource",
     "BloombergNewsSource",
     "BloombergMarketsNewsSource",
     "BloombergTechnologyNewsSource",
-    "BloombergChinaNewsSource"
+    "YiCaiBriefSource",
+    "YiCaiNewsSource",
+    "IfengStudioSource",
+    "IfengTechSource"
 ] 

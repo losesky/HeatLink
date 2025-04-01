@@ -38,7 +38,7 @@ async def init_proxy():
     # 需要代理的数据源
     proxy_required_sources = [
         "github", "bloomberg-markets", "bloomberg-tech", "bloomberg", 
-        "hackernews", "bbc_world", "bloomberg-china", "v2ex", "producthunt"
+        "hackernews", "bbc_world", "v2ex", "producthunt"
     ]
     
     try:

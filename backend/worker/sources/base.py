@@ -153,6 +153,10 @@ class NewsSource(ABC):
         self._last_fetch_count = 0
         self.priority = 0  # 默认优先级为0
         
+        # 添加通用缓存字段
+        self._cached_news_items = []  # 缓存的新闻项
+        self._last_cache_update = 0   # 最后缓存更新时间
+        
         # 自适应调度相关属性
         self.min_update_interval = 120  # 最小更新间隔(秒)，默认2分钟
         self.max_update_interval = 7200  # 最大更新间隔(秒)，默认2小时
@@ -207,7 +211,7 @@ class NewsSource(ABC):
         # 固定需要代理的源列表
         self.proxy_required_sources = [
             "github", "bloomberg-markets", "bloomberg-tech", "bloomberg", 
-            "hackernews", "bbc_world", "bloomberg-china", "v2ex", "producthunt"
+            "hackernews", "bbc_world", "v2ex", "producthunt"
         ]
         
         # 如果该源ID在需要代理的列表中，自动设置need_proxy为True
@@ -813,12 +817,28 @@ class NewsSource(ABC):
     
     async def get_news(self, force_update: bool = False) -> List[NewsItemModel]:
         """
-        获取新闻，支持强制更新
+        获取新闻，支持强制更新和缓存机制
+        
+        Args:
+            force_update: 是否强制更新，忽略缓存
+            
+        Returns:
+            List[NewsItemModel]: 新闻列表
         """
         start_time = time.time()
         
-        if force_update or self.should_update():
+        # 检查子类是否有自己的缓存判断逻辑
+        if hasattr(self, "is_cache_valid") and callable(self.is_cache_valid):
+            cache_valid = self.is_cache_valid()
+        else:
+            cache_valid = self._cached_news_items and (time.time() - self._last_cache_update) < self.cache_ttl
+            
+        # 检查是否需要更新：强制更新、缓存无效或满足更新条件
+        if force_update or not cache_valid or self.should_update():
             try:
+                logger.debug(f"Fetching news for {self.source_id} (force_update={force_update}, cache_valid={cache_valid})")
+                
+                # 调用子类实现的fetch方法
                 news_items = await self.fetch()
                 
                 # 过滤重复内容
@@ -834,11 +854,21 @@ class NewsSource(ABC):
                 self.error_count = 0
                 self.last_error = None
                 
+                # 更新缓存 - 使用更通用的方法
+                if hasattr(self, "update_cache") and callable(self.update_cache):
+                    await self.update_cache(unique_items)
+                else:
+                    self._cached_news_items = unique_items
+                    self._last_cache_update = time.time()
+                    logger.debug(f"Updated cache for {self.source_id} with {len(unique_items)} items")
+                
                 # 记录性能指标
                 end_time = time.time()
                 self.record_performance(f"get_news({self.source_id})", start_time, end_time)
                 
+                logger.debug(f"Fetched {len(unique_items)} news items for {self.source_id}")
                 return unique_items
+            
             except Exception as e:
                 logger.error(f"Error fetching news from {self.source_id}: {str(e)}")
                 
@@ -853,10 +883,39 @@ class NewsSource(ABC):
                 end_time = time.time()
                 self.record_performance(f"get_news({self.source_id}) [ERROR]", start_time, end_time)
                 
-                return []
+                # 错误时仍返回缓存的数据（如果有）
+                if self._cached_news_items and len(self._cached_news_items) > 0:
+                    logger.info(f"Returning {len(self._cached_news_items)} cached items for {self.source_id} after fetch error")
+                    return self._cached_news_items
+                else:
+                    # 尝试再次调用fetch方法，确保不会返回空列表
+                    try:
+                        logger.debug(f"Trying to fetch again for {self.source_id} after error")
+                        retry_items = await self.fetch()
+                        if retry_items and len(retry_items) > 0:
+                            # 如果重试成功，更新缓存
+                            if hasattr(self, "update_cache") and callable(self.update_cache):
+                                await self.update_cache(retry_items)
+                            else:
+                                self._cached_news_items = retry_items
+                                self._last_cache_update = time.time()
+                            return retry_items
+                    except Exception as retry_e:
+                        logger.error(f"Retry fetch failed for {self.source_id}: {str(retry_e)}")
+                    
+                    # 如果重试失败，返回空列表
+                    return []
         else:
-            logger.debug(f"Skipping update for {self.source_id}, next update in {self.adaptive_interval - (time.time() - self.last_update_time):.2f}s")
-            return []
+            # 不需要更新且缓存有效时，直接返回缓存数据
+            if self._cached_news_items and len(self._cached_news_items) > 0:
+                cache_age = time.time() - self._last_cache_update
+                update_due_in = self.adaptive_interval - (time.time() - self.last_update_time)
+                logger.debug(f"Using cache for {self.source_id}: {len(self._cached_news_items)} items, cache age: {cache_age:.2f}s, next update in {max(0, update_due_in):.2f}s")
+                return self._cached_news_items
+            else:
+                # 缓存无效或为空，强制更新一次
+                logger.debug(f"Cache is empty for {self.source_id}, forcing update")
+                return await self.get_news(force_update=True)
     
     # 实现接口中的方法
     def update_metrics(self, news_count: int, success: bool = True, error: Optional[Exception] = None) -> None:
@@ -893,4 +952,52 @@ class NewsSource(ABC):
         
         # 保持历史记录大小
         if len(self.update_history) > self.max_history_size:
-            self.update_history = self.update_history[-self.max_history_size:] 
+            self.update_history = self.update_history[-self.max_history_size:]
+    
+    def is_cache_valid(self) -> bool:
+        """
+        检查缓存是否有效
+        
+        Returns:
+            bool: 缓存是否有效
+        """
+        return (
+            self._cached_news_items 
+            and (time.time() - self._last_cache_update) < self.cache_ttl
+        )
+    
+    async def update_cache(self, news_items: List[NewsItemModel]) -> None:
+        """
+        更新缓存
+        
+        Args:
+            news_items: 新闻项列表
+        """
+        self._cached_news_items = news_items
+        self._last_cache_update = time.time()
+        logger.debug(f"Updated cache for {self.source_id} with {len(news_items)} items")
+    
+    async def clear_cache(self) -> None:
+        """
+        清除缓存
+        """
+        self._cached_news_items = []
+        self._last_cache_update = 0
+        logger.debug(f"Cleared cache for {self.source_id}")
+    
+    async def close(self) -> None:
+        """
+        关闭资源
+        """
+        # 清理缓存
+        await self.clear_cache()
+        
+        # 关闭HTTP客户端
+        if self._http_client and not self._http_client.closed:
+            try:
+                await self._http_client.close()
+                self._http_client = None
+            except Exception as e:
+                logger.error(f"Error closing HTTP client for {self.source_id}: {str(e)}")
+        
+        logger.debug(f"Closed resources for {self.source_id}") 

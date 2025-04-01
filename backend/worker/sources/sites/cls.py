@@ -119,6 +119,9 @@ class CLSNewsSource(RESTNewsSource):
         # WebDriver实例，需要时才初始化
         self._driver = None
         self._driver_pid = None
+        
+        # 设置是否包含文章内容 (合并cls-article功能)
+        self.include_articles = True
     
     async def fetch(self) -> List[NewsItemModel]:
         """
@@ -1465,83 +1468,4 @@ class CLSNewsSource(RESTNewsSource):
         关闭资源
         """
         await self._close_driver()
-        await super().close()
-
-
-class CLSArticleNewsSource(CLSNewsSource):
-    """
-    财联社文章适配器
-    使用与主适配器相同的数据源
-    """
-    
-    def __init__(
-        self,
-        source_id: str = "cls-article",
-        name: str = "财联社文章",
-        api_url: str = None,  # 使用默认公共API
-        **kwargs
-    ):
-        super().__init__(
-            source_id=source_id,
-            name=name,
-            api_url=api_url,
-            **kwargs
-        )
-    
-    async def fetch(self) -> List[NewsItemModel]:
-        """
-        从财联社获取文章新闻
-        调用父类的fetch方法，但确保使用自己的source_id进行统计
-        """
-        logger.info(f"Fetching CLS Article news with source_id={self.source_id}")
-        try:
-            # 问题：super()对象没有直接的source_id属性
-            # 修复：使用self.__class__.__bases__[0]获取父类，并从父类实例中获取source_id
-            original_parent_source_id = None
-            
-            # 保存当前的source_id，以便在统计中使用
-            current_source_id = self.source_id
-            
-            # 临时将父类实例的source_id属性修改为当前类的source_id
-            # 这样父类的fetch方法执行时会使用当前的source_id进行统计
-            try:
-                # 安全获取父类实例（CLSNewsSource）的source_id
-                parent_cls = self.__class__.__bases__[0]
-                parent_instance = super()
-                
-                # 使用更安全的方式获取和设置source_id
-                parent_source_id_descriptor = getattr(parent_cls, 'source_id', None)
-                if hasattr(parent_instance, '_source_id'):
-                    # 如果父类实例有_source_id属性（可能是私有属性的名称方式）
-                    original_parent_source_id = parent_instance._source_id
-                    parent_instance._source_id = current_source_id
-                elif hasattr(parent_cls, 'source_id'):
-                    # 直接使用原始的fetch方法，但在wrap_fetch时使用cls-article的ID
-                    # 这是最安全的方式
-                    from worker.stats_wrapper import stats_updater
-                    original_fetch = parent_cls.fetch
-                    result = await stats_updater.wrap_fetch(
-                        current_source_id,
-                        original_fetch.__get__(self, self.__class__),
-                        api_type="internal"
-                    )
-                    logger.info(f"CLS Article fetch completed: {len(result)} items")
-                    return result
-                else:
-                    # 如果无法访问父类的source_id，只能调用原始fetch并接受可能的统计归属问题
-                    logger.warning("无法安全访问父类source_id，使用标准调用方式")
-                    result = await super().fetch()
-                    logger.info(f"CLS Article fetch completed: {len(result)} items")
-                    return result
-                
-                # 执行父类的fetch方法
-                result = await super().fetch()
-                logger.info(f"CLS Article fetch completed: {len(result)} items")
-                return result
-            finally:
-                # 恢复父类的source_id（如果有修改）
-                if original_parent_source_id is not None and hasattr(parent_instance, '_source_id'):
-                    parent_instance._source_id = original_parent_source_id
-        except Exception as e:
-            logger.error(f"CLS Article fetch error: {str(e)}")
-            raise 
+        await super().close() 

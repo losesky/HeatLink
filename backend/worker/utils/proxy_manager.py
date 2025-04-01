@@ -392,7 +392,7 @@ async def init_proxy_settings(source_ids=None):
     if source_ids is None:
         proxy_required_sources = [
             "github", "bloomberg-markets", "bloomberg-tech", "bloomberg", 
-            "hackernews", "bbc_world", "bloomberg-china", "v2ex", "producthunt"
+            "hackernews", "bbc_world", "v2ex", "producthunt"
         ]
     else:
         proxy_required_sources = source_ids

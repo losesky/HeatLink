@@ -97,42 +97,28 @@ class BloombergNewsSource(WebNewsSource):
     ):
         # 使用指定的feed_type设置URL
         if url is None:
-            url = self.RSS_FEEDS.get(feed_type, self.RSS_FEEDS["latest"])
+            if feed_type in self.RSS_FEEDS:
+                url = self.RSS_FEEDS[feed_type]
+            else:
+                url = self.RSS_FEEDS["latest"]
+                logger.warning(f"Invalid feed_type: {feed_type}, using 'latest' instead")
         
+        # 创建配置或使用传入的配置
         config = config or {}
         
-        # 随机选择一个用户代理
-        user_agent = random.choice(self.USER_AGENTS)
-        
+        # 更新默认配置
         config.update({
-            "headers": {
-                "User-Agent": user_agent,
-                "Accept": "application/xml,application/rss+xml,text/xml,application/atom+xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Cache-Control": "max-age=0",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Pragma": "no-cache",
-                "DNT": "1",  # Do Not Track
-                "Referer": "https://www.bloomberg.com/"
-            },
-            # 增加最大重试次数
-            "max_retries": 3,
-            # 调整重试延迟（秒）
-            "retry_delay": 2,
-            # 增加总超时时间（秒）
-            "total_timeout": 30,
-            # 连接超时（秒）
-            "connect_timeout": 10,
-            # 读取超时（秒）
-            "read_timeout": 20,
-            # 启用缓存以减少重复请求
-            "use_cache": True,
+            # 使用chromium浏览器
+            "browser": "chromium",
+            # 使用新的HTTP客户端
+            "http_client": "httpx",
+            # 设置请求超时
+            "timeout": 30.0,
+            # 设置重试次数
+            "retry_count": 3,
+            # 设置重试间隔
+            "retry_delay": 2.0,
+            # 设置缓存存活时间
             "cache_ttl": 1800,  # 30分钟缓存
             # 启用备用URL
             "use_backup_urls": True,
@@ -168,6 +154,9 @@ class BloombergNewsSource(WebNewsSource):
         # 添加feed_url属性支持，确保与RSSNewsSource兼容
         self.feed_url = url
         self.api_url = url  # 同时设置api_url以支持APINewsSource
+        
+        # 支持中国相关新闻 (合并bloomberg-china功能)
+        self.include_china_news = True
         
         logger.info(f"Initialized {self.name} adapter with URL: {self.url} (Feed type: {feed_type})")
     
@@ -732,30 +721,5 @@ class BloombergTechnologyNewsSource(BloombergNewsSource):
             url=url,
             feed_type="technology",
             category="technology",
-            **kwargs
-        )
-
-
-class BloombergChinaNewsSource(BloombergNewsSource):
-    """
-    彭博社中国新闻适配器
-    专注于中国相关新闻
-    """
-    
-    def __init__(
-        self,
-        source_id: str = "bloomberg-china",
-        name: str = "彭博社中国",
-        url: str = None,
-        **kwargs
-    ):
-        # 传递china作为feed_type
-        super().__init__(
-            source_id=source_id,
-            name=name,
-            url=url,
-            feed_type="china",
-            category="finance",
-            country="CN",
             **kwargs
         ) 

@@ -4,6 +4,7 @@
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 显示标题
@@ -135,85 +136,117 @@ EOF
     return $init_result
 }
 
-# 检查 Docker 是否已安装
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}错误: Docker 未安装${NC}"
-    exit 1
-fi
+# 检查环境依赖
+check_dependencies() {
+    # 检查 Docker 是否已安装
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}错误: Docker 未安装${NC}"
+        exit 1
+    fi
 
-# 检查 Docker Compose 可用性 - 使用新的子命令语法
-if ! docker compose version &> /dev/null; then
-    echo -e "${RED}错误: Docker Compose 不可用${NC}"
-    exit 1
-fi
+    # 检查 Docker Compose 可用性 - 使用新的子命令语法
+    if ! docker compose version &> /dev/null; then
+        echo -e "${RED}错误: Docker Compose 不可用${NC}"
+        exit 1
+    fi
+}
 
-# 复制本地环境配置文件
-echo -e "${YELLOW}正在准备本地开发环境配置...${NC}"
-cp .env.local .env
-check_status "复制环境配置文件失败"
+# 准备环境配置
+prepare_environment() {
+    # 复制本地环境配置文件
+    echo -e "${YELLOW}正在准备本地开发环境配置...${NC}"
+    cp .env.local .env
+    check_status "复制环境配置文件失败"
 
-# 创建数据备份目录
-BACKUP_DIR="db_backups"
-if [ ! -d "$BACKUP_DIR" ]; then
-    mkdir -p "$BACKUP_DIR"
-    echo -e "${YELLOW}创建数据备份目录: $BACKUP_DIR${NC}"
-fi
+    # 创建数据备份目录
+    BACKUP_DIR="db_backups"
+    if [ ! -d "$BACKUP_DIR" ]; then
+        mkdir -p "$BACKUP_DIR"
+        echo -e "${YELLOW}创建数据备份目录: $BACKUP_DIR${NC}"
+    fi
+}
 
-# 检查是否存在运行中的容器
-if docker ps -q --filter "name=heatlink-postgres-local" | grep -q .; then
-    echo -e "${YELLOW}检测到已运行的数据库容器，执行数据备份...${NC}"
-    BACKUP_FILE="$BACKUP_DIR/heatlink_backup_$(date +%Y%m%d_%H%M%S).sql"
-    docker exec -t heatlink-postgres-local pg_dump -U postgres -d heatlink_dev > "$BACKUP_FILE"
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}数据库备份已保存到: $BACKUP_FILE${NC}"
+# 备份数据
+backup_database() {
+    # 检查是否存在运行中的容器
+    if docker ps -q --filter "name=postgres-local" | grep -q .; then
+        echo -e "${YELLOW}检测到已运行的数据库容器，执行数据备份...${NC}"
+        BACKUP_FILE="$BACKUP_DIR/heatlink_backup_$(date +%Y%m%d_%H%M%S).sql"
+        docker exec -t postgres-local pg_dump -U postgres -d heatlink_dev > "$BACKUP_FILE"
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}数据库备份已保存到: $BACKUP_FILE${NC}"
+        else
+            echo -e "${YELLOW}数据库备份失败，将继续但不保证数据安全${NC}"
+        fi
     else
-        echo -e "${YELLOW}数据库备份失败，将继续但不保证数据安全${NC}"
+        echo -e "${YELLOW}未检测到运行中的数据库容器，跳过备份...${NC}"
     fi
-fi
+}
 
-# 确保所有容器都已停止 - 新增
-echo -e "${YELLOW}确保所有容器都干净重启...${NC}"
-docker compose -f docker-compose.local.yml down
-sleep 3  # 增加等待时间确保所有容器都已停止
+# 启动容器
+start_containers() {
+    # 确保所有容器都已停止
+    echo -e "${YELLOW}确保所有容器都干净重启...${NC}"
+    docker compose -f docker-compose.local.yml down
+    sleep 3  # 增加等待时间确保所有容器都已停止
 
-# 启动数据库和缓存服务
-echo -e "${YELLOW}正在启动数据库和缓存服务...${NC}"
-docker compose -f docker-compose.local.yml up -d
-check_status "启动容器服务失败"
+    # 启动数据库和缓存服务
+    echo -e "${YELLOW}正在启动数据库和缓存服务...${NC}"
+    docker compose -f docker-compose.local.yml up -d
+    check_status "启动容器服务失败"
 
-# 等待服务启动 - 使用更可靠的方式进行健康检查
-echo -e "${YELLOW}等待服务启动...${NC}"
-MAX_RETRIES=20  # 增加最大尝试次数
-RETRY_COUNT=0
-RETRY_DELAY=5   # 增加每次尝试的等待时间
+    # 等待服务启动 - 使用更可靠的方式进行健康检查
+    echo -e "${YELLOW}等待服务启动...${NC}"
+    MAX_RETRIES=20  # 增加最大尝试次数
+    RETRY_COUNT=0
+    RETRY_DELAY=5   # 增加每次尝试的等待时间
 
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if docker ps | grep -q "heatlink-postgres-local" && docker ps | grep -q "(healthy)"; then
-        echo -e "${GREEN}所有服务已启动并健康${NC}"
-        # 额外等待确保数据库完全就绪 - 新增
-        echo -e "${YELLOW}额外等待5秒确保数据库完全就绪...${NC}"
-        sleep 5
-        break
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        if docker ps | grep -q "postgres-local" && docker ps | grep -q "(healthy)"; then
+            echo -e "${GREEN}所有服务已启动并健康${NC}"
+            # 额外等待确保数据库完全就绪 - 新增
+            echo -e "${YELLOW}额外等待5秒确保数据库完全就绪...${NC}"
+            sleep 5
+            break
+        fi
+        
+        echo -e "${YELLOW}等待服务启动，尝试 $((RETRY_COUNT+1))/$MAX_RETRIES...${NC}"
+        RETRY_COUNT=$((RETRY_COUNT+1))
+        sleep $RETRY_DELAY
+    done
+
+    if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+        echo -e "${RED}服务启动超时，请手动检查容器状态${NC}"
+        echo -e "${RED}终止执行...${NC}"
+        exit 1
     fi
-    
-    echo -e "${YELLOW}等待服务启动，尝试 $((RETRY_COUNT+1))/$MAX_RETRIES...${NC}"
-    RETRY_COUNT=$((RETRY_COUNT+1))
-    sleep $RETRY_DELAY
-done
+}
 
-if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-    echo -e "${RED}服务启动超时，请手动检查容器状态${NC}"
-    echo -e "${RED}终止执行...${NC}"
-    exit 1
-fi
+# 停止容器
+stop_containers() {
+    echo -e "${YELLOW}正在停止所有容器...${NC}"
+    docker compose -f docker-compose.local.yml down
+    check_status "停止容器失败"
+    echo -e "${GREEN}所有容器已停止${NC}"
+}
 
-# 运行数据库初始化和迁移
-echo -e "${YELLOW}运行数据库初始化和迁移...${NC}"
-cd backend || { echo -e "${RED}找不到backend目录${NC}"; exit 1; }
+# 重置容器和数据
+reset_containers() {
+    echo -e "${YELLOW}正在重置所有容器和数据卷...${NC}"
+    docker compose -f docker-compose.local.yml down -v
+    check_status "重置容器和数据卷失败"
+    echo -e "${GREEN}所有容器和数据卷已重置${NC}"
+}
 
-# 检查数据库
-echo -e "${YELLOW}检查数据库连接...${NC}"
-python -c "
+# 初始化和迁移数据库
+initialize_database() {
+    # 运行数据库初始化和迁移
+    echo -e "${YELLOW}运行数据库初始化和迁移...${NC}"
+    cd backend || { echo -e "${RED}找不到backend目录${NC}"; exit 1; }
+
+    # 检查数据库
+    echo -e "${YELLOW}检查数据库连接...${NC}"
+    python -c "
 import psycopg2
 import time
 import os
@@ -279,21 +312,21 @@ with open('.db_connection.json', 'w') as f:
     json.dump(connection_info, f)
 "
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}数据库连接失败，请检查数据库服务${NC}"
-    exit 1
-fi
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}数据库连接失败，请检查数据库服务${NC}"
+        exit 1
+    fi
 
-# 检查migrations版本目录
-if [ ! -d "alembic/versions" ]; then
-    echo -e "${YELLOW}创建migrations版本目录...${NC}"
-    mkdir -p alembic/versions
-fi
+    # 检查migrations版本目录
+    if [ ! -d "alembic/versions" ]; then
+        echo -e "${YELLOW}创建migrations版本目录...${NC}"
+        mkdir -p alembic/versions
+    fi
 
-# 安全的迁移逻辑
-# 首先检查数据库是否已有alembic_version表
-echo -e "${YELLOW}检查迁移状态...${NC}"
-python -c "
+    # 安全的迁移逻辑
+    # 首先检查数据库是否已有alembic_version表
+    echo -e "${YELLOW}检查迁移状态...${NC}"
+    python -c "
 import os
 import json
 import psycopg2
@@ -354,46 +387,46 @@ except Exception as e:
     exit(1)
 "
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}检查迁移状态失败${NC}"
-    exit 1
-fi
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}检查迁移状态失败${NC}"
+        exit 1
+    fi
 
-# 读取迁移状态
-source .migration_status.txt
+    # 读取迁移状态
+    source .migration_status.txt
 
-# 检查是否有迁移文件
-if [ -z "$(ls -A alembic/versions/)" ]; then
-    echo -e "${YELLOW}创建初始迁移文件...${NC}"
-    alembic revision --autogenerate -m "Initial migration"
-    check_status "创建迁移文件失败"
-fi
+    # 检查是否有迁移文件
+    if [ -z "$(ls -A alembic/versions/)" ]; then
+        echo -e "${YELLOW}创建初始迁移文件...${NC}"
+        alembic revision --autogenerate -m "Initial migration"
+        check_status "创建迁移文件失败"
+    fi
 
-# 根据迁移状态决定如何处理
-if [ "$TABLE_EXISTS" = "True" ]; then
-    echo -e "${YELLOW}应用增量迁移...${NC}"
-    alembic upgrade head
-    MIGRATION_STATUS=$?
-elif [ "$TABLE_COUNT" -gt "0" ]; then
-    echo -e "${YELLOW}检测到现有数据库表但无迁移记录，标记当前版本...${NC}"
-    alembic stamp head
-    MIGRATION_STATUS=$?
-else
-    echo -e "${YELLOW}应用全新迁移...${NC}"
-    # 使用set +e允许命令失败不终止脚本
-    set +e
-    alembic upgrade head
-    MIGRATION_STATUS=$?
-    set -e
-fi
+    # 根据迁移状态决定如何处理
+    if [ "$TABLE_EXISTS" = "True" ]; then
+        echo -e "${YELLOW}应用增量迁移...${NC}"
+        alembic upgrade head
+        MIGRATION_STATUS=$?
+    elif [ "$TABLE_COUNT" -gt "0" ]; then
+        echo -e "${YELLOW}检测到现有数据库表但无迁移记录，标记当前版本...${NC}"
+        alembic stamp head
+        MIGRATION_STATUS=$?
+    else
+        echo -e "${YELLOW}应用全新迁移...${NC}"
+        # 使用set +e允许命令失败不终止脚本
+        set +e
+        alembic upgrade head
+        MIGRATION_STATUS=$?
+        set -e
+    fi
 
-# 处理迁移失败的情况
-if [ $MIGRATION_STATUS -ne 0 ]; then
-    echo -e "${RED}数据库迁移过程中出现错误${NC}"
-    echo -e "${YELLOW}尝试创建初始数据库结构...${NC}"
-    
-    # 创建数据库中的表结构
-    python -c "
+    # 处理迁移失败的情况
+    if [ $MIGRATION_STATUS -ne 0 ]; then
+        echo -e "${RED}数据库迁移过程中出现错误${NC}"
+        echo -e "${YELLOW}尝试创建初始数据库结构...${NC}"
+        
+        # 创建数据库中的表结构
+        python -c "
 import os
 import sys
 import json
@@ -429,71 +462,185 @@ except Exception as e:
     print(f'创建表时出错: {str(e)}')
     sys.exit(1)
 "
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}无法创建数据库表结构${NC}"
-        exit 1
+        
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}无法创建数据库表结构${NC}"
+            exit 1
+        else
+            echo -e "${GREEN}成功创建数据库表结构${NC}"
+            # 标记当前迁移状态
+            echo -e "${YELLOW}标记当前数据库版本...${NC}"
+            alembic stamp head
+            check_status "标记数据库版本失败"
+        fi
     else
-        echo -e "${GREEN}成功创建数据库表结构${NC}"
-        # 标记当前迁移状态
-        echo -e "${YELLOW}标记当前数据库版本...${NC}"
-        alembic stamp head
-        check_status "标记数据库版本失败"
+        echo -e "${GREEN}数据库迁移成功完成${NC}"
     fi
-else
-    echo -e "${GREEN}数据库迁移成功完成${NC}"
-fi
 
-# 在继续之前再次等待数据库 - 新增
-echo -e "${YELLOW}确保数据库完全可用...${NC}"
-sleep 3
+    # 在继续之前再次等待数据库 - 新增
+    echo -e "${YELLOW}确保数据库完全可用...${NC}"
+    sleep 3
 
-# 执行数据初始化 - 使用我们的新函数
-echo -e "${YELLOW}开始初始化数据...${NC}"
-if [ -d "scripts" ]; then
-    init_data
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}初始化数据失败${NC}"
-        exit 1
+    # 执行数据初始化 - 使用我们的函数
+    echo -e "${YELLOW}开始初始化数据...${NC}"
+    if [ -d "scripts" ]; then
+        init_data
+        
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}初始化数据失败${NC}"
+            exit 1
+        else
+            echo -e "${GREEN}基础数据初始化成功${NC}"
+        fi
     else
-        echo -e "${GREEN}基础数据初始化成功${NC}"
+        echo -e "${RED}找不到初始化脚本目录: scripts/${NC}"
+        exit 1
     fi
-else
-    echo -e "${RED}找不到初始化脚本目录: scripts/${NC}"
-    exit 1
-fi
 
-# 清理临时文件
-rm -f .db_connection.json .migration_status.txt .data_status.json
+    # 清理临时文件
+    rm -f .db_connection.json .migration_status.txt .data_status.json
 
-# 回到项目根目录
-cd ..
+    # 回到项目根目录
+    cd ..
+}
 
-# 显示启动信息
-echo -e "${GREEN}=======================================${NC}"
-echo -e "${GREEN}本地开发环境已准备就绪!${NC}"
-echo -e "${GREEN}=======================================${NC}"
-echo -e "现在您可以在不同的终端窗口中运行以下命令:"
-echo -e ""
-echo -e "${YELLOW}启动后端API服务:${NC}"
-echo -e "cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
-echo -e ""
-echo -e "${YELLOW}启动Celery Worker:${NC}"
-echo -e "cd backend && python worker_start.py"
-echo -e ""
-echo -e "${YELLOW}启动Celery Beat:${NC}"
-echo -e "cd backend && python beat_start.py"
-echo -e ""
-echo -e "${GREEN}=======================================${NC}"
-echo -e "服务访问地址:"
-echo -e "API: ${YELLOW}http://localhost:8000${NC}"
-echo -e "API 文档: ${YELLOW}http://localhost:8000/api/docs${NC}"
-echo -e "PgAdmin: ${YELLOW}http://localhost:5050${NC}"
-echo -e "  - 邮箱: ${YELLOW}admin@heatlink.com${NC}"
-echo -e "  - 密码: ${YELLOW}admin${NC}"
-echo -e "Redis Commander: ${YELLOW}http://localhost:8081${NC}"
-echo -e "${GREEN}=======================================${NC}"
-echo -e "停止环境: ${YELLOW}docker compose -f docker-compose.local.yml down${NC}"
-echo -e "重置数据: ${YELLOW}docker compose -f docker-compose.local.yml down -v${NC}"
-echo -e "${GREEN}=======================================${NC}" 
+# 显示服务信息
+show_service_info() {
+    echo -e "${GREEN}=======================================${NC}"
+    echo -e "${GREEN}本地开发环境信息${NC}"
+    echo -e "${GREEN}=======================================${NC}"
+    echo -e "可在不同的终端窗口中运行以下命令:"
+    echo -e ""
+    echo -e "${YELLOW}启动后端API服务:${NC}"
+    echo -e "cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+    echo -e ""
+    echo -e "${YELLOW}启动Celery Worker:${NC}"
+    echo -e "cd backend && python worker_start.py"
+    echo -e ""
+    echo -e "${YELLOW}启动Celery Beat:${NC}"
+    echo -e "cd backend && python beat_start.py"
+    echo -e ""
+    echo -e "${GREEN}=======================================${NC}"
+    echo -e "服务访问地址:"
+    echo -e "API: ${YELLOW}http://localhost:8000${NC}"
+    echo -e "API 文档: ${YELLOW}http://localhost:8000/api/docs${NC}"
+    echo -e "PgAdmin: ${YELLOW}http://localhost:5050${NC}"
+    echo -e "  - 邮箱: ${YELLOW}admin@heatlink.com${NC}"
+    echo -e "  - 密码: ${YELLOW}admin${NC}"
+    echo -e "Redis Commander: ${YELLOW}http://localhost:8081${NC}"
+    echo -e "${GREEN}=======================================${NC}"
+}
+
+# 显示容器状态
+show_container_status() {
+    echo -e "${YELLOW}当前运行的容器状态:${NC}"
+    docker ps
+    echo -e "${GREEN}=======================================${NC}"
+}
+
+# 完整初始化流程
+full_initialization() {
+    prepare_environment
+    backup_database
+    start_containers
+    initialize_database
+    show_service_info
+}
+
+# 显示标题
+show_header() {
+    clear
+    echo -e "${GREEN}=======================================${NC}"
+    echo -e "${GREEN}   HeatLink 本地开发环境管理菜单   ${NC}"
+    echo -e "${GREEN}=======================================${NC}"
+}
+
+# 主菜单
+show_menu() {
+    show_header
+    echo -e "请选择操作:"
+    echo -e "${BLUE}1)${NC} 完整初始化开发环境 (启动容器+初始化数据)"
+    echo -e "${BLUE}2)${NC} 启动所有容器"
+    echo -e "${BLUE}3)${NC} 停止所有容器"
+    echo -e "${BLUE}4)${NC} 重置所有容器和数据 (删除所有数据)"
+    echo -e "${BLUE}5)${NC} 仅初始化/更新数据库 (容器已启动)"
+    echo -e "${BLUE}6)${NC} 查看当前容器状态"
+    echo -e "${BLUE}7)${NC} 显示服务访问信息"
+    echo -e "${BLUE}8)${NC} 备份当前数据库"
+    echo -e "${BLUE}0)${NC} 退出"
+    echo -e "${GREEN}=======================================${NC}"
+    echo -ne "请输入选项 [0-8]: "
+    read -r choice
+}
+
+# 主程序
+main() {
+    # 检查依赖
+    check_dependencies
+
+    while true; do
+        show_menu
+        case $choice in
+            1)
+                echo -e "${YELLOW}启动完整初始化流程...${NC}"
+                full_initialization
+                echo -e "${GREEN}完整初始化完成!${NC}"
+                read -p "按Enter键继续..."
+                ;;
+            2)
+                echo -e "${YELLOW}启动所有容器...${NC}"
+                start_containers
+                echo -e "${GREEN}容器已启动!${NC}"
+                read -p "按Enter键继续..."
+                ;;
+            3)
+                echo -e "${YELLOW}停止所有容器...${NC}"
+                stop_containers
+                echo -e "${GREEN}容器已停止!${NC}"
+                read -p "按Enter键继续..."
+                ;;
+            4)
+                echo -e "${RED}警告: 此操作将删除所有数据!${NC}"
+                read -p "确定要继续吗? (y/n): " confirm
+                if [[ $confirm == [yY] || $confirm == [yY][eE][sS] ]]; then
+                    reset_containers
+                    echo -e "${GREEN}容器和数据已重置!${NC}"
+                else
+                    echo -e "${YELLOW}已取消操作${NC}"
+                fi
+                read -p "按Enter键继续..."
+                ;;
+            5)
+                echo -e "${YELLOW}仅初始化/更新数据库...${NC}"
+                initialize_database
+                echo -e "${GREEN}数据库初始化/更新完成!${NC}"
+                read -p "按Enter键继续..."
+                ;;
+            6)
+                show_container_status
+                read -p "按Enter键继续..."
+                ;;
+            7)
+                show_service_info
+                read -p "按Enter键继续..."
+                ;;
+            8)
+                echo -e "${YELLOW}备份当前数据库...${NC}"
+                backup_database
+                echo -e "${GREEN}备份完成!${NC}"
+                read -p "按Enter键继续..."
+                ;;
+            0)
+                echo -e "${GREEN}感谢使用 HeatLink 本地开发环境管理工具!${NC}"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}无效选项，请重新输入${NC}"
+                read -p "按Enter键继续..."
+                ;;
+        esac
+    done
+}
+
+# 执行主程序
+main 

@@ -1,6 +1,8 @@
 from typing import Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+import json
+import datetime
 
 from worker.sources.provider import DefaultNewsSourceProvider
 
@@ -61,4 +63,34 @@ async def test_source(
         
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/news/{source_id}")
+async def test_get_news(source_id: str):
+    """测试端点 - 返回固定的新闻数据"""
+    # 创建一些测试新闻项
+    test_items = [
+        {
+            "id": "test-id-1",
+            "title": "测试标题1",
+            "url": "https://example.com/news1",
+            "source_id": source_id,
+            "source_name": "测试源",
+            "published_at": "2025-03-31T12:00:00",
+            "summary": "这是一个测试摘要1",
+            "content": "这是测试内容1" * 10,
+            "extra": {"key1": "value1", "key2": 123}
+        },
+        {
+            "id": "test-id-2",
+            "title": "测试标题2",
+            "url": "https://example.com/news2",
+            "source_id": source_id,
+            "source_name": "测试源",
+            "published_at": "2025-03-31T13:00:00",
+            "summary": "这是一个测试摘要2",
+            "content": "这是测试内容2" * 10,
+            "extra": {"key1": "value2", "key2": 456}
+        }
+    ]
+    return test_items 

@@ -545,19 +545,6 @@ SOURCES = [
         }
     },
     {
-        "id": "bloomberg-china",
-        "name": "彭博社中国",
-        "description": "彭博社中国相关新闻",
-        "url": "https://news.google.com/rss/search?q=site:bloomberg.com+china&hl=en-US&gl=US&ceid=US:en",
-        "type": SourceType.RSS,
-        "category": "finance",
-        "country": "中国",
-        "language": "en",
-        "config": {
-            "feed_type": "china"
-        }
-    },
-    {
         "id": "coolapk",
         "name": "酷安",
         "description": "酷安新闻和动态",
@@ -607,15 +594,102 @@ SOURCES = [
         }
     },
     {
-        "id": "cls-article",
-        "name": "财联社文章",
-        "description": "财联社文章和深度报道",
-        "url": "https://www.cls.cn/",
-        "type": SourceType.API,
+        "id": "yicai-brief",
+        "name": "第一财经快讯",
+        "description": "第一财经网站快讯",
+        "url": "https://www.yicai.com/brief/",
+        "type": SourceType.WEB,
         "category": "finance",
         "country": "中国",
         "language": "zh-CN",
-        "config": {}
+        "config": {
+            "use_selenium": True,
+            "headless": True,
+            "selenium_timeout": 15,
+            "selenium_wait_time": 3,
+            "max_retries": 2,
+            "retry_delay": 2,
+            "use_cache": True,
+            "cache_ttl": 1800,
+            "use_random_delay": True,
+            "min_delay": 0.5,
+            "max_delay": 1.5,
+            "overall_timeout": 60,
+            "use_http_fallback": True,
+            "content_type": "brief"
+        }
+    },
+    {
+        "id": "yicai-news",
+        "name": "第一财经新闻",
+        "description": "第一财经网站新闻",
+        "url": "https://www.yicai.com/news/",
+        "type": SourceType.WEB,
+        "category": "finance",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {
+            "use_selenium": True,
+            "headless": True,
+            "selenium_timeout": 15,
+            "selenium_wait_time": 3,
+            "max_retries": 2,
+            "retry_delay": 2,
+            "use_cache": True,
+            "cache_ttl": 1800,
+            "use_random_delay": True,
+            "min_delay": 0.5,
+            "max_delay": 1.5,
+            "overall_timeout": 60,
+            "use_http_fallback": True,
+            "content_type": "news"
+        }
+    },
+    {
+        "id": "ifeng-studio",
+        "name": "凤凰财经全球快报",
+        "description": "凤凰财经工作室全球快报",
+        "url": "https://finance.ifeng.com/studio",
+        "type": SourceType.WEB,
+        "category": "finance",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {
+            "max_retries": 3,
+            "retry_delay": 2,
+            "use_cache": True,
+            "cache_ttl": 900,
+            "use_random_delay": True,
+            "min_delay": 0.5,
+            "max_delay": 1.5,
+            "headers": {
+                "Referer": "https://www.ifeng.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        }
+    },
+    {
+        "id": "ifeng-tech",
+        "name": "凤凰科技",
+        "description": "凤凰网科技频道新闻",
+        "url": "https://tech.ifeng.com/",
+        "type": SourceType.WEB,
+        "category": "tech",
+        "country": "中国",
+        "language": "zh-CN",
+        "config": {
+            "max_retries": 3,
+            "retry_delay": 2,
+            "use_cache": True,
+            "cache_ttl": 1200,
+            "use_random_delay": True,
+            "min_delay": 0.5,
+            "max_delay": 1.5,
+            "headers": {
+                "Referer": "https://www.ifeng.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        }
     }
 ]
 

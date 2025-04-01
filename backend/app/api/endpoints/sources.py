@@ -3,6 +3,7 @@ import asyncio
 import logging
 from datetime import datetime
 import time
+import traceback
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Path, Depends, Request
 from pydantic import BaseModel
@@ -168,30 +169,96 @@ async def get_source_news(
     """
     从新闻源获取新闻（外部API调用）
     """
+    logger.info(f"开始获取外部新闻源 {source_id} 的新闻, force_update={force_update}")
+    
     # 获取新闻源
     source = source_provider.get_source(source_id)
     if not source:
+        logger.error(f"新闻源 {source_id} 不存在")
         raise HTTPException(status_code=404, detail=f"新闻源 {source_id} 不存在")
     
     try:
         # 将源的fetch方法包装为external类型
+        logger.info(f"将 {source_id} 的fetch方法包装为external类型")
         original_fetch = source.fetch
         source.fetch = lambda *args, **kwargs: stats_updater.wrap_fetch(source_id, original_fetch, api_type="external", *args, **kwargs)
         
         # 获取新闻
+        logger.info(f"开始获取 {source_id} 的新闻数据")
+        start_time = time.time()
         news_items = await source.get_news(force_update=force_update)
+        elapsed_time = time.time() - start_time
+        
+        # 添加日志以检查返回的类型和数量
+        if not news_items:
+            logger.warning(f"从 source.get_news 获取到的新闻为空: {news_items}")
+            # 尝试直接调用fetch方法获取数据
+            logger.info(f"尝试直接调用 fetch 方法获取数据")
+            news_items = await source.fetch()
+            logger.info(f"直接调用 fetch 获取到 {len(news_items)} 条数据")
+            
+        logger.info(f"获取 {source_id} 新闻完成，获取到 {len(news_items)} 条数据，耗时 {elapsed_time:.2f}秒")
         
         # 恢复原始fetch方法
         source.fetch = original_fetch
         
-        # 格式化返回数据
-        result = []
-        for item in news_items:
-            result.append(item.to_dict())
+        # 检查返回的数据
+        if not news_items:
+            logger.warning(f"从 {source_id} 获取到的新闻为空列表")
+            return []
         
+        # 格式化返回数据 - 使用更安全的方法转换成字典
+        logger.info(f"开始处理 {len(news_items)} 条新闻数据")
+        result = []
+        for i, item in enumerate(news_items):
+            try:
+                # 记录一下第一条和最后一条新闻的详情，用于调试
+                if i < 3 or i == len(news_items) - 1:
+                    logger.debug(f"新闻项 {i+1}: {getattr(item, 'title', '无标题')}")
+                
+                # 手动将对象转换为字典，避免序列化问题
+                item_dict = {
+                    "id": str(item.id),
+                    "title": str(item.title),
+                    "url": str(item.url),
+                    "source_id": str(item.source_id),
+                    "source_name": str(item.source_name),
+                    "published_at": item.published_at.isoformat() if item.published_at else None,
+                    "summary": str(item.summary) if item.summary else "",
+                    "content": str(item.content) if hasattr(item, "content") and item.content else "",
+                    "country": str(item.country) if hasattr(item, "country") and item.country else "",
+                    "language": str(item.language) if hasattr(item, "language") and item.language else "",
+                    "category": str(item.category) if hasattr(item, "category") and item.category else "",
+                    "extra": {}
+                }
+                
+                # 处理image_url
+                if hasattr(item, "image_url") and item.image_url:
+                    item_dict["image_url"] = str(item.image_url)
+                
+                # 安全地处理extra字典
+                if hasattr(item, "extra") and item.extra:
+                    for k, v in item.extra.items():
+                        try:
+                            if isinstance(v, (str, int, float, bool, type(None))):
+                                item_dict["extra"][k] = v
+                            elif isinstance(v, (datetime.datetime, datetime.date)):
+                                item_dict["extra"][k] = v.isoformat()
+                            else:
+                                item_dict["extra"][k] = str(v)
+                        except Exception as ex:
+                            logger.warning(f"处理extra字段 {k} 时出错: {str(ex)}")
+                
+                result.append(item_dict)
+            except Exception as e:
+                logger.error(f"处理第 {i+1} 条新闻项时出错: {str(e)}")
+                logger.error(f"错误详情: {traceback.format_exc()}")
+        
+        logger.info(f"返回 {len(result)} 条新闻数据")
         return result
     except Exception as e:
         logger.error(f"从新闻源 {source_id} 获取新闻时出错: {str(e)}")
+        logger.error(f"错误详情: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

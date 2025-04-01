@@ -38,14 +38,16 @@ from worker.sources.sites import (
     CoolApkFeedNewsSource,
     CoolApkAppNewsSource,
     CLSNewsSource,
-    CLSArticleNewsSource,
     BBCWorldNewsSource,
     ThePaperSeleniumSource,
     ZhihuDailyNewsSource,
     BloombergNewsSource,
     BloombergMarketsNewsSource,
     BloombergTechnologyNewsSource,
-    BloombergChinaNewsSource
+    YiCaiBriefSource,
+    YiCaiNewsSource,
+    IfengStudioSource,
+    IfengTechSource
 )
 
 logger = logging.getLogger(__name__)
@@ -60,22 +62,21 @@ class NewsSourceFactory:
     @staticmethod
     def create_source(source_type: str, **kwargs) -> Optional[NewsSource]:
         """
-        创建新闻源适配器
+        Create a news source based on type
+        
+        Args:
+            source_type: Source type (e.g., "zhihu", "weibo", "hackernews")
+            **kwargs: Additional arguments to pass to the source constructor
+            
+        Returns:
+            NewsSource: News source instance
         """
-        if source_type == "rss":
-            return RSSSourceFactory.create_source(**kwargs)
-        elif source_type == "zhihu":
+        if source_type == "zhihu":
             return ZhihuHotNewsSource(**kwargs)
         elif source_type == "weibo":
             return WeiboHotNewsSource(**kwargs)
         elif source_type == "baidu":
             return BaiduHotNewsSource(**kwargs)
-        elif source_type in ["thepaper", "thepaper-selenium", "thepaper_selenium"]:
-            if "source_id" in kwargs and kwargs["source_id"] != "thepaper":
-                logger.warning(f"Overriding source_id from '{kwargs['source_id']}' to 'thepaper' for consistency")
-            kwargs["source_id"] = "thepaper"
-            logger.info(f"Creating ThePaper source with ID: {kwargs['source_id']}")
-            return ThePaperSeleniumSource(**kwargs)
         elif source_type == "hackernews":
             return HackerNewsSource(**kwargs)
         elif source_type == "bilibili":
@@ -84,6 +85,8 @@ class NewsSourceFactory:
             return DouyinHotNewsSource(**kwargs)
         elif source_type == "toutiao":
             return ToutiaoHotNewsSource(**kwargs)
+        elif source_type == "thepaper":
+            return ThePaperSeleniumSource(**kwargs)
         elif source_type == "ithome":
             return ITHomeNewsSource(**kwargs)
         elif source_type == "github":
@@ -140,8 +143,9 @@ class NewsSourceFactory:
             return CoolApkAppNewsSource(**kwargs)
         elif source_type == "cls":
             return CLSNewsSource(**kwargs)
-        elif source_type == "cls-article":
-            return CLSArticleNewsSource(**kwargs)
+        elif source_type == "cls-article":  # 处理被合并的源的兼容性
+            logger.info("cls-article已被合并到cls中，使用cls源替代")
+            return CLSNewsSource(source_id="cls", **kwargs)
         elif source_type == "bbc_world":
             return BBCWorldNewsSource(**kwargs)
         elif source_type == "bloomberg":
@@ -150,8 +154,17 @@ class NewsSourceFactory:
             return BloombergMarketsNewsSource(**kwargs)
         elif source_type == "bloomberg-tech":
             return BloombergTechnologyNewsSource(**kwargs)
-        elif source_type == "bloomberg-china":
-            return BloombergChinaNewsSource(**kwargs)
+        elif source_type == "bloomberg-china":  # 处理被合并的源的兼容性
+            logger.info("bloomberg-china已被合并到bloomberg中，使用bloomberg源替代")
+            return BloombergNewsSource(source_id="bloomberg", country="CN", **kwargs)
+        elif source_type == "yicai-brief":
+            return YiCaiBriefSource(**kwargs)
+        elif source_type == "yicai-news":
+            return YiCaiNewsSource(**kwargs)
+        elif source_type == "ifeng-studio":
+            return IfengStudioSource(**kwargs)
+        elif source_type == "ifeng-tech":
+            return IfengTechSource(**kwargs)
         elif source_type == "ifanr":
             return RSSNewsSource(
                 source_id="ifanr",
@@ -273,9 +286,8 @@ class NewsSourceFactory:
             "sputniknewscn", "producthunt", "linuxdo", "linuxdo-latest", "linuxdo-hot",
             "kaopu", "gelonghui", "fastbull", "fastbull-express", "fastbull-news", "wallstreetcn",
             "wallstreetcn-news", "wallstreetcn-hot", "36kr", "coolapk", "coolapk-feed",
-            "coolapk-app", "cls", "cls-article", "bbc_world", "thepaper",
-            "zhihu_daily", "bloomberg", "bloomberg-markets", "bloomberg-tech",
-            "bloomberg-china", "ifanr", "techcrunch", "the_verge"
+            "coolapk-app", "cls", "bbc_world", "thepaper",
+            "zhihu_daily", "bloomberg", "bloomberg-markets", "bloomberg-tech", "yicai-brief", "yicai-news", "ifeng-studio", "ifeng-tech", "ifanr", "techcrunch", "the_verge"
         ]
         # 排除通用的"rss"类型，因为它需要额外的参数
         if "rss" in sources:
