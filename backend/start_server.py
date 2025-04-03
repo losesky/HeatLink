@@ -378,22 +378,92 @@ class SourceSynchronizer:
         source_types = factory.get_available_sources()
         self.log(f"从代码中获取了 {len(source_types)} 个源适配器")
         
+        # 从数据库预先加载自定义源的URL和描述信息
+        custom_source_urls = {}
+        custom_source_descriptions = {}
+        custom_sources_from_db = []
+        
+        if self.db_available:
+            try:
+                # 获取所有自定义源的完整信息
+                result = self.db.execute(text("""
+                    SELECT id, name, description, url, type, status, category_id 
+                    FROM sources 
+                    WHERE id LIKE 'custom-%'
+                """))
+                for row in result:
+                    source_id = row[0]
+                    custom_source_urls[source_id] = row[3] if row[3] else ""
+                    custom_source_descriptions[source_id] = row[1] if row[1] else ""
+                    
+                    # 直接添加到源列表中，这样它们就不会被认为是"缺失的"
+                    custom_sources_from_db.append({
+                        "id": source_id,
+                        "name": row[1],
+                        "description": row[2] or f"Custom source for {row[3]}",
+                        "url": row[3] or "",
+                        "type": row[4],
+                        "status": row[5],
+                        "category_id": row[6]
+                    })
+                    
+                self.log(f"从数据库加载了 {len(custom_source_urls)} 个自定义源")
+            except Exception as e:
+                self.log(f"加载自定义源信息失败: {str(e)}", "warning")
+        
+        # 处理标准源适配器
         for source_type in source_types:
+            # 跳过已经从数据库加载的自定义源
+            if source_type.startswith('custom-') and any(s["id"] == source_type for s in custom_sources_from_db):
+                continue
+                
             try:
                 # 创建源实例以获取元数据
-                source = factory.create_source(source_type)
+                # 为自定义源传递suppress_warnings=True，防止在URL未知时产生警告
+                if source_type.startswith('custom-'):
+                    source = factory.create_source(source_type, suppress_warnings=True)
+                else:
+                    source = factory.create_source(source_type)
+                    
                 if source:
+                    # 对于自定义源，优先使用数据库中的URL和description
+                    url = getattr(source, 'url', '')
+                    description = getattr(source, 'description', '')
+                    if source_type.startswith('custom-'):
+                        if source_type in custom_source_urls:
+                            url = custom_source_urls[source_type]
+                            self.log(f"使用数据库中的URL ({url}) 替代代码中的URL for {source_type}")
+                        
+                        # 使用预加载的description
+                        if source_type in custom_source_descriptions and custom_source_descriptions[source_type]:
+                            description = custom_source_descriptions[source_type]
+                            self.log(f"使用数据库中的description替代代码中的description for {source_type}")
+                        # 如果预加载失败，尝试直接从数据库获取
+                        elif hasattr(self, 'db_available') and self.db_available:
+                            try:
+                                # 查询数据库中的description
+                                sql = text("SELECT description FROM sources WHERE id = :id")
+                                result = self.db.execute(sql, {"id": source_type})
+                                row = result.fetchone()
+                                if row and row[0]:
+                                    description = row[0]
+                                    self.log(f"使用数据库中的description替代代码中的description for {source_type}")
+                            except Exception as e:
+                                self.log(f"从数据库获取description失败: {str(e)}", "warning")
+                    
                     sources.append({
                         "id": source_type,
                         "name": source.name,
-                        "description": getattr(source, 'description', ''),
-                        "url": getattr(source, 'url', ''),
+                        "description": description,
+                        "url": url,
                         "type": self._get_source_type(source),
                         "category": getattr(source, 'category', None)
                     })
             except Exception as e:
                 self.log(f"无法创建源 {source_type}: {str(e)}", "warning")
         
+        # 合并从数据库加载的自定义源
+        sources.extend(custom_sources_from_db)
         return sources
     
     def _get_source_type(self, source):
@@ -436,7 +506,7 @@ class SourceSynchronizer:
             self.fallback_mode = True
             return []
     
-    def get_category_mapping(self):
+    def get_categories_map(self):
         """获取分类ID映射"""
         if not self.db_available:
             return {}
@@ -454,9 +524,9 @@ class SourceSynchronizer:
             
     def guess_category_for_source(self, source):
         """根据源信息猜测适合的分类"""
-        source_id = source["id"].lower()
-        source_name = source["name"].lower()
-        source_type = source["type"]
+        source_id = source.get("id", "").lower()
+        source_name = source.get("name", "").lower()
+        source_type = source.get("type", "")
         
         # 1. 如果源有自己的分类信息，优先使用
         if "category" in source and source["category"]:
@@ -481,7 +551,7 @@ class SourceSynchronizer:
             
         try:
             # 获取现有分类
-            categories = self.get_category_mapping()
+            categories = self.get_categories_map()
             
             # 创建缺失的分类
             for slug, name in self.categories_map.items():
@@ -521,24 +591,32 @@ class SourceSynchronizer:
             return
             
         try:
-            # 确保所有分类存在
-            categories = self.ensure_categories_exist()
+            # 获取所有分类信息作为映射 {分类标识: ID}
+            categories = self.get_categories_map()
+            
             if not categories:
-                self.log("无法获取分类信息，跳过修复分类", "warning")
+                self.log("无法获取分类信息，跳过分类修复")
                 return
-                
-            # 获取所有没有分类的源
-            result = self.db.execute(text("SELECT id, name, type FROM sources WHERE category_id IS NULL"))
+            
+            # 查询源表，找出没有分类的源
+            sql = text("""
+            SELECT id, name, url, type
+            FROM sources
+            WHERE category_id IS NULL
+            """)
+            
+            result = self.db.execute(sql)
             sources_without_category = []
             for row in result:
                 sources_without_category.append({
                     "id": row[0],
                     "name": row[1],
-                    "type": row[2]
+                    "url": row[2],
+                    "type": row[3]
                 })
-                
+            
             if not sources_without_category:
-                self.log("所有源都已分配分类，无需修复")
+                self.log("所有源都已有分类")
                 return
                 
             self.log(f"发现 {len(sources_without_category)} 个缺少分类的源")
@@ -553,6 +631,21 @@ class SourceSynchronizer:
                     
                 category_id = categories[category_slug]
                 
+                # 检查自定义源是否缺少URL
+                if source["id"].startswith("custom-") and not source.get("url"):
+                    # 先检查是否能从数据库获取URL
+                    try:
+                        db_url_result = self.db.execute(text("SELECT url FROM sources WHERE id = :id"), {"id": source["id"]})
+                        db_url_row = db_url_result.fetchone()
+                        if db_url_row and db_url_row[0]:
+                            source["url"] = db_url_row[0]
+                            self.log(f"从数据库获取到自定义源 {source['id']} 的URL: {source['url']}")
+                        else:
+                            self.log(f"警告: 自定义源 {source['id']} 缺少URL，这可能会导致无法获取内容", "warning")
+                    except Exception as e:
+                        self.log(f"从数据库获取URL失败: {str(e)}", "warning")
+                        self.log(f"警告: 自定义源 {source['id']} 缺少URL，这可能会导致无法获取内容", "warning")
+                
                 # 更新源的分类ID
                 sql = text("""
                 UPDATE sources
@@ -565,7 +658,7 @@ class SourceSynchronizer:
                     "category_id": category_id
                 })
                 
-                self.log(f"已为源 {source['id']} ({source['name']}) 分配分类: {category_slug}")
+                self.log(f"已为源 {source['id']} ({source.get('name', source['id'])}) 分配分类: {category_slug}")
             
             # 提交事务
             self.db.commit()
@@ -628,7 +721,8 @@ class SourceSynchronizer:
         # 2. 找出数据库中有但代码中没有的源
         missing_in_code = []
         for source_id, source in db_sources_dict.items():
-            if source_id not in code_sources_dict and source_id != "rss":  # 排除通用rss源
+            # 排除通用rss源和以custom-开头的自定义源，它们应该保持活跃状态
+            if source_id not in code_sources_dict and source_id != "rss" and not source_id.startswith("custom-"):
                 missing_in_code.append(source)
         
         # 3. 找出属性不匹配的源
@@ -636,13 +730,23 @@ class SourceSynchronizer:
         for source_id, code_source in code_sources_dict.items():
             if source_id in db_sources_dict:
                 db_source = db_sources_dict[source_id]
-                if code_source["name"] != db_source["name"] or \
-                   code_source["url"] != db_source["url"] or \
-                   code_source["type"] != db_source["type"]:
-                    mismatch.append({
-                        "code": code_source,
-                        "db": db_source
-                    })
+                # 对于自定义源，只比较name和type字段
+                if source_id.startswith("custom-"):
+                    if code_source.get("name", "") != db_source.get("name", "") or code_source.get("type", "") != db_source.get("type", ""):
+                        mismatch.append({
+                            "code": code_source,
+                            "db": db_source
+                        })
+                else:
+                    # 对于标准源，比较所有字段
+                    if code_source.get("name", "") != db_source.get("name", "") or \
+                       code_source.get("url", "") != db_source.get("url", "") or \
+                       code_source.get("type", "") != db_source.get("type", "") or \
+                       code_source.get("description", "") != db_source.get("description", ""):
+                        mismatch.append({
+                            "code": code_source,
+                            "db": db_source
+                        })
         
         # 输出同步报告
         self.log(f"同步报告:")
@@ -657,9 +761,9 @@ class SourceSynchronizer:
         self._fix_mismatch(mismatch)
         self._update_inactive(missing_in_code)
         
-        # 缓存源信息到Redis
-        if self.cache_manager:
-            asyncio.create_task(self._cache_sources_to_redis())
+        # 注释掉缓存到Redis的任务，因为在main函数中会明确调用此方法
+        # if self.cache_manager:
+        #     asyncio.create_task(self._cache_sources_to_redis())
         
         self.log("同步完成")
         return {
@@ -693,6 +797,24 @@ class SourceSynchronizer:
                     
                 category_id = categories[category_slug]
                 
+                # 检查自定义源是否缺少URL
+                if source["id"].startswith("custom-"):
+                    # 获取源URL
+                    url = source.get("url", "")
+                    if not url:
+                        # 尝试从数据库中查询URL
+                        try:
+                            result = self.db.execute(text("SELECT url FROM sources WHERE id = :id"), {"id": source["id"]})
+                            row = result.fetchone()
+                            if row and row[0]:
+                                url = row[0]
+                                source["url"] = url
+                        except Exception:
+                            pass
+                    
+                    if not url:
+                        self.log(f"警告: 自定义源 {source['id']} 缺少URL，这可能会导致无法获取内容", "warning")
+                
                 # 构建插入SQL
                 sql = text("""
                 INSERT INTO sources (id, name, description, url, type, active, 
@@ -705,16 +827,16 @@ class SourceSynchronizer:
                 # 执行插入
                 self.db.execute(sql, {
                     "id": source["id"],
-                    "name": source["name"],
-                    "description": source["description"],
-                    "url": source["url"],
-                    "type": source["type"],
+                    "name": source.get("name", source["id"]),
+                    "description": source.get("description", ""),
+                    "url": source.get("url", ""),
+                    "type": source.get("type", "WEB"),
                     "update_interval": settings.DEFAULT_UPDATE_INTERVAL,
                     "cache_ttl": settings.DEFAULT_CACHE_TTL,
                     "category_id": category_id
                 })
                 
-                self.log(f"已添加源: {source['id']} ({source['name']}), 分类: {category_slug}")
+                self.log(f"已添加源: {source['id']} ({source.get('name', source['id'])}), 分类: {category_slug}")
             except Exception as e:
                 self.log(f"添加源 {source['id']} 失败: {str(e)}", "error")
         
@@ -737,24 +859,43 @@ class SourceSynchronizer:
             code_source = item["code"]
             db_source = item["db"]
             try:
-                # 构建更新SQL
-                sql = text("""
-                UPDATE sources
-                SET name = :name, description = :description, url = :url, type = :type,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :id
-                """)
-                
-                # 执行更新
-                self.db.execute(sql, {
-                    "id": code_source["id"],
-                    "name": code_source["name"],
-                    "description": code_source["description"],
-                    "url": code_source["url"],
-                    "type": code_source["type"]
-                })
-                
-                self.log(f"已更新源: {code_source['id']} ({code_source['name']})")
+                # 对于自定义源（以custom-开头），不更新URL和description字段
+                if code_source["id"].startswith("custom-"):
+                    # 构建更新SQL，不包含URL和description字段
+                    sql = text("""
+                    UPDATE sources
+                    SET name = :name, type = :type,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :id
+                    """)
+                    
+                    # 执行更新
+                    self.db.execute(sql, {
+                        "id": code_source["id"],
+                        "name": code_source["name"],
+                        "type": code_source["type"]
+                    })
+                    
+                    self.log(f"已更新自定义源: {code_source['id']} ({code_source.get('name', code_source['id'])}), 保留原URL和描述值")
+                else:
+                    # 对于非自定义源，更新所有字段
+                    sql = text("""
+                    UPDATE sources
+                    SET name = :name, description = :description, url = :url, type = :type,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :id
+                    """)
+                    
+                    # 执行更新
+                    self.db.execute(sql, {
+                        "id": code_source["id"],
+                        "name": code_source["name"],
+                        "description": code_source["description"],
+                        "url": code_source.get("url", ""),
+                        "type": code_source["type"]
+                    })
+                    
+                    self.log(f"已更新源: {code_source['id']} ({code_source.get('name', code_source['id'])})")
             except Exception as e:
                 self.log(f"更新源 {code_source['id']} 失败: {str(e)}", "error")
         
@@ -771,9 +912,16 @@ class SourceSynchronizer:
         if not missing_sources or not self.db_available:
             return
         
-        self.log(f"正在将 {len(missing_sources)} 个代码中缺失的源标记为非活跃...")
+        # 筛选出非自定义源
+        non_custom_sources = [source for source in missing_sources if not source["id"].startswith("custom-")]
         
-        for source in missing_sources:
+        if not non_custom_sources:
+            self.log("没有需要标记为非活跃的源")
+            return
+            
+        self.log(f"正在将 {len(non_custom_sources)} 个代码中缺失的源标记为非活跃...")
+        
+        for source in non_custom_sources:
             try:
                 # 构建更新SQL
                 sql = text("""
@@ -787,7 +935,7 @@ class SourceSynchronizer:
                     "id": source["id"]
                 })
                 
-                self.log(f"已将源标记为非活跃: {source['id']} ({source['name']})")
+                self.log(f"已将源标记为非活跃: {source['id']} ({source.get('name', source['id'])})")
             except Exception as e:
                 self.log(f"更新源 {source['id']} 状态失败: {str(e)}", "error")
         

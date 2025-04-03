@@ -120,6 +120,11 @@ def delete_source(db: Session, source_id: str) -> bool:
     if not db_source:
         return False
     
+    # 首先删除与源关联的所有统计数据
+    from app.models.source_stats import SourceStats
+    db.query(SourceStats).filter(SourceStats.source_id == source_id).delete()
+    
+    # 然后删除源本身
     db.delete(db_source)
     db.commit()
     return True
@@ -152,14 +157,14 @@ def increment_source_error_count(db: Session, source_id: str, error_message: str
     return db_source
 
 
-def get_source_with_stats(db: Session, id: str) -> Optional[Source]:
+def get_source_with_stats(db: Session, source_id: str) -> Optional[Source]:
     from app.models.news import News
     
     result = db.query(
         Source,
         func.count(News.id).label("news_count"),
         func.max(News.published_at).label("latest_news_time")
-    ).outerjoin(News).filter(Source.id == id).group_by(Source.id).first()
+    ).outerjoin(News).filter(Source.id == source_id).group_by(Source.id).first()
     
     if not result:
         return None

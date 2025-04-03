@@ -138,6 +138,7 @@ def create_new_source(
 @router.get("/available", response_model=List[Dict[str, Any]])
 async def read_available_sources(
     source_provider: NewsSourceProvider = Depends(get_news_source_provider),
+    db: Session = Depends(get_db)
 ):
     """
     获取所有可用的新闻源
@@ -145,17 +146,69 @@ async def read_available_sources(
     # 从提供者获取所有新闻源
     sources = source_provider.get_all_sources()
     
+    # 首先收集所有自定义源的ID
+    custom_source_ids = [s.source_id for s in sources if s.source_id.startswith('custom-')]
+    
+    # 如果有自定义源，从数据库获取它们的实际元数据
+    custom_source_metadata = {}
+    if custom_source_ids:
+        try:
+            from app.models.source import Source
+            from app.models.category import Category
+            
+            # 查询所有自定义源的元数据
+            custom_sources = db.query(Source).filter(Source.id.in_(custom_source_ids)).all()
+            
+            # 获取分类信息
+            category_ids = [s.category_id for s in custom_sources if s.category_id is not None]
+            categories = {}
+            if category_ids:
+                for cat in db.query(Category).filter(Category.id.in_(category_ids)).all():
+                    categories[cat.id] = cat.slug
+            
+            # 保存元数据
+            for source in custom_sources:
+                category = "general"
+                if source.category_id and source.category_id in categories:
+                    category = categories[source.category_id]
+                
+                # 转换timedelta为秒
+                update_interval = source.update_interval.total_seconds() if hasattr(source.update_interval, 'total_seconds') else 1800
+                
+                custom_source_metadata[source.id] = {
+                    "name": source.name,
+                    "category": category,
+                    "country": source.country or "global",
+                    "language": source.language or "en",
+                    "update_interval": int(update_interval)
+                }
+        except Exception as e:
+            logger.error(f"获取自定义源元数据时出错: {str(e)}")
+    
     # 格式化返回数据
     result = []
     for source in sources:
-        result.append({
-            "source_id": source.source_id,
-            "name": source.name,
-            "category": source.category,
-            "country": getattr(source, "country", ""),
-            "language": getattr(source, "language", ""),
-            "update_interval": source.update_interval,
-        })
+        if source.source_id in custom_source_metadata:
+            # 使用数据库中的元数据
+            meta = custom_source_metadata[source.source_id]
+            result.append({
+                "source_id": source.source_id,
+                "name": meta["name"],
+                "category": meta["category"],
+                "country": meta["country"],
+                "language": meta["language"],
+                "update_interval": meta["update_interval"],
+            })
+        else:
+            # 使用源对象的元数据
+            result.append({
+                "source_id": source.source_id,
+                "name": source.name,
+                "category": source.category,
+                "country": getattr(source, "country", ""),
+                "language": getattr(source, "language", ""),
+                "update_interval": source.update_interval,
+            })
     
     return result
 
@@ -308,7 +361,6 @@ async def update_source_api(
     source_id: str,
     source_in: SourceUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_superuser),
 ):
     """
     Update a source.
@@ -320,7 +372,31 @@ async def update_source_api(
             detail="Source not found",
         )
     source = update_source(db, db_obj=source, obj_in=source_in)
-    return source
+    
+    # Convert timedelta fields to integers for response validation
+    source_dict = {}
+    for key, value in source.__dict__.items():
+        if key == "_sa_instance_state":
+            continue
+            
+        # Handle timedelta fields
+        if key == "update_interval" and hasattr(value, "total_seconds"):
+            source_dict[key] = int(value.total_seconds())
+        elif key == "cache_ttl" and hasattr(value, "total_seconds"):
+            source_dict[key] = int(value.total_seconds())
+        else:
+            source_dict[key] = value
+            
+    # Ensure all required fields have valid values
+    if "priority" not in source_dict or source_dict["priority"] is None:
+        source_dict["priority"] = 0
+    if "error_count" not in source_dict or source_dict["error_count"] is None:
+        source_dict["error_count"] = 0
+    if "news_count" not in source_dict or source_dict["news_count"] is None:
+        source_dict["news_count"] = 0
+    
+    # Convert dictionary to Pydantic model
+    return Source.model_validate(source_dict)
 
 
 @router.delete("/{source_id}", response_model=bool)
@@ -328,17 +404,16 @@ def delete_source_api(
     *,
     db: Session = Depends(get_db),
     source_id: str = Path(..., description="The ID of the source to delete"),
-    _: Any = Depends(get_current_superuser),
 ) -> Any:
     """
     删除新闻源
     
-    删除指定的新闻源配置，需要超级用户权限
+    删除指定的新闻源配置
     """
-    source = get_source(db=db, id=source_id)
+    source = get_source(db=db, source_id=source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
-    delete_source(db=db, id=source_id)
+    delete_source(db=db, source_id=source_id)
     return True
 
 
@@ -350,7 +425,7 @@ async def read_source_stats(
     """
     Get source with news statistics.
     """
-    source = crud.get_source_with_stats(db, id=source_id)
+    source = crud.get_source_with_stats(db, source_id=source_id)
     if not source:
         raise HTTPException(
             status_code=404,
@@ -388,18 +463,17 @@ def create_source_alias_api(
     *,
     db: Session = Depends(get_db),
     alias_in: SourceAliasCreate,
-    _: Any = Depends(get_current_superuser),
 ) -> Any:
     """
     创建新闻源别名
     
-    为新闻源创建一个别名，可用于URL简化，需要超级用户权限
+    为新闻源创建一个别名，可用于URL简化
     """
-    source = get_source(db=db, id=alias_in.source_id)
+    source = get_source(db=db, source_id=alias_in.source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
     
-    alias = create_source_alias(db=db, obj_in=alias_in)
+    alias = create_source_alias(db=db, alias=alias_in.alias, source_id=alias_in.source_id)
     return alias
 
 
@@ -408,12 +482,11 @@ def delete_source_alias_api(
     *,
     db: Session = Depends(get_db),
     alias: str = Path(..., description="The alias to delete"),
-    _: Any = Depends(get_current_superuser),
 ) -> Any:
     """
     删除新闻源别名
     
-    删除指定的新闻源别名，需要超级用户权限
+    删除指定的新闻源别名
     """
     result = delete_source_alias(db=db, alias=alias)
     if not result:

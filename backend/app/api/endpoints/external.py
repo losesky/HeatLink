@@ -192,7 +192,8 @@ async def fetch_source_news(source_type: str, timeout: int = 60) -> Dict[str, An
         "news": [],
         "error": None,
         "count": 0,
-        "elapsed_time": 0
+        "elapsed_time": 0,
+        "source_info": {}  # 添加源信息，用于传递给API响应
     }
     
     logger.info(f"Fetching news from source: {source_type}")
@@ -200,7 +201,60 @@ async def fetch_source_news(source_type: str, timeout: int = 60) -> Dict[str, An
     # 创建数据源
     source = None
     try:
-        source = NewsSourceFactory.create_source(source_type)
+        # 如果是自定义源，需要从数据库获取URL和其他配置
+        source_data = {}
+        if source_type.startswith('custom-'):
+            try:
+                from app.db.session import SessionLocal
+                from app.models.source import Source
+                from app.models.category import Category
+                
+                # 创建数据库会话
+                db = SessionLocal()
+                try:
+                    # 查询数据库获取源信息
+                    db_source = db.query(Source).filter(Source.id == source_type).first()
+                    if db_source:
+                        # 获取分类信息
+                        category = "general"
+                        if db_source.category_id:
+                            cat = db.query(Category).filter(Category.id == db_source.category_id).first()
+                            if cat:
+                                category = cat.slug
+                        
+                        source_data = {
+                            "id": db_source.id,
+                            "name": db_source.name,
+                            "url": db_source.url,
+                            "type": db_source.type,
+                            "country": db_source.country,
+                            "language": db_source.language,
+                            "config": db_source.config,
+                            "description": db_source.description,
+                            "category": category  # 使用分类slug而不是ID
+                        }
+                        logger.info(f"从数据库获取自定义源 {source_type} 的信息: 名称={source_data.get('name')}, 分类={source_data.get('category')}, URL={source_data.get('url', 'None')}")
+                        
+                        # 保存源信息用于响应
+                        result["source_info"] = source_data
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"从数据库获取自定义源信息失败: {str(e)}")
+                
+            # 创建自定义源，传递从数据库获取的信息
+            source = NewsSourceFactory.create_source(
+                source_type=source_type,
+                url=source_data.get("url", ""),
+                name=source_data.get("name", source_type),
+                country=source_data.get("country", "global"),
+                language=source_data.get("language", "en"),
+                config=source_data.get("config", {}),
+                source_data=source_data
+            )
+        else:
+            # 非自定义源使用正常方式创建
+            source = NewsSourceFactory.create_source(source_type)
         
         if source is None:
             error_msg = f"无法创建新闻源: {source_type}"
@@ -264,6 +318,49 @@ async def get_sources():
         # 获取所有可用的源类型
         source_types = NewsSourceFactory.get_available_sources()
         
+        # 创建数据库会话，用于获取自定义源的元数据
+        from app.db.session import SessionLocal
+        from app.models.source import Source
+        from app.models.category import Category
+        
+        db = SessionLocal()
+        
+        # 获取所有自定义源的信息
+        custom_sources_data = {}
+        category_map = {}
+        
+        try:
+            # 查询数据库中的所有自定义源
+            custom_sources = db.query(Source).filter(Source.id.like('custom-%')).all()
+            
+            # 获取分类信息
+            category_ids = [s.category_id for s in custom_sources if s.category_id is not None]
+            if category_ids:
+                for cat in db.query(Category).filter(Category.id.in_(category_ids)).all():
+                    category_map[cat.id] = cat.slug
+            
+            # 保存自定义源数据
+            for source in custom_sources:
+                category = "general"
+                if source.category_id and source.category_id in category_map:
+                    category = category_map[source.category_id]
+                
+                # 转换timedelta为秒
+                update_interval = source.update_interval.total_seconds() if hasattr(source.update_interval, 'total_seconds') else 1800
+                cache_ttl = source.cache_ttl.total_seconds() if hasattr(source.cache_ttl, 'total_seconds') else 900
+                
+                custom_sources_data[source.id] = {
+                    "name": source.name,
+                    "category": category,
+                    "country": source.country or "unknown",
+                    "language": source.language or "unknown",
+                    "update_interval": int(update_interval),
+                    "cache_ttl": int(cache_ttl),
+                    "description": source.description
+                }
+        finally:
+            db.close()
+        
         # 创建并获取源实例
         sources = []
         for source_type in source_types:
@@ -278,16 +375,31 @@ async def get_sources():
         source_info_list = []
         for source in sources:
             try:
-                source_info = SourceInfo(
-                    source_id=source.source_id,
-                    name=source.name,
-                    category=source.category or "unknown",
-                    country=source.country or "unknown",
-                    language=source.language or "unknown",
-                    update_interval=source.update_interval,
-                    cache_ttl=source.cache_ttl,
-                    description=getattr(source, 'description', None) or source.__class__.__doc__
-                )
+                if source.source_id.startswith('custom-') and source.source_id in custom_sources_data:
+                    # 使用数据库中的自定义源信息
+                    source_data = custom_sources_data[source.source_id]
+                    source_info = SourceInfo(
+                        source_id=source.source_id,
+                        name=source_data["name"],
+                        category=source_data["category"],
+                        country=source_data["country"],
+                        language=source_data["language"],
+                        update_interval=source_data["update_interval"],
+                        cache_ttl=source_data["cache_ttl"],
+                        description=source_data["description"] or source.__class__.__doc__
+                    )
+                else:
+                    # 使用源对象的元数据
+                    source_info = SourceInfo(
+                        source_id=source.source_id,
+                        name=source.name,
+                        category=source.category or "unknown",
+                        country=source.country or "unknown",
+                        language=source.language or "unknown",
+                        update_interval=source.update_interval,
+                        cache_ttl=source.cache_ttl,
+                        description=getattr(source, 'description', None) or source.__class__.__doc__
+                    )
                 source_info_list.append(source_info)
             except Exception as e:
                 logger.error(f"处理源 {source.source_id} 时出错: {str(e)}")
@@ -314,25 +426,86 @@ async def get_source(
     获取指定新闻源的信息和最新新闻
     """
     try:
-        # 创建数据源
-        source = NewsSourceFactory.create_source(source_id)
+        # 如果是自定义源，需要从数据库获取URL和其他配置
+        source_data = {}
+        if source_id.startswith('custom-'):
+            try:
+                from app.db.session import SessionLocal
+                from app.models.source import Source
+                from app.models.category import Category
+                
+                # 创建数据库会话
+                db = SessionLocal()
+                try:
+                    # 查询数据库获取源信息
+                    db_source = db.query(Source).filter(Source.id == source_id).first()
+                    if db_source:
+                        # 获取分类信息
+                        category = "general"
+                        if db_source.category_id:
+                            cat = db.query(Category).filter(Category.id == db_source.category_id).first()
+                            if cat:
+                                category = cat.slug
+                        
+                        source_data = {
+                            "id": db_source.id,
+                            "name": db_source.name,
+                            "url": db_source.url,
+                            "type": db_source.type,
+                            "country": db_source.country,
+                            "language": db_source.language,
+                            "config": db_source.config,
+                            "description": db_source.description,
+                            "category": category  # 使用字符串类型的分类slug，而不是ID
+                        }
+                        logger.info(f"从数据库获取自定义源 {source_id} 的信息: 名称={source_data.get('name')}, 分类={source_data.get('category')}, URL={source_data.get('url', 'None')}")
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"从数据库获取自定义源信息失败: {str(e)}")
+                
+            # 创建自定义源，传递从数据库获取的信息
+            source = NewsSourceFactory.create_source(
+                source_type=source_id,
+                url=source_data.get("url", ""),
+                name=source_data.get("name", source_id),
+                country=source_data.get("country", "global"),
+                language=source_data.get("language", "en"),
+                config=source_data.get("config", {}),
+                source_data=source_data
+            )
+        else:
+            # 非自定义源使用正常方式创建
+            source = NewsSourceFactory.create_source(source_id)
         
         if source is None:
             raise HTTPException(status_code=404, detail=f"找不到新闻源: {source_id}")
         
-        # 获取数据源信息
-        source_info = SourceInfo(
-            source_id=source.source_id,
-            name=source.name,
-            category=source.category or "unknown",
-            country=source.country or "unknown",
-            language=source.language or "unknown",
-            update_interval=source.update_interval,
-            cache_ttl=source.cache_ttl,
-            description=getattr(source, 'description', None) or source.__class__.__doc__
-        )
+        # 获取数据源信息 - 对于自定义源，优先使用数据库中的值
+        if source_id.startswith('custom-') and source_data:
+            source_info = SourceInfo(
+                source_id=source.source_id,
+                name=source_data.get("name", source.name),
+                category=source_data.get("category", source.category or "general"),
+                country=source_data.get("country", source.country or "unknown"),
+                language=source_data.get("language", source.language or "unknown"),
+                update_interval=source.update_interval,
+                cache_ttl=source.cache_ttl,
+                description=source_data.get("description") or getattr(source, 'description', None) or source.__class__.__doc__
+            )
+        else:
+            source_info = SourceInfo(
+                source_id=source.source_id,
+                name=source.name,
+                category=source.category or "unknown",
+                country=source.country or "unknown",
+                language=source.language or "unknown",
+                update_interval=source.update_interval,
+                cache_ttl=source.cache_ttl,
+                description=getattr(source, 'description', None) or source.__class__.__doc__
+            )
         
-        # 获取新闻
+        # 获取新闻 - 使用已经创建好的source_info信息，避免重复查询数据库
         result = await fetch_source_news(source_id, timeout)
         
         news_items = []
@@ -354,24 +527,24 @@ async def get_source(
                                 dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
                             published_at_str = dt.isoformat()
                         except Exception as e:
-                            logger.warning(f"处理发布时间出错: {e}, 源: {source.source_id}, 值: {item.published_at}")
+                            logger.warning(f"处理发布时间出错: {e}, 源: {source_info.source_id}, 值: {item.published_at}")
                     
                     news_item = NewsItem(
                         id=item.id,
                         title=item.title,
                         url=item.url,
                         source_id=item.source_id,
-                        source_name=source.name,
+                        source_name=source_info.name,
                         published_at=published_at_str,
                         updated_at=item.updated_at.isoformat() if hasattr(item, 'updated_at') and item.updated_at else None,
                         summary=item.summary,
                         content=item.content,
                         author=getattr(item, 'author', None),
-                        category=source.category,
+                        category=source_info.category,
                         tags=getattr(item, 'tags', []),
                         image_url=item.image_url,
-                        language=source.language,
-                        country=source.country,
+                        language=source_info.language,
+                        country=source_info.country,
                         extra=item.extra
                     )
                     news_items.append(news_item)
@@ -400,6 +573,48 @@ async def get_sources_stats():
         # 获取所有可用的源类型
         source_types = NewsSourceFactory.get_available_sources()
         
+        # 创建数据库会话，用于获取自定义源的元数据
+        from app.db.session import SessionLocal
+        from app.models.source import Source
+        from app.models.category import Category
+        
+        db = SessionLocal()
+        
+        # 获取所有自定义源的信息
+        custom_sources_data = {}
+        category_map = {}
+        
+        try:
+            # 查询数据库中的所有自定义源
+            custom_sources = db.query(Source).filter(Source.id.like('custom-%')).all()
+            
+            # 获取分类信息
+            category_ids = [s.category_id for s in custom_sources if s.category_id is not None]
+            if category_ids:
+                for cat in db.query(Category).filter(Category.id.in_(category_ids)).all():
+                    category_map[cat.id] = cat.slug
+            
+            # 保存自定义源数据
+            for source in custom_sources:
+                category = "general"
+                if source.category_id and source.category_id in category_map:
+                    category = category_map[source.category_id]
+                
+                # 转换timedelta为秒
+                update_interval = source.update_interval.total_seconds() if hasattr(source.update_interval, 'total_seconds') else 1800
+                cache_ttl = source.cache_ttl.total_seconds() if hasattr(source.cache_ttl, 'total_seconds') else 900
+                
+                custom_sources_data[source.id] = {
+                    "name": source.name,
+                    "category": category,
+                    "country": source.country or "unknown",
+                    "language": source.language or "unknown",
+                    "update_interval": int(update_interval),
+                    "cache_ttl": int(cache_ttl)
+                }
+        finally:
+            db.close()
+        
         # 创建并获取源实例
         sources = []
         for source_type in source_types:
@@ -419,28 +634,50 @@ async def get_sources_stats():
         # 处理每个源
         for source in sources:
             try:
-                # 更新分类统计
-                category = source.category or "unknown"
+                # 检查是否为自定义源
+                if source.source_id.startswith('custom-') and source.source_id in custom_sources_data:
+                    # 使用数据库中的自定义源信息
+                    source_data = custom_sources_data[source.source_id]
+                    category = source_data["category"]
+                    country = source_data["country"]
+                    language = source_data["language"]
+                    
+                    # 收集源信息
+                    source_info = {
+                        "source_id": source.source_id,
+                        "name": source_data["name"],
+                        "category": category,
+                        "country": country,
+                        "language": language,
+                        "update_interval": source_data["update_interval"],
+                        "cache_ttl": source_data["cache_ttl"]
+                    }
+                else:
+                    # 使用源对象的元数据
+                    # 更新分类统计
+                    category = source.category or "unknown"
+                    # 更新国家统计
+                    country = source.country or "unknown"
+                    # 更新语言统计
+                    language = source.language or "unknown"
+                    
+                    # 收集源信息
+                    source_info = {
+                        "source_id": source.source_id,
+                        "name": source.name,
+                        "category": category,
+                        "country": country,
+                        "language": language,
+                        "update_interval": source.update_interval,
+                        "cache_ttl": source.cache_ttl
+                    }
+                
+                # 更新统计计数
                 categories[category] = categories.get(category, 0) + 1
-                
-                # 更新国家统计
-                country = source.country or "unknown"
                 countries[country] = countries.get(country, 0) + 1
-                
-                # 更新语言统计
-                language = source.language or "unknown"
                 languages[language] = languages.get(language, 0) + 1
                 
-                # 收集源信息
-                source_info = {
-                    "source_id": source.source_id,
-                    "name": source.name,
-                    "category": category,
-                    "country": country,
-                    "language": language,
-                    "update_interval": source.update_interval,
-                    "cache_ttl": source.cache_ttl
-                }
+                # 添加到源列表
                 source_stats.append(source_info)
             except Exception as e:
                 logger.error(f"处理源 {source.source_id} 统计信息时出错: {str(e)}")
@@ -946,8 +1183,58 @@ async def test_source(
     start_time = time.time()
     
     try:
-        # 创建数据源
-        source = NewsSourceFactory.create_source(source_id)
+        # 如果是自定义源，从数据库获取详细信息
+        source_data = {}
+        if source_id.startswith('custom-'):
+            try:
+                from app.db.session import SessionLocal
+                from app.models.source import Source
+                from app.models.category import Category
+                
+                # 创建数据库会话
+                db = SessionLocal()
+                try:
+                    # 查询数据库获取源信息
+                    db_source = db.query(Source).filter(Source.id == source_id).first()
+                    if db_source:
+                        # 获取分类信息
+                        category = "general"
+                        if db_source.category_id:
+                            cat = db.query(Category).filter(Category.id == db_source.category_id).first()
+                            if cat:
+                                category = cat.slug
+                        
+                        source_data = {
+                            "id": db_source.id,
+                            "name": db_source.name,
+                            "url": db_source.url,
+                            "type": db_source.type,
+                            "country": db_source.country,
+                            "language": db_source.language,
+                            "config": db_source.config,
+                            "description": db_source.description,
+                            "category": category  # 使用分类slug而不是ID
+                        }
+                        logger.info(f"从数据库获取自定义源 {source_id} 的信息: 名称={source_data.get('name')}, 分类={source_data.get('category')}, URL={source_data.get('url', 'None')}")
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"从数据库获取自定义源信息失败: {str(e)}")
+            
+            # 创建自定义源，传递从数据库获取的信息
+            source = NewsSourceFactory.create_source(
+                source_type=source_id,
+                url=source_data.get("url", ""),
+                name=source_data.get("name", source_id),
+                country=source_data.get("country", "global"),
+                language=source_data.get("language", "en"),
+                category=source_data.get("category", "general"),
+                config=source_data.get("config", {}),
+                source_data=source_data
+            )
+        else:
+            # 非自定义源使用正常方式创建
+            source = NewsSourceFactory.create_source(source_id)
         
         if source is None:
             raise HTTPException(
@@ -984,19 +1271,35 @@ async def test_source(
                     else:
                         field_types[field] = "None"
             
+            # 自定义源特殊处理，确保使用数据库获取的信息
+            source_info = {
+                "id": source_id,
+                "name": source.name,
+                "category": source.category,
+                "update_interval": getattr(source, "update_interval", 1800),
+                "cache_ttl": getattr(source, "cache_ttl", 900),
+            }
+            
+            # 如果是自定义源且有从数据库获取的信息，优先使用数据库信息
+            if source_id.startswith('custom-') and source_data:
+                source_info = {
+                    "id": source_id,
+                    "name": source_data.get("name", source.name),
+                    "category": source_data.get("category", source.category),
+                    "update_interval": getattr(source, "update_interval", 1800),
+                    "cache_ttl": getattr(source, "cache_ttl", 900),
+                    "country": source_data.get("country", getattr(source, "country", "global")),
+                    "language": source_data.get("language", getattr(source, "language", "en")),
+                    "description": source_data.get("description", "")
+                }
+            
             # 返回结果
             return {
                 "success": True,
                 "source_id": source_id,
                 "elapsed_time": elapsed_time,
                 "items_count": len(news_items),
-                "source": {
-                    "id": source_id,
-                    "name": getattr(source, "name", "Unknown"),
-                    "category": getattr(source, "category", "Unknown"),
-                    "update_interval": getattr(source, "update_interval", 0),
-                    "cache_ttl": getattr(source, "cache_ttl", 0),
-                },
+                "source": source_info,
                 "sample": sample,
                 "field_types": field_types
             }

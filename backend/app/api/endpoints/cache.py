@@ -150,59 +150,93 @@ async def refresh_cache(
         # 导入调度器
         from worker.scheduler import AdaptiveScheduler
         from worker.sources.provider import DefaultNewsSourceProvider
+        from app.db.session import SessionLocal
+        from app.models.source import Source
+        from sqlalchemy import select
         
-        # 创建源提供者
-        provider = DefaultNewsSourceProvider()
+        # 创建数据库会话
+        db = SessionLocal()
         
-        # 创建调度器
-        scheduler = AdaptiveScheduler(
-            source_provider=provider,
-            cache_manager=cm,
-            enable_adaptive=False
-        )
-        
-        # 初始化调度器
-        await scheduler.initialize()
-        
-        # 获取要刷新的源列表 - 修复URL参数处理
-        if not sources:
-            all_sources = scheduler.get_all_sources()
-            sources = [source.source_id for source in all_sources]
-        
-        # 结果字典
-        results = {}
-        
-        # 异步刷新函数
-        async def async_refresh_sources():
-            for source_id in sources:
-                try:
-                    # 强制刷新
-                    success = await scheduler.fetch_source(source_id, force=True)
-                    results[source_id] = success
-                except Exception as e:
-                    results[source_id] = False
+        try:
+            # 创建源提供者
+            provider = DefaultNewsSourceProvider()
             
-            # 移除对不存在的close方法的调用
-            # 注释掉以下行:
-            # await scheduler.close()
-        
-        # 在后台刷新或立即刷新
-        if background_tasks:
-            background_tasks.add_task(async_refresh_sources)
-            message = f"已开始刷新 {len(sources)} 个源的缓存"
-            status = "processing"
-        else:
-            await async_refresh_sources()
-            success_count = sum(1 for result in results.values() if result)
-            message = f"已完成刷新 {success_count}/{len(sources)} 个源的缓存"
-            status = "completed"
-        
-        return {
-            "status": status,
-            "message": message,
-            "sources": sources,
-            "results": results if status == "completed" else {}
-        }
+            # 创建调度器
+            scheduler = AdaptiveScheduler(
+                source_provider=provider,
+                cache_manager=cm,
+                enable_adaptive=False
+            )
+            
+            # 初始化调度器
+            await scheduler.initialize()
+            
+            # 获取要刷新的源列表 - 修复URL参数处理
+            if not sources:
+                all_sources = scheduler.get_all_sources()
+                sources = [source.source_id for source in all_sources]
+            
+                # 从数据库获取最新的缓存TTL配置
+                source_ttls = {}
+                for source_id in sources:
+                    # 查询数据库获取最新的TTL设置
+                    db_source = db.query(Source).filter(Source.id == source_id).first()
+                    if db_source and db_source.cache_ttl:
+                        # 转换timedelta为秒
+                        ttl_seconds = int(db_source.cache_ttl.total_seconds())
+                        source_ttls[source_id] = ttl_seconds
+                        logging.info(f"数据库中的TTL设置: {source_id} = {ttl_seconds}秒")
+            
+            # 结果字典
+            results = {}
+            
+            # 异步刷新函数
+            async def async_refresh_sources():
+                for source_id in sources:
+                    try:
+                        # 强制刷新
+                        success = await scheduler.fetch_source(source_id, force=True)
+                        
+                        # 如果成功且有TTL设置，重新设置Redis缓存的TTL
+                        if success and source_id in source_ttls:
+                            # 获取缓存键
+                            cache_key = f"{SOURCE_CACHE_PREFIX}{source_id}"
+                            
+                            # 获取当前缓存数据
+                            cached_data = await cm.get(cache_key)
+                            
+                            # 如果有缓存数据，重新设置TTL
+                            if cached_data and cm.redis:
+                                ttl = source_ttls[source_id]
+                                await cm.set(cache_key, cached_data, ttl)
+                                logging.info(f"更新缓存TTL: {source_id} = {ttl}秒")
+                        
+                        results[source_id] = success
+                    except Exception as e:
+                        logging.error(f"刷新源 {source_id} 时出错: {str(e)}")
+                        results[source_id] = False
+            
+            # 在后台刷新或立即刷新
+            if background_tasks:
+                background_tasks.add_task(async_refresh_sources)
+                message = f"已开始刷新 {len(sources)} 个源的缓存"
+                status = "processing"
+            else:
+                await async_refresh_sources()
+                success_count = sum(1 for result in results.values() if result)
+                message = f"已完成刷新 {success_count}/{len(sources)} 个源的缓存"
+                status = "completed"
+            
+            return {
+                "status": status,
+                "message": message,
+                "sources": sources,
+                "results": results if status == "completed" else {},
+                "ttl_updates": source_ttls  # 返回更新的TTL值
+            }
+        finally:
+            # 关闭数据库会话
+            db.close()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"刷新缓存失败: {str(e)}")
 

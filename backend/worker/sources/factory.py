@@ -71,6 +71,94 @@ class NewsSourceFactory:
         Returns:
             NewsSource: News source instance
         """
+        # 处理自定义源（以custom-开头的源ID）
+        if source_type.startswith("custom-"):
+            try:
+                logger.info(f"创建自定义源适配器: {source_type}")
+                from worker.sources.custom import CustomWebSource
+                
+                # 检查是否提供了配置信息
+                config = kwargs.get("config", {})
+                if isinstance(config, str):
+                    # 如果配置是字符串（可能是JSON），尝试解析
+                    import json
+                    try:
+                        config = json.loads(config)
+                        logger.info(f"成功解析自定义源配置字符串: {source_type}")
+                    except:
+                        logger.warning(f"无法解析配置字符串，将使用空配置: {source_type}")
+                        config = {}
+                
+                if not config or "selectors" not in config:
+                    logger.warning(f"自定义源 {source_type} 缺少必要的选择器配置")
+                    config["selectors"] = {}
+                
+                # 从参数中提取URL和其他必要信息
+                url = kwargs.get("url", "")
+                
+                # 尝试从不同位置获取URL
+                if not url:
+                    # 从config中获取
+                    if "url" in config:
+                        url = config["url"]
+                        logger.debug(f"从config获取到URL: {url}")
+                    # 从source_data中获取
+                    elif "source_data" in kwargs and isinstance(kwargs.get("source_data"), dict):
+                        source_data = kwargs.get("source_data", {})
+                        url = source_data.get("url", "")
+                        logger.debug(f"从source_data获取到URL: {url}")
+                
+                # 只有在非启动过程中才显示URL缺失警告
+                suppress_warnings = kwargs.get("suppress_warnings", False)
+                # 如果还是没找到URL，记录警告（除非是在启动过程中）
+                if not url and not suppress_warnings:
+                    logger.debug(f"创建自定义源 {source_type} 时未提供URL - 将在需要时从数据库获取")
+                
+                if url:
+                    logger.debug(f"创建自定义源 {source_type} 使用URL: {url}")
+                
+                # 尝试从config中获取名称，优先使用config中的name
+                name = None
+                if "name" in config:
+                    name = config["name"]
+                    logger.info(f"自定义源 {source_type} 使用配置中的名称: {name}")
+                else:
+                    name = kwargs.get("name", source_type)
+                    logger.info(f"自定义源 {source_type} 使用默认名称: {name}")
+                
+                # 如果config中已有URL，但与传入的URL不同，优先使用传入的URL
+                if "url" in config and url and config["url"] != url:
+                    logger.info(f"配置中的URL ({config['url']}) 与传入的URL ({url}) 不同，使用传入的URL")
+                    config["url"] = url
+                
+                # 获取其他属性
+                category = config.get("category", kwargs.get("category", "general"))
+                country = config.get("country", kwargs.get("country", "global"))
+                language = config.get("language", kwargs.get("language", "en"))
+                update_interval = config.get("update_interval", kwargs.get("update_interval", 1800))
+                cache_ttl = config.get("cache_ttl", kwargs.get("cache_ttl", 900))
+                
+                # 记录完整的创建信息
+                logger.info(f"创建自定义源: ID={source_type}, 名称={name}, URL={url}, 类别={category}, "
+                            f"更新间隔={update_interval}秒, 缓存TTL={cache_ttl}秒")
+                
+                return CustomWebSource(
+                    source_id=source_type,
+                    name=name,  # 使用从配置或参数中获取的名称
+                    url=url,
+                    category=category,
+                    country=country,
+                    language=language,
+                    update_interval=update_interval,
+                    cache_ttl=cache_ttl,
+                    config=config
+                )
+            except Exception as e:
+                logger.error(f"创建自定义源时出错: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return None
+                
         if source_type == "zhihu":
             return ZhihuHotNewsSource(**kwargs)
         elif source_type == "weibo":

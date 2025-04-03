@@ -115,8 +115,74 @@ class NewsStats(BaseModel):
 async def get_sources():
     """获取所有新闻源"""
     sources = source_manager.get_all_sources()
-    return [
-        {
+    
+    # 收集所有自定义源的ID
+    custom_source_ids = [s.source_id for s in sources if s.source_id.startswith('custom-')]
+    
+    # 如果有自定义源，从数据库获取它们的元数据
+    custom_source_metadata = {}
+    if custom_source_ids:
+        try:
+            from app.db.session import SessionLocal
+            from app.models.source import Source
+            from app.models.category import Category
+            
+            # 创建数据库会话
+            db = SessionLocal()
+            try:
+                # 查询所有自定义源的元数据
+                custom_sources = db.query(Source).filter(Source.id.in_(custom_source_ids)).all()
+                
+                # 获取分类信息
+                category_ids = [s.category_id for s in custom_sources if s.category_id is not None]
+                categories = {}
+                if category_ids:
+                    for cat in db.query(Category).filter(Category.id.in_(category_ids)).all():
+                        categories[cat.id] = cat.slug
+                
+                # 保存元数据
+                for source in custom_sources:
+                    category = "general"
+                    if source.category_id and source.category_id in categories:
+                        category = categories[source.category_id]
+                    
+                    # 转换timedelta为秒
+                    update_interval = source.update_interval.total_seconds() if hasattr(source.update_interval, 'total_seconds') else 1800
+                    cache_ttl = source.cache_ttl.total_seconds() if hasattr(source.cache_ttl, 'total_seconds') else 900
+                    
+                    custom_source_metadata[source.id] = {
+                        "name": source.name,
+                        "category": category,
+                        "country": source.country or "global",
+                        "language": source.language or "en",
+                        "update_interval": int(update_interval),
+                        "cache_ttl": int(cache_ttl)
+                    }
+            finally:
+                db.close()
+        except Exception as e:
+            import logging
+            logger = logging.getLogger("news_api")
+            logger.error(f"获取自定义源元数据时出错: {str(e)}")
+    
+    # 格式化返回数据
+    result = []
+    for source in sources:
+        if source.source_id in custom_source_metadata:
+            # 使用数据库中的元数据
+            meta = custom_source_metadata[source.source_id]
+            result.append({
+                "source_id": source.source_id,
+                "name": meta["name"],
+                "category": meta["category"],
+                "country": meta["country"],
+                "language": meta["language"],
+                "update_interval": meta["update_interval"],
+                "cache_ttl": meta["cache_ttl"]
+            })
+        else:
+            # 使用源对象的元数据
+            result.append({
             "source_id": source.source_id,
             "name": source.name,
             "category": source.category,
@@ -124,9 +190,9 @@ async def get_sources():
             "language": source.language,
             "update_interval": source.update_interval if isinstance(source.update_interval, int) else int(source.update_interval.total_seconds()) if hasattr(source.update_interval, 'total_seconds') else None,
             "cache_ttl": source.cache_ttl if isinstance(source.cache_ttl, int) else int(source.cache_ttl.total_seconds()) if hasattr(source.cache_ttl, 'total_seconds') else None
-        }
-        for source in sources
-    ]
+            })
+    
+    return result
 
 
 @router.get("/sources/{source_id}", response_model=List[NewsItem])

@@ -396,6 +396,14 @@ async def startup_event():
         # 注意: 这里使用app.state存储提供者，以便其他模块可以访问
         app.state.source_provider = source_provider
         
+        # 将source_provider中的所有源注册到source_manager中，确保API路由可以访问
+        from worker.sources.manager import source_manager
+        # 清空source_manager以避免重复
+        source_manager.sources.clear()
+        for source in sources:
+            source_manager.register_source(source)
+        logger.info(f"已将 {len(sources)} 个源从source_provider同步到source_manager")
+        
         # 启动定期清理Chrome进程的任务
         import asyncio
         asyncio.create_task(schedule_chrome_process_cleanup())

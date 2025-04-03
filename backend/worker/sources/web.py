@@ -71,8 +71,23 @@ class WebNewsSource(NewsSource):
         """
         关闭HTTP客户端
         """
-        if self._http_client and not self._http_client.closed:
-            await self._http_client.close()
+        try:
+            if self._http_client and not self._http_client.closed:
+                await self._http_client.close()
+                logger.info(f"关闭源 {self.source_id} 的HTTP客户端")
+            elif self._http_client:
+                logger.info(f"源 {self.source_id} 的HTTP客户端已经关闭")
+            else:
+                logger.info(f"源 {self.source_id} 没有HTTP客户端需要关闭")
+                
+            self._http_client = None
+            
+            # 调用父类方法确保所有资源都被释放
+            await super().close()
+        except Exception as e:
+            logger.error(f"关闭源 {self.source_id} 的HTTP客户端时出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     async def fetch_content(self) -> str:
         """

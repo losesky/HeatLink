@@ -209,7 +209,39 @@ class DefaultNewsSourceProvider(NewsSourceProvider):
                         else:
                             config = {}
                             
+                        # 将源的基本属性添加到配置中
                         config["source_id"] = source.id
+                        config["name"] = source.name  # 添加源名称
+                        config["url"] = source.url if hasattr(source, 'url') else ""
+                        
+                        # 添加其他重要属性
+                        if hasattr(source, 'category_id'):
+                            config["category_id"] = source.category_id
+                        if hasattr(source, 'country'):
+                            config["country"] = source.country
+                        if hasattr(source, 'language'):
+                            config["language"] = source.language
+                        if hasattr(source, 'update_interval') and source.update_interval:
+                            # 将timedelta转换为秒
+                            config["update_interval"] = int(source.update_interval.total_seconds())
+                        if hasattr(source, 'cache_ttl') and source.cache_ttl:
+                            # 将timedelta转换为秒
+                            config["cache_ttl"] = int(source.cache_ttl.total_seconds())
+                        
+                        # 添加自定义源也需要的特殊属性
+                        if hasattr(source, 'status'):
+                            config["status"] = source.status
+                        if hasattr(source, 'need_proxy'):
+                            config["need_proxy"] = source.need_proxy
+                        if hasattr(source, 'proxy_fallback'):
+                            config["proxy_fallback"] = source.proxy_fallback
+                        if hasattr(source, 'proxy_group'):
+                            config["proxy_group"] = source.proxy_group
+                        
+                        # 对于自定义源，记录详细日志
+                        if source.id.startswith('custom-'):
+                            logger.info(f"加载自定义源 {source.id} 配置: 名称={source.name}, URL={getattr(source, 'url', None)}")
+                            
                         configs.append(config)
                     except Exception as e:
                         logger.error(f"解析源 {source.id} 的配置失败: {str(e)}")
