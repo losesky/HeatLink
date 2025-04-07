@@ -690,6 +690,122 @@ SOURCES = [
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
         }
+    },
+    {
+        "id": "custom-nbd",
+        "name": "每日经济新闻",
+        "description": "Auto-generated source for https://www.nbd.com.cn/",
+        "url": "https://www.nbd.com.cn/",
+        "type": SourceType.WEB,
+        "category": "finance",
+        "country": "CN",
+        "language": "zh-CN",
+        "config": {
+            
+                "selectors": {
+                    "item": ".content.normal-real .kuaiXunBox > .itemBox",
+                    "title": ".u-newsText .u-content",
+                    "link": "a",
+                    "date": ".u-time",
+                    "summary": "",
+                    "content": ""
+                },
+                "use_selenium": true,
+                "auto_generated": true,
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,en-US;q=0.8,en;q=0.5",
+                    "Connection": "keep-alive"
+                }
+        }
+    },
+    {
+        "id": "custom-hexun-roll",
+        "name": "和讯滚动新闻",
+        "description": "Auto-generated source for https://roll.hexun.com/",
+        "url": "https://roll.hexun.com/",
+        "type": SourceType.WEB,
+        "category": "finance",
+        "country": "CN",
+        "language": "zh-CN",
+        "config": {
+            
+                "selectors": {
+                    "item": "#immeList .ntb > li",
+                    "title": "a",
+                    "link": "a",
+                    "date": "b",
+                    "summary": "",
+                    "content": ""
+                },
+                "use_selenium": true,
+                "auto_generated": true,
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,en-US;q=0.8,en;q=0.5",
+                    "Connection": "keep-alive"
+                }
+        }
+    },
+    {
+        "id": "custom-163hot",
+        "name": "网易热点排行",
+        "description": "Auto-generated source for https://news.163.com/",
+        "url": "https://news.163.com/",
+        "type": SourceType.WEB,
+        "category": "news",
+        "country": "CN",
+        "language": "zh-CN",
+        "config": {
+            
+                "selectors": {
+                    "item": ".mt35.mod_hot_rank.clearfix.cm_area_show ul > li",
+                    "title": "a",
+                    "link": "a",
+                    "date": "",
+                    "summary": "",
+                    "content": ""
+                },
+                "use_selenium": true,
+                "auto_generated": true,
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,en-US;q=0.8,en;q=0.5",
+                    "Connection": "keep-alive"
+                }
+        }
+    },
+    {
+        "id": "custom-cnstock-flashnews",
+        "name": "上海证券报-快讯",
+        "description": "Auto-generated source for https://www.cnstock.com/fastNews/10004",
+        "url": "https://www.cnstock.com/fastNews/10004",
+        "type": SourceType.WEB,
+        "category": "finance",
+        "country": "CN",
+        "language": "zh-CN",
+        "config": {
+            
+                "selectors": {
+                    "item": ".ant-timeline .ant-timeline-item",
+                    "title": ".ant-timeline .ant-timeline-item p[class*=\"font\"]",
+                    "link": ".ant-timeline .ant-timeline-item a[href]",
+                    "date": ".ant-timeline .ant-timeline-item [class*=\"ant-timeline\"]",
+                    "summary": "",
+                    "content": ""
+                },
+                "use_selenium": true,
+                "auto_generated": true,
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,en-US;q=0.8,en;q=0.5",
+                    "Connection": "keep-alive"
+                }
+        }
     }
 ]
 

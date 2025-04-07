@@ -2364,6 +2364,40 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                 console.log('分析潜在的新闻容器...');
                 foundSelectors.container = analyzeContainers(htmlDoc);
                 
+                // 检测特定网站结构 - 首先检测所有特殊结构
+                const specialStructure = detectSpecialStructures(htmlDoc);
+                if (specialStructure) {
+                    console.log('检测到特殊网站结构，使用特定分析方法');
+                    
+                    // 已经找到特殊结构，直接设置选择器
+                    foundSelectors.item = [{ 
+                        selector: specialStructure.itemSelector,
+                        count: specialStructure.itemCount,
+                        score: 100
+                    }];
+                    
+                    foundSelectors.title = [{ 
+                        selector: specialStructure.titleSelector,
+                        score: 100,
+                        text: specialStructure.titleExample || '',
+                        isLink: false
+                    }];
+                    
+                    foundSelectors.link = [{ 
+                        selector: specialStructure.linkSelector,
+                        score: 100,
+                        isTitleLink: false,
+                        href: specialStructure.linkExample || ''
+                    }];
+                    
+                    if (specialStructure.dateSelector) {
+                        foundSelectors.date = [{ 
+                            selector: specialStructure.dateSelector,
+                            score: 100,
+                            text: specialStructure.dateExample || ''
+                        }];
+                    }
+                } else {
                 // 如果找到了容器，分析容器中的列表项
                 if (foundSelectors.container.length > 0) {
                     const containerSelector = validateAndFixSelector(foundSelectors.container[0].selector, 'container');
@@ -2401,15 +2435,38 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                         }
                     } catch (e) {
                         console.error(`使用条目选择器分析时出错: ${e.message}`);
+                        }
                     }
                 }
                 
                 // 创建结果消息
                 let resultMessage = createResultMessage(foundSelectors, htmlDoc);
                 
+                // 添加一个突出的通知，让用户知道选择器已经应用到表单
+                if (foundSelectors.item && foundSelectors.item.length > 0) {
+                    resultMessage = `
+                    <div class="alert alert-success mb-4">
+                        <h5><i class="bi bi-check-circle-fill"></i> 选择器已自动应用</h5>
+                        <p>已将以下选择器应用到表单字段:</p>
+                        <ul>
+                            <li><strong>条目选择器:</strong> <code>${foundSelectors.item[0].selector}</code></li>
+                            ${foundSelectors.title.length > 0 ? `<li><strong>标题选择器:</strong> <code>${foundSelectors.title[0].selector}</code></li>` : ''}
+                            ${foundSelectors.link.length > 0 ? `<li><strong>链接选择器:</strong> <code>${foundSelectors.link[0].selector}</code></li>` : ''}
+                            ${foundSelectors.date.length > 0 ? `<li><strong>日期选择器:</strong> <code>${foundSelectors.date[0].selector}</code></li>` : ''}
+                        </ul>
+                        <p class="mb-0">您可以在下方查看更多分析结果。</p>
+                    </div>
+                    ` + resultMessage;
+                }
+                
                 // 显示结果
                 const resultModalBody = document.getElementById('resultModalBody');
                 resultModalBody.innerHTML = resultMessage;
+                
+                // 显示一个通知，让用户知道选择器已经应用
+                if (foundSelectors.item && foundSelectors.item.length > 0) {
+                    showToast('已填充选择器', `已将检测到的选择器填充到表单字段中：${foundSelectors.item[0].selector}`, 'success');
+                }
                 
                 // 第五步：尝试填充表单字段
                 try {
@@ -2420,6 +2477,28 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                     
                     if (foundSelectors.item && foundSelectors.item.length > 0) {
                         setSelector('item', foundSelectors.item[0].selector);
+                        // 额外确保条目选择器已设置 (NBD专用)
+                        document.getElementById('itemSelector').value = foundSelectors.item[0].selector;
+                        document.getElementById('itemSelector').classList.add('is-valid');
+                        document.getElementById('itemSelector').style.borderColor = '#28a745';
+                        document.getElementById('itemSelector').style.boxShadow = '0 0 0 0.2rem rgba(40, 167, 69, 0.25)';
+                        console.log(`直接设置条目选择器为: ${foundSelectors.item[0].selector}`);
+                        
+                        // 添加一个提示标签
+                        const feedbackDiv = document.createElement('div');
+                        feedbackDiv.className = 'valid-feedback';
+                        feedbackDiv.style.display = 'block';
+                        feedbackDiv.textContent = `已自动设置为: ${foundSelectors.item[0].selector}`;
+                        
+                        const parentElement = document.getElementById('itemSelector').parentElement;
+                        
+                        // 移除任何已存在的反馈元素
+                        const existingFeedback = parentElement.querySelector('.valid-feedback');
+                        if (existingFeedback) {
+                            parentElement.removeChild(existingFeedback);
+                        }
+                        
+                        parentElement.appendChild(feedbackDiv);
                     }
                     
                     if (foundSelectors.title && foundSelectors.title.length > 0) {
@@ -2467,6 +2546,155 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
             }
         }
         
+        // 辅助函数：检测NBD网站结构
+        function detectNBDStructure(htmlDoc) {
+            try {
+                // 检查是否存在特定的结构元素
+                const hasKuaiXunBox = !!htmlDoc.querySelector('.kuaiXunBox');
+                const hasNormalReal = !!htmlDoc.querySelector('.content.normal-real');
+                const hasUContent = !!htmlDoc.querySelector('.u-content');
+                const hasUTime = !!htmlDoc.querySelector('.u-time');
+                
+                // 判断是否为NBD网站结构
+                const isNBD = hasKuaiXunBox && hasUContent && hasUTime;
+                
+                if (!isNBD) {
+                    return null;
+                }
+                
+                console.log('检测到NBD网站结构');
+                
+                // 寻找第一个itemBox元素
+                const firstItemBox = htmlDoc.querySelector('.itemBox');
+                if (!firstItemBox) {
+                    console.warn('找不到.itemBox元素');
+                    return null;
+                }
+                
+                // 寻找itemBox的直接父元素 - 通常是.kuaiXunBox或类似元素
+                let containerElement = firstItemBox.parentElement;
+                let containerClass = '';
+                
+                if (containerElement) {
+                    containerClass = containerElement.className || '';
+                    console.log(`找到容器元素: ${containerClass}`);
+                } else {
+                    console.warn('无法找到.itemBox的父元素');
+                    return null;
+                }
+                
+                // 通过追溯父元素结构找到最合适的容器选择器
+                let containerSelector = '';
+                let itemSelector = '';
+                
+                // 检查是否有.normal-real的父级元素
+                let normalRealParent = null;
+                let currentElem = containerElement;
+                
+                // 向上追溯查找.normal-real类
+                while (currentElem && !normalRealParent) {
+                    if (currentElem.classList && 
+                        currentElem.classList.contains('normal-real') || 
+                        (currentElem.classList && 
+                         currentElem.classList.contains('content') && 
+                         currentElem.classList.contains('normal-real'))) {
+                        normalRealParent = currentElem;
+                        break;
+                    }
+                    currentElem = currentElem.parentElement;
+                }
+                
+                // 根据找到的结构设置选择器
+                if (normalRealParent) {
+                    console.log('找到.normal-real父元素');
+                    containerSelector = '.content.normal-real';
+                    
+                    if (containerElement.classList.contains('kuaiXunBox')) {
+                        itemSelector = '.content.normal-real .kuaiXunBox > .itemBox';
+                    } else {
+                        itemSelector = '.content.normal-real .itemBox';
+                    }
+                } else if (containerClass.includes('kuaiXunBox')) {
+                    console.log('找到.kuaiXunBox容器');
+                    containerSelector = '.kuaiXunBox';
+                    itemSelector = '.kuaiXunBox > .itemBox';
+                } else {
+                    // 默认选择器
+                    containerSelector = containerElement.tagName.toLowerCase() + 
+                        (containerClass ? '.' + containerClass.replace(/\s+/g, '.') : '');
+                    itemSelector = containerSelector + ' > .itemBox';
+                }
+                
+                // 计算有多少个匹配的项目
+                const items = htmlDoc.querySelectorAll(itemSelector);
+                
+                // 分析第一个项目，获取标题、链接和日期选择器示例
+                let titleExample = '';
+                let linkExample = '';
+                let dateExample = '';
+                
+                // 找到第一个项目的标题
+                const titleElement = firstItemBox.querySelector('.u-content');
+                if (titleElement) {
+                    titleExample = titleElement.textContent.trim();
+                    console.log('标题示例: ' + titleExample);
+                }
+                
+                // 找到第一个项目的链接
+                const linkElement = firstItemBox.querySelector('a');
+                if (linkElement) {
+                    linkExample = linkElement.getAttribute('href');
+                    
+                    // 如果标题为空，尝试从链接的title属性获取
+                    if (!titleExample && linkElement.hasAttribute('title')) {
+                        titleExample = linkElement.getAttribute('title');
+                        console.log('从链接title属性获取标题: ' + titleExample);
+                    }
+                    
+                    // 如果标题仍为空，尝试获取链接的文本内容
+                    if (!titleExample) {
+                        // 排除时间内容
+                        const tempContent = linkElement.textContent.trim();
+                        const timeElement = linkElement.querySelector('.u-time');
+                        if (timeElement) {
+                            const timeText = timeElement.textContent.trim();
+                            titleExample = tempContent.replace(timeText, '').trim();
+                        } else {
+                            titleExample = tempContent;
+                        }
+                        
+                        if (titleExample) {
+                            console.log('从链接文本获取标题: ' + titleExample);
+                        }
+                    }
+                }
+                
+                // 找到第一个项目的日期
+                const dateElement = firstItemBox.querySelector('.u-time');
+                if (dateElement) {
+                    dateExample = dateElement.textContent.trim();
+                    console.log('日期示例: ' + dateExample);
+                }
+                
+                // 返回结构信息
+                return {
+                    isNBD: true,
+                    containerSelector: containerSelector,
+                    itemSelector: itemSelector,
+                    titleSelector: '.u-newsText .u-content', // 更精确的标题选择器
+                    linkSelector: 'a',
+                    dateSelector: '.u-time',
+                    itemCount: items.length,
+                    titleExample: titleExample,
+                    linkExample: linkExample,
+                    dateExample: dateExample
+                };
+            } catch (e) {
+                console.error('检测NBD结构时出错:', e);
+                return null;
+            }
+        }
+        
         // 设置测试按钮的事件处理
         function setupTestButtons() {
             // 从结果中获取选择器值
@@ -2511,6 +2739,28 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                     contentSelector = getCodeValueFromElement(selectorItems[i]);
                     console.log('提取内容选择器:', contentSelector);
                 }
+            }
+            
+            // 确保选择器值已设置到表单字段
+            if (itemSelector) {
+                document.getElementById('itemSelector').value = itemSelector;
+                document.getElementById('itemSelector').classList.add('is-valid');
+                console.log('从测试按钮设置条目选择器:', itemSelector);
+            }
+            
+            if (titleSelector) {
+                document.getElementById('titleSelector').value = titleSelector;
+                document.getElementById('titleSelector').classList.add('is-valid');
+            }
+            
+            if (linkSelector) {
+                document.getElementById('linkSelector').value = linkSelector;
+                document.getElementById('linkSelector').classList.add('is-valid');
+            }
+            
+            if (dateSelector) {
+                document.getElementById('dateSelector').value = dateSelector;
+                document.getElementById('dateSelector').classList.add('is-valid');
             }
             
             // 如果没有从li元素中找到选择器，尝试从表格中获取
@@ -3251,7 +3501,7 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                 'ul > li', 'ol > li',  // 移除单独的'li'选择器，改用更具体的选择器
                 
                 // 通用的新闻列表项
-                '.item', '.news-item', '.article', '.post', '.entry',
+                '.item', '.news-item', '.article', '.post', '.entry', '.itemBox',
                 
                 // 定义列表
                 'dl', 'dt', 'dd',
@@ -3266,7 +3516,7 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                 '[class*="item"]', '[class*="article"]', '[class*="news"]',
                 
                 // 特定网站类
-                '.jd > li', '.jar > li', '.ntb > li'
+                '.jd > li', '.jar > li', '.ntb > li', '.kuaiXunBox > li'
             ];
             
             // 添加容器子元素的直接选择器
@@ -3534,24 +3784,90 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                 const allHeadings = safeQuerySelector(itemElement, 'h1, h2, h3, h4, h5, h6', true);
                 console.log(`在条目中找到 ${allLinks.length} 个链接和 ${allHeadings.length} 个标题标签`);
                 
-                // 如果是和讯网，使用更具体的选择器
+                // 先检查特定的NBD结构 - 这是单独针对每日经济新闻网站做的处理
                 try {
+                    // 检查是否有.u-newsText .u-content结构
+                    const uContentElements = safeQuerySelector(itemElement, '.u-newsText .u-content, .u-content', true);
+                    if (uContentElements.length > 0) {
+                        console.log(`找到NBD特定结构.u-content元素: ${uContentElements.length}个`);
+                        
+                        for (let i = 0; i < uContentElements.length; i++) {
+                            const element = uContentElements[i];
+                            const text = element.textContent.trim();
+                            
+                            if (text) {  // 确保文本不为空
+                                const selector = buildElementSelector(element, itemElement);
+                                titleCandidates.push({
+                                    element: element,
+                                    text: text,
+                                    selector: selector,
+                                    textLength: text.length,
+                                    isLink: false,  // u-content通常不是链接本身
+                                    score: 100,  // 给予最高分数，因为这是非常特定的结构
+                                    href: ''
+                                });
+                                console.log(`添加NBD特定结构候选标题: "${text}", 选择器: ${selector}, 分数: 100`);
+                            }
+                        }
+                    }
+                    
+                    // 如果没找到，尝试从父级链接获取标题
+                    if (uContentElements.length === 0 && itemElement.tagName.toLowerCase() === 'li' && itemElement.classList.contains('itemBox')) {
+                        // 查找链接的文本内容或内部div
+                        const parentLink = safeQuerySelector(itemElement, 'a', false);
+                        if (parentLink) {
+                            // 尝试找链接中的文本，排除时间标记
+                            let linkText = parentLink.textContent.trim();
+                            const timeElement = safeQuerySelector(parentLink, '.u-time', false);
+                            
+                            if (timeElement) {
+                                // 移除时间元素的文本
+                                const timeText = timeElement.textContent.trim();
+                                linkText = linkText.replace(timeText, '').trim();
+                            }
+                            
+                            if (linkText) {
+                                const selector = 'a';
+                                titleCandidates.push({
+                                    element: parentLink,
+                                    text: linkText,
+                                    selector: selector,
+                                    textLength: linkText.length,
+                                    isLink: true,
+                                    score: 95,  // 次高分数
+                                    href: parentLink.getAttribute('href') || ''
+                                });
+                                console.log(`从itemBox的链接中提取标题文本: "${linkText}", 选择器: ${selector}, 分数: 95`);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error('尝试NBD特定结构时出错:', e);
+                }
+
+                // 检查特定的新闻网站结构
+                try {
+                    // 特定网站结构选择器
+                    const specificSelectors = [
                     // 和讯网特定选择器
-                    const hexunSelectors = [
-                        // 和讯财经网常用选择器
                         '.ntb > li > a',
                         '.ntb li > a',
                         'li > span > a',
                         '.title > a',
                         '.list li > a',
-                        '.immeList li > a'
+                        '.immeList li > a',
+                        // 新增对 u-newsText 结构的支持
+                        '.u-newsText .u-content',
+                        '.u-newsText > div',
+                        '.u-content',
+                        'div.u-content'
                     ];
                     
-                    for (const selector of hexunSelectors) {
+                    for (const selector of specificSelectors) {
                         try {
                             const elements = safeQuerySelector(itemElement, selector, true);
                             if (elements.length > 0) {
-                                console.log(`找到和讯网特定选择器 "${selector}" 匹配的元素: ${elements.length} 个`);
+                                console.log(`找到特定结构选择器 "${selector}" 匹配的元素: ${elements.length} 个`);
                                 
                                 // 检查这些元素是否包含较长的文本（可能是标题）
                                 for (let i = 0; i < elements.length; i++) {
@@ -3559,7 +3875,7 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                                     const text = element.textContent.trim();
                                     const textLength = text.length;
                                     
-                                    if (textLength > 10) {  // 标题通常超过10个字符
+                                    if (textLength > 5) {  // 修改为5个字符，以捕获更短的标题
                                         const selector = buildElementSelector(element, itemElement);
                                         titleCandidates.push({
                                             element: element,
@@ -3571,16 +3887,16 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                                             href: element.getAttribute('href') || ''
                                         });
                                         
-                                        console.log(`添加和讯网特定候选标题: "${text}", 长度: ${textLength}, 分数: ${85 + Math.min(textLength, 30)}`);
+                                        console.log(`添加特定结构候选标题: "${text}", 长度: ${textLength}, 分数: ${85 + Math.min(textLength, 30)}`);
                                     }
                                 }
                             }
                         } catch (e) {
-                            console.error(`检查和讯网选择器 ${selector} 时出错:`, e);
+                            console.error(`检查特定网站选择器 ${selector} 时出错:`, e);
                         }
                     }
                 } catch (e) {
-                    console.error('尝试和讯网特定选择器时出错:', e);
+                    console.error('尝试特定网站选择器时出错:', e);
                 }
                 
                 // 第二步：查找每个列表项中最长文本的链接
@@ -3782,6 +4098,8 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                 console.error('分析标题元素时出错:', e);
                 return titleCandidates;  // 返回已收集的候选项
             }
+            
+            return titleCandidates.sort((a, b) => b.score - a.score);
         }
         
         // 辅助函数：分析链接元素
@@ -4379,478 +4697,434 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
         
         // 辅助函数：创建分析结果消息
         function createResultMessage(foundSelectors, htmlDoc) {
-            let message = '<div class="alert alert-success">HTML分析完成！</div>';
+            let resultMessage = '';
             
-            // 确定找到的条目数量
-            let itemsCount = 0;
-            if (foundSelectors.item && foundSelectors.item.length > 0 && foundSelectors.item[0].selector) {
+            // 添加成功消息
+            resultMessage += `<div class="alert alert-success mb-4">
+                <h5>HTML分析完成！</h5>
+                ${hasFoundAny(foundSelectors) ? 
+                    `<p>找到 ${countFoundItems(foundSelectors)} 个可能的新闻条目。</p>` : 
+                    `<p>找到 0 个可能的新闻条目。</p>`}
+            </div>`;
+            
+            // 添加选择器列表
+            resultMessage += `<h5>自动选择的选择器:</h5>
+            <ul>`;
+            
+            // 添加条目选择器
+            resultMessage += `<li>条目选择器: ${foundSelectors.item.length > 0 ? 
+                `<code>${foundSelectors.item[0].selector}</code> <button class="btn btn-sm btn-primary" id="test_item_btn">测试</button>` : 
+                "<span class='text-warning'>未找到</span>"}</li>`;
+            
+            // 添加标题选择器
+            resultMessage += `<li>标题选择器: ${foundSelectors.title.length > 0 ? 
+                `<code>${foundSelectors.title[0].selector}</code> <button class="btn btn-sm btn-primary" id="test_title_btn">测试</button>` : 
+                "<span class='text-warning'>未找到</span>"}</li>`;
+            
+            // 添加链接选择器
+            resultMessage += `<li>链接选择器: ${foundSelectors.link.length > 0 ? 
+                `<code>${foundSelectors.link[0].selector}</code> <button class="btn btn-sm btn-primary" id="test_link_btn">测试</button>` : 
+                "<span class='text-warning'>未找到</span>"}</li>`;
+            
+            // 添加日期选择器
+            resultMessage += `<li>日期选择器: ${foundSelectors.date.length > 0 ? 
+                `<code>${foundSelectors.date[0].selector}</code> <button class="btn btn-sm btn-primary" id="test_date_btn">测试</button>` : 
+                "<span class='text-warning'>未找到</span>"}</li>`;
+            
+            // 添加附加提示
+            resultMessage += `<li>可能还有单独的摘要内容。</li>
+            <li>内容可能在详情页面中，此处无法获取。</li>
+            </ul>`;
+            
+            // 检查是否找到任何选择器，如果没有提供建议
+            if (!hasFoundAny(foundSelectors)) {
+                resultMessage += `<div class="alert alert-warning mt-3">
+                    <h6>未找到合适的选择器</h6>
+                    <p>可能的原因：</p>
+                    <ul>
+                        <li>HTML结构过于复杂或非标准</li>
+                        <li>内容可能需要JavaScript渲染</li>
+                        <li>可能需要手动配置选择器</li>
+                    </ul>
+                </div>`;
+            }
+            
+            // 尝试检测新的复杂结构
+            const complexStructure = detectComplexStructure(htmlDoc);
+            if (complexStructure) {
+                resultMessage += `<div class="alert alert-info mt-3">
+                    <h6>检测到复杂结构</h6>
+                    <p>检测到以下复杂结构模式:</p>
+                    <ul>
+                        ${complexStructure.map(pattern => `<li>${pattern.name}: <code>${pattern.selector}</code></li>`).join('')}
+                    </ul>
+                    <p>建议尝试使用这些选择器组合获取内容。</p>
+                </div>`;
+            }
+            
+            return resultMessage;
+        }
+        
+        // 检测复杂结构模式
+        function detectComplexStructure(htmlDoc) {
+            const patterns = [];
+            
+            // 检测嵌套列表结构
+            try {
+                // 检查 .kuaiXunBox > .itemBox 结构
+                const kuaixunItemBoxes = htmlDoc.querySelectorAll('.kuaiXunBox > .itemBox, .content.normal-real .itemBox');
+                if (kuaixunItemBoxes.length >= 3) {
+                    patterns.push({
+                        name: '快讯盒子结构',
+                        selector: kuaixunItemBoxes[0].parentElement.className.includes('kuaiXunBox') ? 
+                            '.kuaiXunBox > .itemBox' : '.content.normal-real .itemBox',
+                        count: kuaixunItemBoxes.length
+                    });
+                    
+                    // 检查 u-newsText 结构
+                    const uNewsTexts = htmlDoc.querySelectorAll('.itemBox .u-newsText');
+                    if (uNewsTexts.length >= 3) {
+                        patterns.push({
+                            name: '新闻内容结构',
+                            selector: '.itemBox .u-newsText .u-content',
+                            count: uNewsTexts.length
+                        });
+                    }
+                    
+                    // 特别处理NBD网站的标题结构
+                    const uContents = htmlDoc.querySelectorAll('.itemBox .u-content, .u-newsText .u-content');
+                    if (uContents.length >= 3) {
+                        patterns.push({
+                            name: 'NBD新闻内容结构',
+                            selector: '.itemBox a .u-newsText .u-content, .itemBox .u-content',
+                            count: uContents.length
+                        });
+                    }
+                }
+                
+                // 检查其他常见复杂结构
+                // 检查带有时间标记的结构
+                const timeMarkers = htmlDoc.querySelectorAll('.u-time, .time, [class*="time"]');
+                if (timeMarkers.length >= 3) {
+                    patterns.push({
+                        name: '带时间标记的新闻项',
+                        selector: timeMarkers[0].closest('li, .item, [class*="item"]')?.tagName.toLowerCase() + 
+                                  ' > ' + timeMarkers[0].tagName.toLowerCase() + 
+                                  (timeMarkers[0].className ? '.' + timeMarkers[0].className.split(' ')[0] : ''),
+                        count: timeMarkers.length
+                    });
+                }
+                
+                // 检查多层深度嵌套结构
+                const deepNested = findDeepNestedStructures(htmlDoc);
+                if (deepNested) {
+                    patterns.push(deepNested);
+                }
+                
+            } catch (e) {
+                console.error('检测复杂结构时出错:', e);
+            }
+            
+            return patterns.length > 0 ? patterns : null;
+        }
+        
+        // 查找深层嵌套结构
+        function findDeepNestedStructures(htmlDoc) {
+            try {
+                // 查找至少有3层嵌套的结构
+                const potentialNestedSelectors = [
+                    'li a div', 
+                    'div > div > div > a',
+                    '.item > a > div',
+                    '[class*="item"] > a > div',
+                    '.itemBox > a > div',
+                    '.itemBox > a > .u-newsText',
+                    '.itemBox > a > span + div',
+                    // 添加NBD特定结构
+                    '.content.normal-real .itemBox',
+                    '.content.normal-real .itemBox a .u-newsText',
+                    '.content.normal-real .itemBox a .u-newsText .u-content',
+                ];
+                
+                for (const selector of potentialNestedSelectors) {
+                    const elements = htmlDoc.querySelectorAll(selector);
+                    if (elements.length >= 3) {
+                        return {
+                            name: '深层嵌套结构',
+                            selector: selector,
+                            count: elements.length
+                        };
+                    }
+                }
+                
+                // 特殊检查NBD网站的结构
+                const nbdStructure = htmlDoc.querySelectorAll('.content.normal-real .itemBox a .u-newsText .u-content');
+                if (nbdStructure.length >= 3) {
+                    return {
+                        name: 'NBD新闻内容嵌套结构',
+                        selector: '.content.normal-real .itemBox a .u-newsText .u-content',
+                        count: nbdStructure.length
+                    };
+                }
+                
+                        } catch (e) {
+                console.error('查找深层嵌套结构时出错:', e);
+            }
+            
+            return null;
+        }
+
+        // 辅助函数：测试选择器并展示结果
+        function testSelectorWithValue(type, selectorValue) {
+            if (!window.parsedHtmlDoc || !selectorValue) {
+                showToast('错误', '无法测试选择器，HTML文档未解析或选择器为空', 'danger');
+                return;
+            }
+            
+            try {
+                // 验证并修复选择器语法
+                const validSelector = validateAndFixSelector(selectorValue, type);
+                
+                // 在解析后的HTML文档中测试选择器
+                const elements = window.parsedHtmlDoc.querySelectorAll(validSelector);
+                
+                // 确保无论如何都设置选择器到对应的输入框
+                const targetInput = document.getElementById(`${type}Selector`);
+                if (targetInput) {
+                    targetInput.value = validSelector;
+                    targetInput.classList.add('is-valid');
+                    console.log(`测试后设置 ${type} 选择器为: ${validSelector}`);
+                } else {
+                    console.error(`无法找到 ${type}Selector 输入框`);
+                }
+                
+                // 显示结果消息
+                if (elements.length > 0) {
+                    let resultHTML = `
+                        <div class="alert alert-success">
+                            <p>选择器 <code>${validSelector}</code> 匹配了 ${elements.length} 个元素。</p>
+                        </div>
+                        <div class="mt-3">
+                            <h6>匹配元素内容示例:</h6>
+                            <div class="list-group">
+                    `;
+                    
+                    // 最多显示5个匹配元素的内容
+                    const maxToShow = Math.min(elements.length, 5);
+                    for (let i = 0; i < maxToShow; i++) {
+                        const element = elements[i];
+                        const elementHTML = element.outerHTML;
+                        const elementText = element.textContent.trim();
+                        
+                        resultHTML += `
+                            <div class="list-group-item">
+                                <small class="text-muted">元素 #${i+1}:</small>
+                                <div class="text-break">${elementText.substring(0, 100)}${elementText.length > 100 ? '...' : ''}</div>
+                                <div class="accordion mt-2" id="element${i}Accordion">
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header">
+                                            <button class="accordion-button collapsed p-1" type="button" data-bs-toggle="collapse" data-bs-target="#element${i}Html">
+                                                查看HTML
+                                            </button>
+                                        </h2>
+                                        <div id="element${i}Html" class="accordion-collapse collapse" data-bs-parent="#element${i}Accordion">
+                                            <div class="accordion-body p-2">
+                                                <pre class="bg-light p-2" style="max-height: 200px; overflow: auto; font-size: 0.8rem;">${escapeHTML(elementHTML)}</pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    resultHTML += `
+                            </div>
+                        </div>
+                    `;
+                    
+                    // 添加选择器使用建议
+                    resultHTML += `
+                        <div class="alert alert-info mt-3">
+                            <p><strong>建议:</strong> 已将此选择器值填入表单的 ${getTypeName(type)} 字段。</p>
+                        </div>
+                    `;
+                    
+                    // 显示在模态框中
+                    const resultModalBody = document.getElementById('resultModalBody');
+                    resultModalBody.innerHTML = resultHTML;
+                    
+                    // 显示Toast通知
+                    showToast('成功', `成功找到 ${elements.length} 个匹配 ${getTypeName(type)} 的元素！`, 'success');
+                        } else {
+                    // 未找到匹配元素
+                    const resultModalBody = document.getElementById('resultModalBody');
+                    resultModalBody.innerHTML = `
+                        <div class="alert alert-warning">
+                            <p>选择器 <code>${validSelector}</code> 未匹配到任何元素。</p>
+                            <p>请检查选择器语法或尝试其他选择器。</p>
+                        </div>
+                        <div class="mt-3">
+                            <h6>解决方案建议:</h6>
+                            <ul>
+                                <li>确保选择器语法正确</li>
+                                <li>尝试使用更简单的选择器，如 <code>.class-name</code> 或 <code>tag-name</code></li>
+                                <li>使用浏览器开发者工具检查元素的实际类名和结构</li>
+                                <li>对于复杂的嵌套结构，尝试分步选择每一层</li>
+                            </ul>
+                        </div>
+                    `;
+                    
+                    // 显示Toast通知
+                    showToast('警告', `选择器 ${validSelector} 未匹配到任何元素`, 'warning');
+                }
+                
+            } catch (e) {
+                console.error('测试选择器时出错:', e);
+                showToast('错误', `测试选择器时出错: ${e.message}`, 'danger');
+                
+                // 显示错误消息
+                const resultModalBody = document.getElementById('resultModalBody');
+                resultModalBody.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p><strong>测试选择器时出错</strong></p>
+                        <p>${e.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 辅助函数：验证并修复选择器语法
+        function validateAndFixSelector(selector, type) {
+            if (!selector) return '';
+            
+            let validSelector = selector.trim();
+            
+            try {
+                // 简单测试选择器语法
+                document.createElement('div').querySelector(validSelector);
+                return validSelector;
+            } catch (e) {
+                console.error(`选择器 "${selector}" 语法无效，尝试修复...`);
+                
+                // 常见错误修复
+                if (validSelector.startsWith('>')) {
+                    validSelector = validSelector.substring(1).trim();
+                }
+                
+                if (validSelector.includes('>>')) {
+                    validSelector = validSelector.replace(/>>/g, '>');
+                }
+                
+                // 确保类名前有"."
+                if (validSelector.includes('class=')) {
+                    validSelector = validSelector.replace(/\[class=(['"])([^'"]+)\1\]/g, '.$2');
+                }
+                
+                // 修复常见错误组合
+                validSelector = validSelector.replace(/\s{2,}/g, ' ').trim();
+                
+                // 特殊处理NBD网站
+                if (validSelector.includes('normal-real') && !validSelector.includes('.normal-real')) {
+                    validSelector = validSelector.replace(/normal-real/g, '.normal-real');
+                }
+                
+                // 针对特定类型的选择器进行优化
+                if (type === 'title' && validSelector === '.u-content') {
+                    // 对于标题优化u-content选择器
+                    validSelector = '.itemBox .u-newsText .u-content, .itemBox .u-content, .u-content';
+                } else if (type === 'link' && !validSelector.toLowerCase().includes('a')) {
+                    // 链接选择器应该包含a标签
+                    if (validSelector.includes('.')) {
+                        // 类选择器，添加a标签
+                        validSelector = `a${validSelector}`;
+                            } else {
+                        // 可能是标签选择器
+                        validSelector = `a, ${validSelector}`;
+                    }
+                }
+                
+                // 再次测试修复后的选择器
                 try {
-                    const elements = safeQuerySelector(htmlDoc, foundSelectors.item[0].selector, true);
-                    itemsCount = elements.length;
-                } catch (e) {
+                    document.createElement('div').querySelector(validSelector);
+                    console.log(`选择器已修复: "${selector}" -> "${validSelector}"`);
+                    return validSelector;
+            } catch (e) {
+                    // 如果仍然无效，返回原始选择器并记录错误
+                    console.error(`无法修复选择器 "${selector}": ${e.message}`);
+                return selector;
+                }
+            }
+        }
+        
+        // 辅助函数：检查是否有任何选择器被找到
+        function hasFoundAny(foundSelectors) {
+            return (
+                (foundSelectors.container && foundSelectors.container.length > 0) ||
+                (foundSelectors.item && foundSelectors.item.length > 0) ||
+                (foundSelectors.title && foundSelectors.title.length > 0) ||
+                (foundSelectors.link && foundSelectors.link.length > 0) ||
+                (foundSelectors.date && foundSelectors.date.length > 0) ||
+                (foundSelectors.summary && foundSelectors.summary.length > 0) ||
+                (foundSelectors.content && foundSelectors.content.length > 0)
+            );
+        }
+        
+        // 辅助函数：计算找到的条目数量
+        function countFoundItems(foundSelectors) {
+            let count = 0;
+            
+            // 优先使用item选择器
+            if (foundSelectors.item && foundSelectors.item.length > 0) {
+                count = foundSelectors.item[0].count || 0;
+            }
+            // 如果没有item选择器但有容器选择器
+            else if (foundSelectors.container && foundSelectors.container.length > 0) {
+                const containerSelector = foundSelectors.container[0].selector;
+                try {
+                    const container = window.parsedHtmlDoc.querySelector(containerSelector);
+                    if (container) {
+                        // 尝试计数可能的子元素
+                        const childElements = container.children;
+                        if (childElements.length > 0) {
+                            count = childElements.length;
+                        }
+                }
+            } catch (e) {
                     console.error('计算条目数量时出错:', e);
                 }
             }
-            
-            message += `<p>找到 ${itemsCount} 个可能的新闻条目。</p>`;
-            
-            // 添加自动选择的选择器
-            message += '<h5>自动选择的选择器：</h5><ul>';
-            
-            // 容器选择器
-            if (foundSelectors.container && foundSelectors.container.length > 0) {
-                message += `<li>容器选择器: <code>${foundSelectors.container[0].selector}</code> <button id="test_container_btn" class="btn btn-sm btn-outline-primary ml-2">测试</button></li>`;
-            } else {
-                message += '<li>容器选择器: <span class="text-warning">未找到</span></li>';
-            }
-            
-            // 条目选择器
-            if (foundSelectors.item && foundSelectors.item.length > 0) {
-                message += `<li>条目选择器: <code>${foundSelectors.item[0].selector}</code> (${itemsCount}个条目) <button id="test_item_btn" class="btn btn-sm btn-outline-primary ml-2">测试</button></li>`;
-            } else {
-                message += '<li>条目选择器: <span class="text-warning">未找到</span></li>';
-            }
-            
-            // 标题选择器
-            if (foundSelectors.title && foundSelectors.title.length > 0) {
-                const topTitle = foundSelectors.title[0];
-                message += `<li>标题选择器: <code>${topTitle.selector}</code> (${topTitle.isLink ? '是' : '否'}链接, 文本长度: ${topTitle.textLength}, 分数: ${topTitle.score}) <button id="test_title_btn" class="btn btn-sm btn-outline-primary ml-2">测试</button></li>`;
-                
-                // 添加标题示例
-                if (topTitle.text) {
-                    message += `<li class="ml-4">示例: ${topTitle.text}</li>`;
-                }
-            } else {
-                message += '<li>标题选择器: <span class="text-warning">未找到</span></li>';
-            }
-            
-            // 链接选择器
-            if (foundSelectors.link && foundSelectors.link.length > 0) {
-                const topLink = foundSelectors.link[0];
-                message += `<li>链接选择器: <code>${topLink.selector}</code> (${topLink.isTitleLink ? '是' : '否'}标题链接, 分数: ${topLink.score}) <button id="test_link_btn" class="btn btn-sm btn-outline-primary ml-2">测试</button></li>`;
-                
-                // 添加链接示例
-                if (topLink.href) {
-                    message += `<li class="ml-4">示例: ${topLink.href}</li>`;
-                }
-            } else {
-                message += '<li>链接选择器: <span class="text-warning">未找到</span></li>';
-            }
-            
-            // 日期选择器
-            if (foundSelectors.date && foundSelectors.date.length > 0) {
-                message += `<li>日期选择器: <code>${foundSelectors.date[0].selector}</code> <button id="test_date_btn" class="btn btn-sm btn-outline-primary ml-2">测试</button></li>`;
-                
-                // 添加日期示例
-                if (foundSelectors.date[0].text) {
-                    message += `<li class="ml-4">示例: ${foundSelectors.date[0].text}</li>`;
-                }
-            } else {
-                message += '<li>日期选择器: <span class="text-warning">未找到</span></li>';
-            }
-            
-            // 可能的其他元素
-            message += '<li>可能还有单独的摘要内容。</li>';
-            message += '<li>内容可能在详情页面中，此处无法获取。</li>';
-            
-            message += '</ul>';
-            
-            // 添加表格显示标题候选项详情
-            if (foundSelectors.title && foundSelectors.title.length > 0) {
-                message += '<h5 class="mt-4">标题候选项详细信息（按评分排序）：</h5>';
-                message += '<table class="table table-sm table-bordered">';
-                message += '<thead><tr><th>选择器</th><th>文本</th><th>链接</th><th>文本长度</th><th>评分</th></tr></thead>';
-                message += '<tbody>';
-                
-                // 最多显示前10个候选项
-                const titleCandidates = foundSelectors.title.slice(0, 10);
-                for (let i = 0; i < titleCandidates.length; i++) {
-                    const candidate = titleCandidates[i];
-                    message += `<tr>
-                        <td><code>${candidate.selector}</code></td>
-                        <td>${candidate.text ? candidate.text.substring(0, 30) + (candidate.text.length > 30 ? '...' : '') : ''}</td>
-                        <td>${candidate.isLink ? '是' : '否'}</td>
-                        <td>${candidate.textLength || 0}</td>
-                        <td>${candidate.score}</td>
-                    </tr>`;
-                }
-                
-                message += '</tbody></table>';
-            }
-            
-            // 添加表格显示链接候选项详情
-            if (foundSelectors.link && foundSelectors.link.length > 0) {
-                message += '<h5 class="mt-4">链接候选项详细信息（按评分排序）：</h5>';
-                message += '<table class="table table-sm table-bordered">';
-                message += '<thead><tr><th>选择器</th><th>链接</th><th>文本长度</th><th>是标题链接</th><th>评分</th></tr></thead>';
-                message += '<tbody>';
-                
-                // 最多显示前10个候选项
-                const linkCandidates = foundSelectors.link.slice(0, 10);
-                for (let i = 0; i < linkCandidates.length; i++) {
-                    const candidate = linkCandidates[i];
-                    message += `<tr>
-                        <td><code>${candidate.selector}</code></td>
-                        <td>${candidate.href ? candidate.href.substring(0, 30) + (candidate.href.length > 30 ? '...' : '') : ''}</td>
-                        <td>${candidate.textLength || 0}</td>
-                        <td>${candidate.isTitleLink ? '是' : '否'}</td>
-                        <td>${candidate.score}</td>
-                    </tr>`;
-                }
-                
-                message += '</tbody></table>';
-            }
-            
-            return message;
-        }
-        
-        // 辅助函数：测试选择器，显示匹配元素的信息
-        function testSelector(type) {
-            try {
-                // 获取选择器
-                let selector = getSelector(type);
-                
-                if (!selector) {
-                    showToast('提示', '请先输入要测试的选择器', 'warning');
-                    return;
-                }
-                
-                // 获取HTML文档
-                const htmlDoc = window.parsedHtmlDoc;
-                if (!htmlDoc) {
-                    showToast('提示', '请先分析HTML内容', 'warning');
-                    return;
-                }
-                
-                // 找到父元素容器
-                let parentElement = htmlDoc;
-                
-                // 如果是测试条目选择器，先找到容器
-                if (type === 'item') {
-                    const containerSelector = getSelector('container');
-                    if (containerSelector) {
-                        try {
-                            const containers = htmlDoc.querySelectorAll(containerSelector);
-                            if (containers.length > 0) {
-                                parentElement = containers[0];
-                                console.log(`使用容器选择器 "${containerSelector}" 找到第一个容器作为上下文`);
-                            }
-                        } catch (e) {
-                            console.error(`查找容器时出错: ${e.message}`);
-                        }
-                    }
-                }
-                
-                // 如果是测试标题、链接等元素选择器，需要先获取条目元素作为上下文
-                if (['title', 'link', 'date', 'summary', 'content'].includes(type)) {
-                    const itemSelector = getSelector('item');
-                    if (itemSelector) {
-                        try {
-                            // 使用条目选择器获取第一个条目作为上下文
-                            const items = htmlDoc.querySelectorAll(itemSelector);
-                            if (items.length > 0) {
-                                parentElement = items[0];
-                                console.log(`使用条目选择器 "${itemSelector}" 找到第一个条目作为上下文`);
-                            }
-                        } catch (e) {
-                            console.error(`查找条目时出错: ${e.message}`);
-                        }
-                    }
-                }
-                
-                // 查询匹配的元素
-                let elements = [];
+            // 如果找到标题选择器但没有item选择器
+            else if (foundSelectors.title && foundSelectors.title.length > 0) {
                 try {
-                    if (type === 'container') {
-                        // 容器是在整个文档中查找的
-                        elements = htmlDoc.querySelectorAll(selector);
-                    } else {
-                        // 其他元素在父元素(容器或条目)中查找
-                        elements = parentElement.querySelectorAll(selector);
-                    }
+                    const titleSelector = foundSelectors.title[0].selector;
+                    const elements = window.parsedHtmlDoc.querySelectorAll(titleSelector);
+                    count = elements.length;
                 } catch (e) {
-                    throw new Error(`选择器语法错误: ${e.message}`);
+                    console.error('使用标题选择器计算条目数量时出错:', e);
                 }
-                
-                // 创建测试结果消息
-                let resultMessage = `<div class="p-3 bg-light">
-                    <h5>选择器测试结果: <code>${selector}</code></h5>`;
-                
-                // 检查是否找到匹配元素
-                if (elements.length === 0) {
-                    resultMessage += `<div class="alert alert-warning">未找到匹配的元素</div>`;
-                } else {
-                    const maxDisplayElements = 5; // 最多显示5个元素
-                    resultMessage += `<div>共找到 <strong>${elements.length}</strong> 个匹配元素。</div>`;
-                    
-                    // 如果是测试条目选择器，并且找到了很多元素，提供警告
-                    if (type === 'item' && elements.length > 30) {
-                        resultMessage += `<div class="alert alert-warning">找到的条目数量较多，请确认选择器是否正确。理想情况下，条目选择器应该只匹配新闻列表中的项目。</div>`;
-                    }
-                    
-                    // 如果是测试标题或链接选择器，并且找到了很多元素，提供更精确的建议
-                    if ((type === 'title' || type === 'link') && elements.length > 10) {
-                        resultMessage += `<div class="alert alert-warning">找到的${type === 'title' ? '标题' : '链接'}元素数量较多，这可能导致不准确的结果。建议使用更精确的选择器，例如：</div>
-                        <ul>
-                            <li>如果所有新闻都在列表项中：<code>li > a.title</code> 或 <code>li > h3 > a</code></li>
-                            <li>使用特定的类名：<code>a.news-title</code> 或 <code>.headline > a</code></li>
-                            <li>限制在特定容器中：<code>.news-container a:first-child</code></li>
-                        </ul>`;
-                    }
-                    
-                    // 显示元素示例
-                    resultMessage += `<h6 class="mt-3">匹配元素示例:</h6>`;
-                    
-                    // 根据选择器类型显示不同的信息
-                    for (let i = 0; i < Math.min(elements.length, maxDisplayElements); i++) {
-                        const element = elements[i];
-                        const elementPath = showElementPath(element);
-                        resultMessage += `<div class="card mb-2">
-                            <div class="card-header bg-light">元素 ${i + 1}: <code>${elementPath}</code></div>
-                            <div class="card-body">`;
-                        
-                        // 显示元素内容和属性
-                        const text = element.textContent.trim();
-                        resultMessage += `<p>文本长度: ${text.length} 字符</p>`;
-                        
-                        // 根据不同类型显示详细信息
-                        if (type === 'title' || type === 'link') {
-                            // 对于标题和链接，显示文本和URL
-                            resultMessage += `<p>文本: <strong>${text}</strong></p>`;
-                            
-                            // 如果元素是链接或包含链接
-                            const links = element.tagName.toLowerCase() === 'a' ? [element] : element.querySelectorAll('a');
-                            if (links.length > 0) {
-                                resultMessage += `<p>链接:</p><ul>`;
-                                for (let j = 0; j < links.length; j++) {
-                                    const link = links[j];
-                                    const href = link.getAttribute('href') || '#';
-                                    const linkText = link.textContent.trim();
-                                    resultMessage += `<li><a href="${href}" target="_blank">${href}</a> (文本: "${linkText}")</li>`;
-                                }
-                                resultMessage += `</ul>`;
-                            }
-                            
-                            // 检查父元素中的同级链接
-                            if (element.parentElement) {
-                                const siblingLinks = Array.from(element.parentElement.querySelectorAll('a')).filter(a => a !== element);
-                                if (siblingLinks.length > 0) {
-                                    resultMessage += `<p>同级链接:</p><ul>`;
-                                    for (let j = 0; j < siblingLinks.length; j++) {
-                                        const link = siblingLinks[j];
-                                        const href = link.getAttribute('href') || '#';
-                                        const linkText = link.textContent.trim();
-                                        resultMessage += `<li><a href="${href}" target="_blank">${href}</a> (文本: "${linkText}")</li>`;
-                                    }
-                                    resultMessage += `</ul>`;
-                                }
-                            }
-                        } else if (type === 'date') {
-                            // 对于日期，显示文本和可能的格式
-                            resultMessage += `<p>文本: <strong>${text}</strong></p>`;
-                            if (text.match(/\d{4}[-\/\.]\d{1,2}[-\/\.]\d{1,2}/) || 
-                                text.match(/\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{4}/) ||
-                                text.match(/\d{1,2}[-\/\.]\d{1,2}/) ||
-                                text.match(/\d{1,2}:\d{1,2}/)) {
-                                resultMessage += `<p class="text-success">可能是日期或时间格式</p>`;
-                            }
-                            
-                            // 新增：解析相对时间
-                            const relativeTimeMatch = text.match(/(\d+)\s*(分钟|小时|天|周|月|年)前/);
-                            if (relativeTimeMatch) {
-                                const parsedDate = parseRelativeTime(text);
-                                if (parsedDate) {
-                                    // 格式化日期时间
-                                    const formattedDate = parsedDate.toISOString().replace('T', ' ').substring(0, 19);
-                                    resultMessage += `<p class="text-success">解析为相对时间: <strong>${formattedDate}</strong></p>`;
-                                    resultMessage += `<p><small>将保存为ISO格式: ${parsedDate.toISOString()}</small></p>`;
-                                }
-                            }
-                        } else {
-                            // 对于其他类型，显示HTML内容预览
-                            resultMessage += `<p>${text.length > 100 ? text.substring(0, 100) + '...' : text}</p>`;
-                            
-                            if (type === 'container' || type === 'item') {
-                                // 显示子元素计数
-                                const childElementsCount = element.children.length;
-                                resultMessage += `<p>子元素数量: ${childElementsCount}</p>`;
-                                
-                                // 显示内部链接数量
-                                const linksCount = element.querySelectorAll('a').length;
-                                if (linksCount > 0) {
-                                    resultMessage += `<p>内部链接数量: ${linksCount}</p>`;
-                                }
-                            }
-                        }
-                        
-                        resultMessage += `</div></div>`;
-                    }
-                    
-                    // 如果还有更多元素，显示提示
-                    if (elements.length > maxDisplayElements) {
-                        resultMessage += `<div class="text-muted">共有 ${elements.length} 个匹配元素，仅显示前 ${maxDisplayElements} 个</div>`;
-                    }
-                }
-                
-                resultMessage += `</div>`;
-                
-                // 显示结果
-                const resultModalBody = document.getElementById('testResultModalBody');
-                if (resultModalBody) {
-                    resultModalBody.innerHTML = resultMessage;
-                    
-                    // 显示模态框
-                    const resultModal = new bootstrap.Modal(document.getElementById('testResultModal'));
-                    resultModal.show();
-                } else {
-                    console.error('找不到测试结果模态框');
-                    showToast('错误', '找不到测试结果模态框', 'danger');
-                }
-                
-            } catch (error) {
-                console.error('测试选择器时出错:', error);
-                showToast('错误', `测试选择器时出错: ${error.message}`, 'danger');
             }
+            
+            return count;
         }
         
-        // 辅助函数：显示元素路径
-        function showElementPath(element, maxLevels = 3) {
-            let path = '';
-            let current = element;
-            let level = 0;
+        // 辅助函数：获取选择器类型的名称
+        function getTypeName(type) {
+            const typeNames = {
+                'container': '容器',
+                'item': '条目',
+                'title': '标题',
+                'link': '链接',
+                'date': '日期',
+                'summary': '摘要',
+                'content': '内容'
+            };
             
-            while (current && level < maxLevels) {
-                const tag = current.tagName.toLowerCase();
-                let selector = tag;
-                
-                // 添加ID
-                if (current.id) {
-                    selector += `#${current.id}`;
-                }
-                
-                // 添加类名（最多显示2个）
-                if (current.classList && current.classList.length > 0) {
-                    const classes = Array.from(current.classList).slice(0, 2);
-                    selector += `.${classes.join('.')}`;
-                }
-                
-                path = path ? `${selector} > ${path}` : selector;
-                current = current.parentElement;
-                level++;
-            }
-            
-            if (current) {
-                path = '... > ' + path;
-            }
-            
-            return path;
-        }
-        
-        // 辅助函数：优化选择器
-        function optimizeSelector(type, selector) {
-            // 如果没有选择器，返回原样
-            if (!selector) return selector;
-            
-            try {
-                // 根据类型优化选择器
-                if (type === 'title') {
-                    // 对于"a"这样的通用选择器，提供更精确的版本
-                    if (selector === 'a') {
-                        // 获取条目选择器
-                        const itemSelector = document.getElementById('item_selector').value;
-                        if (itemSelector) {
-                            // 尝试几种更精确的组合
-                            // 例如，如果条目选择器是 '.ntb > li'，则尝试 '.ntb > li > a'
-                            if (itemSelector.includes('li')) {
-                                return 'li > a:first-child';
-                            } else if (itemSelector.includes('.ntb')) {
-                                return '.ntb li > a';
-                            } else {
-                                return 'a:first-child';
-                            }
-                        }
-                    }
-                } else if (type === 'link') {
-                    // 类似的链接选择器优化
-                    if (selector === 'a') {
-                        // 如果标题选择器不是链接，尝试使用标题选择器的子元素
-                        const titleSelector = document.getElementById('title_selector').value;
-                        if (titleSelector && titleSelector !== 'a') {
-                            return `${titleSelector} a`;
-                        } else {
-                            // 否则使用条目中的第一个链接
-                            return 'a:first-child';
-                        }
-                    }
-                }
-                
-                // 如果没有特殊优化，返回原始选择器
-                return selector;
-            } catch (e) {
-                console.error('优化选择器时出错:', e);
-                return selector;
-            }
-        }
-        
-        // 辅助函数：获取指定类型的选择器
-        function getSelector(type) {
-            let selector = '';
-            let element = null;
-            
-            try {
-                if (type === 'container') {
-                    element = document.getElementById('containerSelector');
-                } else if (type === 'item') {
-                    element = document.getElementById('itemSelector');
-                } else if (type === 'title') {
-                    element = document.getElementById('titleSelector');
-                } else if (type === 'link') {
-                    element = document.getElementById('linkSelector');
-                } else if (type === 'date') {
-                    element = document.getElementById('dateSelector');
-                } else if (type === 'summary') {
-                    element = document.getElementById('summarySelector');
-                } else if (type === 'content') {
-                    element = document.getElementById('contentSelector');
-                }
-                
-                // 如果元素存在，获取其值
-                if (element && element.value) {
-                    selector = element.value.trim();
-                }
-            } catch (e) {
-                console.error(`获取选择器 ${type} 时出错:`, e);
-            }
-            
-            // 优化选择器
-            if (['title', 'link'].includes(type) && selector === 'a') {
-                return optimizeSelector(type, selector);
-            }
-            
-            return selector;
+            return typeNames[type] || type;
         }
         
         // 辅助函数：设置选择器
         function setSelector(type, value) {
-            if (type === 'container') {
-                document.getElementById('container_selector').value = value;
-            } else if (type === 'item') {
-                document.getElementById('item_selector').value = value;
-            } else if (type === 'title') {
-                document.getElementById('title_selector').value = value;
-            } else if (type === 'link') {
-                document.getElementById('link_selector').value = value;
-            } else if (type === 'date') {
-                document.getElementById('date_selector').value = value;
-            } else if (type === 'summary') {
-                document.getElementById('summary_selector').value = value;
-            } else if (type === 'content') {
-                document.getElementById('content_selector').value = value;
-            }
-        }
-        
-        // 辅助函数：设置选择器
-        function setSelectorValue(type, value) {
             try {
                 let element = null;
                 
@@ -4873,485 +5147,686 @@ class ${data.id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice
                 // 如果元素存在，设置其值
                 if (element) {
                     element.value = value;
+                    console.log(`已设置 ${type} 选择器为: ${value}`);
+                    
+                    // 添加视觉反馈，让用户知道字段已经被填充
+                    element.classList.add('is-valid');
+                    
+                    // 添加调试输出，以帮助排查问题
+                    console.log(`设置选择器: ${type}, 值: ${value}, 元素ID: ${element.id}, 当前值: ${element.value}`);
                 } else {
                     console.warn(`无法找到选择器输入框: ${type}`);
+                    // 尝试直接通过ID查找
+                    const directElement = document.getElementById(`${type}Selector`);
+                    if (directElement) {
+                        directElement.value = value;
+                        directElement.classList.add('is-valid');
+                        console.log(`通过直接ID找到并设置 ${type} 选择器为: ${value}`);
+                    } else {
+                        console.error(`完全无法找到 ${type} 选择器元素，所有尝试均失败`);
+                    }
                 }
             } catch (e) {
                 console.error(`设置选择器 ${type} 时出错:`, e);
+                
+                // 出错时的备用方法 - 直接设置
+                try {
+                    document.getElementById(`${type}Selector`).value = value;
+                    console.log(`使用备用方法设置 ${type} 选择器为: ${value}`);
+                } catch (backupError) {
+                    console.error(`备用方法也失败:`, backupError);
+                }
             }
         }
         
-        // 辅助函数：使用指定的选择器值进行测试
-        function testSelectorWithValue(type, selectorValue) {
-            try {
-                // 获取HTML文档
-                const htmlDoc = window.parsedHtmlDoc;
-                if (!htmlDoc) {
-                    showToast('提示', '请先分析HTML内容', 'warning');
-                    console.error('HTML文档不存在，请先分析HTML内容');
-                    return;
+        // 辅助函数：HTML转义
+        function escapeHTML(html) {
+            if (!html) return '';
+            return html
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+        
+        // 智能选择器生成：处理现代CSS框架生成的复杂类名
+        function buildSmartElementSelector(element, contextElement) {
+            if (!element) return '';
+            
+            // 1. 首先尝试ID - 这是最精确的
+            if (element.id) {
+                return `#${element.id}`;
+            }
+            
+            const tagName = element.tagName.toLowerCase();
+            let selector = '';
+            
+            // 2. 处理类名
+            if (element.className && element.className.trim()) {
+                // 分析类名
+                const classesAnalysis = analyzeClassNames(element.className);
+                
+                // 如果有框架特定类名，优先使用
+                if (classesAnalysis.frameworkClasses.length > 0) {
+                    const frameworkClass = classesAnalysis.frameworkClasses[0];
+                    // 使用属性选择器处理包含特殊字符的类名
+                    if (frameworkClass.includes('__') || frameworkClass.includes('--') || frameworkClass.includes('_')) {
+                        // 提取前缀部分作为选择器
+                        const prefix = extractClassPrefix(frameworkClass);
+                        selector = `${tagName}[class*="${prefix}"]`;
+                        
+                        // 检查是否唯一
+                        try {
+                            if (contextElement.querySelectorAll(selector).length === 1) {
+                                return selector;
+                            }
+                        } catch (e) {
+                            console.warn('选择器检查失败:', e);
+                        }
+                    }
                 }
                 
-                // 确保有选择器值
-                if (!selectorValue) {
-                    showToast('提示', `${type}选择器值为空，请检查分析结果或选择其他选择器`, 'warning');
-                    console.error(`${type}选择器值为空`);
-                    return;
-                }
-                
-                console.log(`开始测试${type}选择器:`, selectorValue);
-                
-                // 验证选择器语法是否有效
-                try {
-                    // 使用createElement创建一个临时元素，测试选择器是否有效
-                    document.createElement('div').querySelector(selectorValue);
-                } catch (syntaxError) {
-                    console.error(`选择器语法错误: ${syntaxError.message}`);
+                // 尝试使用标准类名
+                if (classesAnalysis.standardClasses.length > 0) {
+                    // 使用第一个标准类名
+                    selector = `${tagName}.${classesAnalysis.standardClasses[0]}`;
                     
-                    // 尝试自动修正常见选择器错误
-                    let correctedSelector = selectorValue;
-                    
-                    // 1. 如果只是一个简单标签名，加上通用选择器
-                    if (/^[a-z]+$/i.test(selectorValue)) {
-                        correctedSelector = `${selectorValue}`;
-                    }
-                    
-                    // 2. 修正选择器中的空格问题，确保 > 周围有空格
-                    correctedSelector = correctedSelector.replace(/\s*>\s*/g, ' > ');
-                    
-                    // 3. 检查选择器是否是纯标签名或类名
-                    if (correctedSelector === 'li') {
-                        correctedSelector = 'li'; // 有效但需要更具体
-                    } else if (correctedSelector === '.t') {
-                        correctedSelector = '.t'; // 有效类选择器
-                    }
-                    
-                    // 再次验证修正后的选择器
+                    // 检查唯一性
                     try {
-                        document.createElement('div').querySelector(correctedSelector);
-                        console.log(`选择器已修正: ${selectorValue} -> ${correctedSelector}`);
-                        selectorValue = correctedSelector;
+                        if (contextElement.querySelectorAll(selector).length === 1) {
+                            return selector;
+                        }
                     } catch (e) {
-                        // 如果仍然无效，显示错误并使用模态框提供帮助
-                        let errorMessage = `
-                        <div class="alert alert-danger">
-                            <h5>选择器语法错误</h5>
-                            <p>选择器 "<code>${selectorValue}</code>" 不是有效的CSS选择器。</p>
-                            <p>常见的选择器语法:</p>
-                            <ul>
-                                <li><code>div</code> - 选择所有div元素</li>
-                                <li><code>.className</code> - 选择所有带有className类的元素</li>
-                                <li><code>#id</code> - 选择具有指定ID的元素</li>
-                                <li><code>div.className</code> - 选择带有className类的div元素</li>
-                                <li><code>div > span</code> - 选择div直接子元素中的span元素</li>
-                                <li><code>div span</code> - 选择div内的所有span元素</li>
-                            </ul>
-                        </div>
-                        `;
+                        console.warn('选择器检查失败:', e);
+                    }
+                    
+                    // 如果不唯一，尝试组合多个类名
+                    if (classesAnalysis.standardClasses.length > 1) {
+                        // 最多使用3个类名，避免过于复杂
+                        const limitedClasses = classesAnalysis.standardClasses.slice(0, 3);
+                        selector = `${tagName}.${limitedClasses.join('.')}`;
                         
-                        // 显示错误消息
-                        showModal('选择器语法错误', errorMessage);
-                        throw syntaxError;
+                        try {
+                            if (contextElement.querySelectorAll(selector).length === 1) {
+                                return selector;
+                            }
+                    } catch (e) {
+                            console.warn('选择器检查失败:', e);
+                        }
                     }
                 }
                 
-                // 找到父元素容器
-                let parentElement = htmlDoc;
-                
-                // 如果是测试条目选择器，先找到容器
-                if (type === 'item') {
-                    // 从分析结果中获取容器选择器
-                    let containerSelector = '';
-                    const containerResults = document.querySelectorAll('#resultModalBody li');
-                    for (let i = 0; i < containerResults.length; i++) {
-                        if (containerResults[i].textContent.includes('容器选择器:')) {
-                            const codeEl = containerResults[i].querySelector('code');
-                            if (codeEl) {
-                                containerSelector = codeEl.textContent;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (containerSelector) {
+                // 特殊处理Ant Design组件
+                if (element.className.includes('ant-')) {
+                    // 查找所有ant-开头的类名
+                    const antClasses = element.className.split(/\s+/).filter(c => c.startsWith('ant-'));
+                    if (antClasses.length > 0) {
+                        // 找出最具体的类名（通常是最长的）
+                        const mostSpecificClass = antClasses.sort((a, b) => b.length - a.length)[0];
+                        selector = `${tagName}.${mostSpecificClass}`;
+                        
                         try {
-                            const containers = htmlDoc.querySelectorAll(containerSelector);
-                            if (containers.length > 0) {
-                                parentElement = containers[0];
-                                console.log(`使用容器选择器 "${containerSelector}" 找到第一个容器作为上下文`);
-                            } else {
-                                console.warn(`容器选择器 "${containerSelector}" 未找到任何元素`);
+                            if (contextElement.querySelectorAll(selector).length === 1) {
+                                return selector;
                             }
                         } catch (e) {
-                            console.error(`查找容器时出错: ${e.message}`);
+                            console.warn('选择器检查失败:', e);
                         }
-                    } else {
-                        console.warn('未找到容器选择器，将在整个文档中查找条目');
-                    }
-                }
-                
-                // 如果是测试标题、链接等元素选择器，需要先获取条目元素作为上下文
-                if (['title', 'link', 'date', 'summary', 'content'].includes(type)) {
-                    // 从分析结果中获取条目选择器
-                    let itemSelector = '';
-                    const itemResults = document.querySelectorAll('#resultModalBody li');
-                    for (let i = 0; i < itemResults.length; i++) {
-                        if (itemResults[i].textContent.includes('条目选择器:')) {
-                            const codeEl = itemResults[i].querySelector('code');
-                            if (codeEl) {
-                                itemSelector = codeEl.textContent;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // 如果在li中未找到，尝试从表格中获取
-                    if (!itemSelector) {
-                        // 尝试直接使用第一个表格行中的条目选择器值
-                        const itemSelector_input = document.getElementById('itemSelector');
-                        if (itemSelector_input && itemSelector_input.value) {
-                            itemSelector = itemSelector_input.value;
-                            console.log('从输入框获取条目选择器:', itemSelector);
-                        }
-                    }
-                    
-                    if (itemSelector) {
-                        try {
-                            // 使用条目选择器获取第一个条目作为上下文
-                            const items = htmlDoc.querySelectorAll(itemSelector);
-                            if (items.length > 0) {
-                                parentElement = items[0];
-                                console.log(`使用条目选择器 "${itemSelector}" 找到第一个条目作为上下文`);
-                            } else {
-                                console.warn(`条目选择器 "${itemSelector}" 未找到任何元素，将使用整个文档作为上下文`);
+                        
+                        // 如果单个类名不唯一，尝试组合
+                        if (antClasses.length > 1) {
+                            selector = `${tagName}.${antClasses.slice(0, 2).join('.')}`;
+                            try {
+                                if (contextElement.querySelectorAll(selector).length === 1) {
+                                    return selector;
                             }
                         } catch (e) {
-                            console.error(`查找条目时出错: ${e.message}`);
+                                console.warn('选择器检查失败:', e);
+                            }
                         }
-                    } else {
-                        console.warn(`未找到条目选择器，将在整个文档中查找${type}元素`);
                     }
                 }
                 
-                // 查询匹配的元素
-                let elements = [];
-                try {
-                    // 检查选择器语法是否有效
-                    try {
-                        // 使用一个简单的检查来验证选择器语法
-                        // 如果选择器无效，document.createElement会抛出异常
-                        document.createElement('div').querySelector(selectorValue);
-                    } catch (syntaxError) {
-                        // 尝试修复常见的选择器错误
-                        let correctedSelector = selectorValue;
+                // 3. 特殊处理CSS Modules (类名中包含哈希值)
+                if (classesAnalysis.cssModulesClasses.length > 0) {
+                    // 获取第一个CSS Module类名的前缀部分
+                    const moduleClass = classesAnalysis.cssModulesClasses[0];
+                    const prefix = moduleClass.split('_')[0] || moduleClass.split('__')[0];
+                    
+                    if (prefix) {
+                        // 使用属性选择器匹配前缀，避免使用完整哈希
+                        selector = `${tagName}[class*="${prefix}"]`;
                         
-                        // 检查是否只有标签名
-                        if (/^[a-z0-9]+$/i.test(selectorValue)) {
-                            // 纯标签名是有效的，但可能需要更具体
-                            // 针对"li"这样的纯标签选择器，尝试自动添加更多上下文
-                            if (selectorValue === 'li') {
-                                // 如果是测试li元素，可以尝试使用更具体的选择器如：
-                                if (type === 'item') {
-                                    correctedSelector = 'ul > li, ol > li, dl > li, .list > li';
-                                    console.log('尝试使用更具体的li选择器:', correctedSelector);
-                                }
-                            } else if (selectorValue === 'a') {
-                                // 如果是测试a标签，可以尝试添加更多上下文
-                                correctedSelector = 'li > a, .item > a, .title > a, a[href]';
-                                console.log('尝试使用更具体的a选择器:', correctedSelector);
+                        try {
+                            if (contextElement.querySelectorAll(selector).length === 1) {
+                                return selector;
                             }
+                        } catch (e) {
+                            console.warn('选择器检查失败:', e);
                         }
-                        // 检查是否只是一个CSS类
-                        else if (/^\.[a-z0-9_-]+$/i.test(selectorValue)) {
-                            // 纯类名是有效的，不需要修复
-                        }
-                        // 检查是否是标签名加类名，但格式不正确
-                        else if (/^[a-z0-9]+\.[a-z0-9_-]+$/i.test(selectorValue)) {
-                            // 正确的格式，不需要修复
-                        }
-                        // 检查是否是不完整的复杂选择器
-                        else if (selectorValue.includes('>')) {
-                            // 检查是否缺少空格
-                            if (selectorValue.includes('>') && !selectorValue.includes(' > ')) {
-                                // 修复空格问题
-                                correctedSelector = selectorValue.replace(/>/g, ' > ');
-                            }
-                        }
-                        
-                        if (correctedSelector !== selectorValue) {
-                            console.log(`尝试修复选择器: "${selectorValue}" -> "${correctedSelector}"`);
-                            selectorValue = correctedSelector;
-                        } else {
-                            // 如果无法自动修复，则抛出原始错误
-                            throw syntaxError;
-                        }
-                    }
-                    
-                    if (type === 'container') {
-                        // 容器是在整个文档中查找的
-                        elements = htmlDoc.querySelectorAll(selectorValue);
-                        console.log(`在整个文档中查找容器，找到 ${elements.length} 个`);
-                    } else {
-                        // 其他元素在父元素(容器或条目)中查找
-                        elements = parentElement.querySelectorAll(selectorValue);
-                        console.log(`在父元素中查找${type}，找到 ${elements.length} 个`);
-                    }
-                } catch (e) {
-                    // 选择器语法错误，提供更友好的错误信息
-                    let errorMessage = `选择器语法错误: ${e.message}`;
-                    console.error(errorMessage);
-                    
-                    // 显示错误信息的模态框
-                    let errorModal = `<div class="alert alert-danger">
-                        <h5>选择器语法错误</h5>
-                        <p>${errorMessage}</p>
-                        <hr>
-                        <h6>常见选择器语法:</h6>
-                        <ul>
-                            <li><code>div</code> - 选择所有 div 元素</li>
-                            <li><code>.class-name</code> - 选择所有带有 class="class-name" 的元素</li>
-                            <li><code>#id-name</code> - 选择 id="id-name" 的元素</li>
-                            <li><code>div.class-name</code> - 选择所有带有 class="class-name" 的 div 元素</li>
-                            <li><code>div > a</code> - 选择作为 div 直接子元素的所有 a 元素</li>
-                        </ul>
-                    </div>`;
-                    
-                    showModal('选择器错误', errorModal);
-                    return;
-                }
-                
-                // 创建测试结果消息
-                let resultMessage = `<div class="p-3 bg-light">
-                    <h5>选择器测试结果: <code>${selectorValue}</code></h5>`;
-                
-                // 检查是否找到匹配元素
-                if (elements.length === 0) {
-                    resultMessage += `<div class="alert alert-warning">未找到匹配的元素</div>`;
-                } else {
-                    const maxDisplayElements = 5; // 最多显示5个元素
-                    resultMessage += `<div>共找到 <strong>${elements.length}</strong> 个匹配元素。</div>`;
-                    
-                    // 如果是测试条目选择器，并且找到了很多元素，提供警告
-                    if (type === 'item' && elements.length > 30) {
-                        resultMessage += `<div class="alert alert-warning">找到的条目数量较多，请确认选择器是否正确。理想情况下，条目选择器应该只匹配新闻列表中的项目。</div>`;
-                    }
-                    
-                    // 如果是测试标题或链接选择器，并且找到了很多元素，提供更精确的建议
-                    if ((type === 'title' || type === 'link') && elements.length > 10) {
-                        resultMessage += `<div class="alert alert-warning">找到的${type === 'title' ? '标题' : '链接'}元素数量较多，这可能导致不准确的结果。建议使用更精确的选择器，例如：</div>
-                        <ul>
-                            <li>如果所有新闻都在列表项中：<code>li > a.title</code> 或 <code>li > h3 > a</code></li>
-                            <li>使用特定的类名：<code>a.news-title</code> 或 <code>.headline > a</code></li>
-                            <li>限制在特定容器中：<code>.news-container a:first-child</code></li>
-                        </ul>`;
-                    }
-                    
-                    // 显示元素示例
-                    resultMessage += `<h6 class="mt-3">匹配元素示例:</h6>`;
-                    
-                    // 根据选择器类型显示不同的信息
-                    for (let i = 0; i < Math.min(elements.length, maxDisplayElements); i++) {
-                        const element = elements[i];
-                        const elementPath = showElementPath(element);
-                        resultMessage += `<div class="card mb-2">
-                            <div class="card-header bg-light">元素 ${i + 1}: <code>${elementPath}</code></div>
-                            <div class="card-body">`;
-                        
-                        // 显示元素内容和属性
-                        const text = element.textContent.trim();
-                        resultMessage += `<p>文本长度: ${text.length} 字符</p>`;
-                        
-                        // 根据不同类型显示详细信息
-                        if (type === 'title' || type === 'link') {
-                            // 对于标题和链接，显示文本和URL
-                            resultMessage += `<p>文本: <strong>${text}</strong></p>`;
-                            
-                            // 如果元素是链接或包含链接
-                            const links = element.tagName.toLowerCase() === 'a' ? [element] : element.querySelectorAll('a');
-                            if (links.length > 0) {
-                                resultMessage += `<p>链接:</p><ul>`;
-                                for (let j = 0; j < links.length; j++) {
-                                    const link = links[j];
-                                    const href = link.getAttribute('href') || '#';
-                                    const linkText = link.textContent.trim();
-                                    resultMessage += `<li><a href="${href}" target="_blank">${href}</a> (文本: "${linkText}")</li>`;
-                                }
-                                resultMessage += `</ul>`;
-                            }
-                            
-                            // 检查父元素中的同级链接
-                            if (element.parentElement) {
-                                const siblingLinks = Array.from(element.parentElement.querySelectorAll('a')).filter(a => a !== element);
-                                if (siblingLinks.length > 0) {
-                                    resultMessage += `<p>同级链接:</p><ul>`;
-                                    for (let j = 0; j < siblingLinks.length; j++) {
-                                        const link = siblingLinks[j];
-                                        const href = link.getAttribute('href') || '#';
-                                        const linkText = link.textContent.trim();
-                                        resultMessage += `<li><a href="${href}" target="_blank">${href}</a> (文本: "${linkText}")</li>`;
-                                    }
-                                    resultMessage += `</ul>`;
-                                }
-                            }
-                        } else if (type === 'date') {
-                            // 对于日期，显示文本和可能的格式
-                            resultMessage += `<p>文本: <strong>${text}</strong></p>`;
-                            if (text.match(/\d{4}[-\/\.]\d{1,2}[-\/\.]\d{1,2}/) || 
-                                text.match(/\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{4}/) ||
-                                text.match(/\d{1,2}[-\/\.]\d{1,2}/) ||
-                                text.match(/\d{1,2}:\d{1,2}/)) {
-                                resultMessage += `<p class="text-success">可能是日期或时间格式</p>`;
-                            }
-                            
-                            // 新增：解析相对时间
-                            const relativeTimeMatch = text.match(/(\d+)\s*(分钟|小时|天|周|月|年)前/);
-                            if (relativeTimeMatch) {
-                                const parsedDate = parseRelativeTime(text);
-                                if (parsedDate) {
-                                    // 格式化日期时间
-                                    const formattedDate = parsedDate.toISOString().replace('T', ' ').substring(0, 19);
-                                    resultMessage += `<p class="text-success">解析为相对时间: <strong>${formattedDate}</strong></p>`;
-                                    resultMessage += `<p><small>将保存为ISO格式: ${parsedDate.toISOString()}</small></p>`;
-                                }
-                            }
-                        } else {
-                            // 对于其他类型，显示HTML内容预览
-                            resultMessage += `<p>${text.length > 100 ? text.substring(0, 100) + '...' : text}</p>`;
-                            
-                            if (type === 'container' || type === 'item') {
-                                // 显示容器或条目中的第一个链接和标题
-                                const firstLink = element.querySelector('a');
-                                const firstHeading = element.querySelector('h1, h2, h3, h4, h5, h6');
-                                
-                                if (firstLink) {
-                                    const href = firstLink.getAttribute('href') || '#';
-                                    const linkText = firstLink.textContent.trim();
-                                    resultMessage += `<p>第一个链接: <a href="${href}" target="_blank">${href}</a> (文本: "${linkText}")</p>`;
-                                }
-                                
-                                if (firstHeading) {
-                                    resultMessage += `<p>第一个标题: ${firstHeading.textContent.trim()}</p>`;
-                                }
-                            }
-                        }
-                        
-                        resultMessage += `</div></div>`;
                     }
                 }
                 
-                // 关闭div
-                resultMessage += `</div>`;
-                
-                // 在结果模态框中显示
-                showModal('选择器测试结果', resultMessage);
-            } catch (e) {
-                console.error(`测试${type}选择器时出错:`, e);
-                showToast('错误', `测试${type}选择器时出错: ${e.message}`, 'error');
+                // 如果所有类名方法都失败，尝试通用属性选择器
+                if (classesAnalysis.allClasses.length > 0) {
+                    // 使用第一个类名的起始部分作为属性选择器
+                    const firstClass = classesAnalysis.allClasses[0];
+                    // 提取前3-4个字符作为属性选择器的值
+                    const attrValue = firstClass.slice(0, Math.min(4, firstClass.length));
+                    
+                    if (attrValue && attrValue.length >= 2) {
+                        selector = `${tagName}[class*="${attrValue}"]`;
+                        
+                        try {
+                            const matches = contextElement.querySelectorAll(selector);
+                            // 如果匹配太多，尝试更精确的选择器
+                            if (matches.length === 1) {
+                                return selector;
+                            } else if (matches.length <= 5) {
+                                // 尝试获取更多上下文
+                                const parent = element.parentElement;
+                                if (parent && parent !== contextElement) {
+                                    const parentTag = parent.tagName.toLowerCase();
+                                    return `${parentTag} ${selector}`;
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('选择器检查失败:', e);
+                        }
+                    }
+                }
             }
+            
+            // 4. 属性选择器 - 针对特定元素类型使用其他属性
+            // 对于链接，尝试使用href属性的一部分
+            if (tagName === 'a' && element.hasAttribute('href')) {
+                const href = element.getAttribute('href');
+                if (href && !href.startsWith('javascript:') && href !== '#') {
+                    // 从URL中提取特征部分
+                    const urlParts = href.split('/').filter(Boolean);
+                    if (urlParts.length > 0) {
+                        const lastPart = urlParts[urlParts.length - 1];
+                        // 检查是否包含特定标识符
+                        if (lastPart && lastPart.includes('detail')) {
+                            selector = `a[href*="detail"]`;
+                            try {
+                                if (contextElement.querySelectorAll(selector).length === 1) {
+                                    return selector;
+                                }
+                            } catch (e) {
+                                console.warn('选择器检查失败:', e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 对于图片，尝试使用src或alt属性
+            if (tagName === 'img') {
+                if (element.hasAttribute('alt') && element.getAttribute('alt')) {
+                    selector = `img[alt="${element.getAttribute('alt')}"]`;
+                    try {
+                        if (contextElement.querySelectorAll(selector).length === 1) {
+                            return selector;
+                        }
+                    } catch (e) {
+                        console.warn('选择器检查失败:', e);
+                    }
+                }
+            }
+            
+            // 5. 基于位置的选择器
+            // 如果所有方法都失败，尝试使用位置和路径
+            let path = [];
+            let current = element;
+            
+            while (current !== contextElement && current.parentElement) {
+                let curTag = current.tagName.toLowerCase();
+                
+                // 如果有ID，使用ID并结束
+                if (current.id) {
+                    path.unshift(`#${current.id}`);
+                    break;
+                }
+                
+                // 如果有类名，尝试使用简单的类名
+                if (current.className && current.className.trim()) {
+                    const classes = current.className.trim().split(/\s+/);
+                    // 优先选择标准类名
+                    const standardClass = classes.find(c => !c.includes('__') && !c.includes('--') && !c.includes('_'));
+                    if (standardClass) {
+                        curTag += `.${standardClass}`;
+                    } else if (classes.length > 0) {
+                        // 对于复杂类名，使用属性选择器
+                        const prefix = extractClassPrefix(classes[0]);
+                        if (prefix && prefix.length >= 2) {
+                            curTag += `[class*="${prefix}"]`;
+                        }
+                    }
+                }
+                
+                // 8. 如果有特定角色，添加角色属性
+                if (current.hasAttribute('role')) {
+                    curTag += `[role="${current.getAttribute('role')}"]`;
+                }
+                
+                path.unshift(curTag);
+                current = current.parentElement;
+                
+                // 限制路径长度，避免过于复杂
+                if (path.length >= 3) {
+                    break;
+                }
+            }
+            
+            // 构建最终选择器
+            return path.join(' > ');
         }
         
-        // 辅助函数：显示模态框
-        function showModal(title, body) {
-            // 检查测试结果模态框是否存在
-            let testResultModal = document.getElementById('testResultModal');
-            
-            // 如果模态框不存在，创建一个
-            if (!testResultModal) {
-                testResultModal = document.createElement('div');
-                testResultModal.id = 'testResultModal';
-                testResultModal.className = 'modal fade';
-                testResultModal.tabIndex = -1;
-                testResultModal.setAttribute('aria-labelledby', 'testResultModalLabel');
-                testResultModal.setAttribute('aria-hidden', 'true');
-                
-                testResultModal.innerHTML = `
-                    <div class="modal-dialog modal-lg">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title" id="testResultModalLabel">测试结果</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body" id="testResultModalBody">
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                
-                document.body.appendChild(testResultModal);
+        // 辅助函数：分析类名
+        function analyzeClassNames(classNameStr) {
+            if (!classNameStr || !classNameStr.trim()) {
+                return {
+                    allClasses: [],
+                    standardClasses: [],
+                    frameworkClasses: [],
+                    cssModulesClasses: []
+                };
             }
             
-            // 设置标题和内容
-            const modalTitle = document.getElementById('testResultModalLabel');
-            const modalBody = document.getElementById('testResultModalBody');
+            const classes = classNameStr.trim().split(/\s+/);
+            const result = {
+                allClasses: classes,
+                standardClasses: [],
+                frameworkClasses: [],
+                cssModulesClasses: []
+            };
             
-            if (modalTitle) modalTitle.textContent = title;
-            if (modalBody) modalBody.innerHTML = body;
-            
-            // 显示模态框
-            try {
-                const modal = new bootstrap.Modal(testResultModal);
-                modal.show();
-            } catch (e) {
-                console.error('显示模态框时出错:', e);
-                // 备用方法：使用jQuery显示
-                try {
-                    $(testResultModal).modal('show');
-                } catch (e2) {
-                    console.error('尝试使用jQuery显示模态框时出错:', e2);
-                    showToast('错误', '无法显示测试结果模态框', 'error');
+            classes.forEach(cls => {
+                // 检测CSS模块类名 (包含哈希值，如：header_a1b2c3)
+                if (/^[a-zA-Z0-9_-]+_[a-zA-Z0-9]+$/.test(cls) || cls.includes('__') && /[0-9]/.test(cls)) {
+                    result.cssModulesClasses.push(cls);
                 }
+                // 检测框架类名 (如BEM: block__element--modifier 或 Tailwind: bg-blue-500)
+                else if (cls.includes('__') || cls.includes('--') || 
+                         /^[a-z]+-[a-z]+-\d+$/.test(cls) || // Tailwind类型
+                         cls.startsWith('ant-') || // Ant Design
+                         cls.startsWith('el-') || // Element UI
+                         cls.startsWith('mui-') || // Material UI
+                         cls.startsWith('van-')) { // Vant
+                    result.frameworkClasses.push(cls);
+                }
+                // 标准类名
+                else {
+                    result.standardClasses.push(cls);
+                }
+            });
+            
+            return result;
+        }
+        
+        // 辅助函数：从复杂类名中提取前缀
+        function extractClassPrefix(className) {
+            if (!className) return '';
+            
+            // 1. BEM命名风格: block__element--modifier
+            if (className.includes('__')) {
+                return className.split('__')[0];
+            }
+            if (className.includes('--')) {
+                return className.split('--')[0];
+            }
+            
+            // 2. CSS Modules: componentName_hash
+            if (/^[a-zA-Z0-9_-]+_[a-zA-Z0-9]+$/.test(className)) {
+                return className.split('_')[0];
+            }
+            
+            // 3. 通用框架前缀
+            const frameworkPrefixes = ['ant-', 'el-', 'mui-', 'van-', 'n-'];
+            for (const prefix of frameworkPrefixes) {
+                if (className.startsWith(prefix)) {
+                    // 返回包括第一个破折号后的部分
+                    const parts = className.split('-');
+                    if (parts.length > 2) {
+                        return `${parts[0]}-${parts[1]}`;
+                    }
+                    return prefix;
+                }
+            }
+            
+            // 4. 针对带数字哈希后缀的类名
+            const match = className.match(/^([a-zA-Z0-9_-]+)[a-zA-Z0-9]{5,}$/);
+            if (match) {
+                return match[1];
+            }
+            
+            // 5. 通用情况：返回前3-5个字符
+            return className.slice(0, Math.min(5, className.length));
+        }
+        
+        // 更新：支持特殊结构检测
+        function detectSpecialStructures(htmlDoc) {
+            // 首先检测Timeline结构
+            const timelineStructure = detectTimelineStructure(htmlDoc);
+            if (timelineStructure) {
+                return timelineStructure;
+            }
+            
+            // 检测NBD结构
+            const nbdStructure = detectNBDStructure(htmlDoc);
+            if (nbdStructure) {
+                return nbdStructure;
+            }
+            
+            // 检测新浪新闻卡片结构
+            const sinaStructure = detectSinaNewsStructure(htmlDoc);
+            if (sinaStructure) {
+                return sinaStructure;
+            }
+            
+            // 如果没有检测到特殊结构，返回null
+            return null;
+        }
+        
+        // 新增：检测Timeline结构
+        function detectTimelineStructure(htmlDoc) {
+            try {
+                // 检查是否为Timeline结构
+                const hasTimelineClass = !!htmlDoc.querySelector('.ant-timeline') || 
+                                         !!htmlDoc.querySelector('[class*="timeline"]');
+                const hasTimelineItems = !!htmlDoc.querySelector('.ant-timeline-item') || 
+                                         !!htmlDoc.querySelector('li[class*="timeline"]');
+                
+                if (!hasTimelineClass || !hasTimelineItems) {
+                    return null;
+                }
+                
+                console.log('检测到Timeline时间轴结构');
+                
+                // 找到Timeline容器
+                const timelineContainer = htmlDoc.querySelector('.ant-timeline') || 
+                                          htmlDoc.querySelector('[class*="timeline"]');
+                
+                // 找到第一个Timeline项目
+                const timelineItem = htmlDoc.querySelector('.ant-timeline-item') || 
+                                     htmlDoc.querySelector('li[class*="timeline"]');
+                
+                if (!timelineContainer || !timelineItem) return null;
+                
+                // 分析容器类名
+                const containerClass = timelineContainer.className;
+                const containerPrefix = extractClassPrefix(containerClass.split(/\s+/)[0]);
+                
+                // 分析项目类名
+                const itemClass = timelineItem.className;
+                const itemPrefix = extractClassPrefix(itemClass.split(/\s+/)[0]);
+                
+                // 构建选择器
+                const containerSelector = timelineContainer.classList.contains('ant-timeline') 
+                    ? '.ant-timeline' 
+                    : `[class*="${containerPrefix}"]`;
+                    
+                const itemSelector = timelineItem.classList.contains('ant-timeline-item')
+                    ? `${containerSelector} .ant-timeline-item`
+                    : `${containerSelector} li[class*="${itemPrefix}"]`;
+                
+                // 在Timeline项目中查找标题和链接元素
+                const titleElement = timelineItem.querySelector('p[class*="title"]') || 
+                                     timelineItem.querySelector('a p') ||
+                                     timelineItem.querySelector('p') ||
+                                     timelineItem.querySelector('a');
+                
+                const linkElement = timelineItem.querySelector('a[href]');
+                
+                // 构建标题选择器
+                let titleSelector = '';
+                if (titleElement) {
+                    const titleClass = titleElement.className;
+                    if (titleClass && titleClass.trim()) {
+                        const titlePrefix = extractClassPrefix(titleClass.split(/\s+/)[0]);
+                        titleSelector = titleElement.tagName.toLowerCase() === 'p'
+                            ? `${itemSelector} p[class*="${titlePrefix}"]`
+                            : titleElement.tagName.toLowerCase() === 'a'
+                              ? `${itemSelector} a`
+                              : `${itemSelector} ${titleElement.tagName.toLowerCase()}[class*="${titlePrefix}"]`;
+                    } else {
+                        titleSelector = `${itemSelector} ${titleElement.tagName.toLowerCase()}`;
+                    }
+                } else {
+                    // 默认使用a标签作为标题
+                    titleSelector = `${itemSelector} a`;
+                }
+                
+                // 构建链接选择器
+                const linkSelector = linkElement ? `${itemSelector} a[href]` : titleSelector;
+                
+                // 查找日期/时间元素
+                const timeElement = timelineItem.querySelector('[class*="time"]') ||
+                                   timelineItem.querySelector('div[class*="time"]') ||
+                                   timelineItem.querySelector('span[class*="time"]');
+                
+                let dateSelector = '';
+                if (timeElement) {
+                    const timeClass = timeElement.className;
+                    if (timeClass && timeClass.trim()) {
+                        const timePrefix = extractClassPrefix(timeClass.split(/\s+/)[0]);
+                        dateSelector = `${itemSelector} [class*="${timePrefix}"]`;
+                    } else {
+                        dateSelector = `${itemSelector} ${timeElement.tagName.toLowerCase()}`;
+                    }
+                }
+                
+                // 尝试获取一些示例文本
+                let titleExample = '';
+                let linkExample = '';
+                let dateExample = '';
+                
+                if (titleElement) {
+                    titleExample = titleElement.textContent.trim();
+                }
+                
+                if (linkElement) {
+                    linkExample = linkElement.getAttribute('href');
+                }
+                
+                if (timeElement) {
+                    dateExample = timeElement.textContent.trim();
+                }
+                
+                console.log('Timeline结构分析完成');
+                console.log(`- 容器选择器: ${containerSelector}`);
+                console.log(`- 项目选择器: ${itemSelector}`);
+                console.log(`- 标题选择器: ${titleSelector}`);
+                console.log(`- 链接选择器: ${linkSelector}`);
+                console.log(`- 日期选择器: ${dateSelector}`);
+                
+                // 计算匹配的项目数量
+                const items = htmlDoc.querySelectorAll(itemSelector);
+                
+                return {
+                    isTimeline: true,
+                    containerSelector: containerSelector,
+                    itemSelector: itemSelector,
+                    titleSelector: titleSelector,
+                    linkSelector: linkSelector,
+                    dateSelector: dateSelector,
+                    itemCount: items.length,
+                    titleExample: titleExample,
+                    linkExample: linkExample,
+                    dateExample: dateExample
+                };
+                
+            } catch (e) {
+                console.error('检测Timeline结构时出错:', e);
+                return null;
             }
         }
 
-        // 添加一个通用的选择器验证函数
-        function validateAndFixSelector(selector, context) {
-            if (!selector) return '';
-            
+        // 使用原有的位置重写选择器生成逻辑，调用我们的新函数
+        const originalBuildElementSelector = buildElementSelector;
+        buildElementSelector = function(element, contextElement) {
             try {
-                // 测试选择器是否有效
-                document.createElement('div').querySelector(selector);
-                return selector; // 选择器有效，直接返回
+                // 先尝试使用智能选择器生成器
+                const smartSelector = buildSmartElementSelector(element, contextElement);
+                
+                // 检查生成的选择器是否有效
+                try {
+                    if (smartSelector && contextElement.querySelector(smartSelector) === element) {
+                        console.log(`使用智能选择器: ${smartSelector}`);
+                        return smartSelector;
+                    }
             } catch (e) {
-                console.error(`选择器语法错误 "${selector}": ${e.message}`);
+                    console.warn('智能选择器验证失败，回退到原始方法:', e);
+                }
                 
-                // 尝试修复常见的选择器错误
-                let correctedSelector = selector;
+                // 如果智能选择器失败，回退到原始方法
+                return originalBuildElementSelector(element, contextElement);
+            } catch (e) {
+                console.error('构建选择器时出错，回退到原始方法:', e);
+                return originalBuildElementSelector(element, contextElement);
+            }
+        };
+
+        // 新增：检测新浪新闻卡片结构
+        function detectSinaNewsStructure(htmlDoc) {
+            try {
+                // 检查是否为新浪新闻结构
+                const hasSinaNewsClass = !!htmlDoc.querySelector('.feed-card-item') || 
+                                         !!htmlDoc.querySelector('.news-item');
                 
-                // 处理纯标签选择器
-                if (/^[a-z0-9]+$/i.test(selector)) {
-                    // 纯标签选择器有效，但可能太宽泛
-                    if (selector === 'li') {
-                        correctedSelector = 'ul > li, ol > li, dl > li, .list > li';
-                    } else if (selector === 'a') {
-                        correctedSelector = 'a[href]';
+                if (!hasSinaNewsClass) {
+                    return null;
+                }
+                
+                console.log('检测到新浪新闻卡片结构');
+                
+                // 查找新闻容器
+                let containerSelector = '';
+                let newsContainer = null;
+                
+                // 尝试多种可能的容器选择器
+                const possibleContainers = [
+                    '.feed-card-list',
+                    '.feed-list',
+                    '.news-list',
+                    '.card-list'
+                ];
+                
+                for (const selector of possibleContainers) {
+                    const container = htmlDoc.querySelector(selector);
+                    if (container) {
+                        containerSelector = selector;
+                        newsContainer = container;
+                        break;
                     }
                 }
-                // 处理具有>但缺少空格的选择器
-                else if (selector.includes('>') && !selector.includes(' > ')) {
-                    correctedSelector = selector.replace(/>/g, ' > ');
+                
+                // 如果没有找到容器，回退到通用方法
+                if (!newsContainer) {
+                    return null;
                 }
                 
-                // 再次测试修复后的选择器
-                try {
-                    document.createElement('div').querySelector(correctedSelector);
-                    console.log(`选择器已修正: "${selector}" -> "${correctedSelector}"`);
-                    return correctedSelector;
-                } catch (fixError) {
-                    // 如果修复后仍然无效，记录错误并返回一个安全的后备选择器
-                    console.error(`无法修复选择器 "${selector}": ${fixError.message}`);
-                    
-                    // 返回一个空选择器或默认选择器
-                    if (context === 'container') return 'div.container, main, article, section';
-                    if (context === 'item') return 'ul > li, ol > li, dl > dt';
-                    if (context === 'title') return 'h1, h2, h3, a[href]';
-                    if (context === 'link') return 'a[href]';
-                    if (context === 'date') return 'time, .date, .time';
-                    
-                    return 'div'; // 最后的后备选择器
+                // 查找新闻项
+                let itemSelector = '';
+                let newsItem = null;
+                
+                const possibleItems = [
+                    '.feed-card-item',
+                    '.news-item',
+                    '.card-item'
+                ];
+                
+                for (const selector of possibleItems) {
+                    const item = newsContainer.querySelector(selector);
+                    if (item) {
+                        itemSelector = `${containerSelector} ${selector}`;
+                        newsItem = item;
+                        break;
+                    }
                 }
+                
+                // 如果没有找到项目，回退到通用方法
+                if (!newsItem) {
+                    return null;
+                }
+                
+                // 分析标题和链接元素
+                let titleSelector = '';
+                let linkSelector = '';
+                let dateSelector = '';
+                
+                // 查找标题元素
+                const titleElement = newsItem.querySelector('.feed-card-title') || 
+                                     newsItem.querySelector('.news-title') ||
+                                     newsItem.querySelector('h2') ||
+                                     newsItem.querySelector('a');
+                
+                if (titleElement) {
+                    // 构建选择器
+                    if (titleElement.className && titleElement.className.trim()) {
+                        const titleClass = titleElement.className.trim().split(/\s+/)[0];
+                        titleSelector = `${itemSelector} .${titleClass}`;
+                    } else {
+                        titleSelector = `${itemSelector} ${titleElement.tagName.toLowerCase()}`;
+                    }
+                }
+                
+                // 查找链接元素
+                const linkElement = titleElement && titleElement.tagName.toLowerCase() === 'a' ? 
+                                    titleElement : 
+                                    newsItem.querySelector('a');
+                
+                if (linkElement) {
+                    // 如果链接元素就是标题，使用相同的选择器
+                    if (linkElement === titleElement) {
+                        linkSelector = titleSelector;
+                    } else {
+                        linkSelector = `${itemSelector} a`;
+                    }
+                }
+                
+                // 查找日期元素
+                const dateElement = newsItem.querySelector('.feed-card-time') || 
+                                    newsItem.querySelector('.news-time') ||
+                                    newsItem.querySelector('[class*="time"]') ||
+                                    newsItem.querySelector('[class*="date"]');
+                
+                if (dateElement) {
+                    if (dateElement.className && dateElement.className.trim()) {
+                        const dateClass = dateElement.className.trim().split(/\s+/)[0];
+                        dateSelector = `${itemSelector} .${dateClass}`;
+                    } else {
+                        dateSelector = `${itemSelector} ${dateElement.tagName.toLowerCase()}`;
+                    }
+                }
+                
+                // 获取示例
+                let titleExample = titleElement ? titleElement.textContent.trim() : '';
+                let linkExample = linkElement ? linkElement.getAttribute('href') : '';
+                let dateExample = dateElement ? dateElement.textContent.trim() : '';
+                
+                // 计算匹配的项目数量
+                const items = htmlDoc.querySelectorAll(itemSelector);
+                
+                // 返回结构信息
+                return {
+                    isSinaNews: true,
+                    containerSelector: containerSelector,
+                    itemSelector: itemSelector,
+                    titleSelector: titleSelector,
+                    linkSelector: linkSelector,
+                    dateSelector: dateSelector,
+                    itemCount: items.length,
+                    titleExample: titleExample,
+                    linkExample: linkExample,
+                    dateExample: dateExample
+                };
+                
+            } catch (e) {
+                console.error('检测新浪新闻结构时出错:', e);
+                return null;
             }
         }
     </script>

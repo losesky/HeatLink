@@ -567,10 +567,186 @@ show_menu() {
     echo -e "${BLUE}6)${NC} 查看当前容器状态"
     echo -e "${BLUE}7)${NC} 显示服务访问信息"
     echo -e "${BLUE}8)${NC} 备份当前数据库"
+    echo -e "${BLUE}9)${NC} 导出自定义源数据"
     echo -e "${BLUE}0)${NC} 退出"
     echo -e "${GREEN}=======================================${NC}"
-    echo -ne "请输入选项 [0-8]: "
+    echo -ne "请输入选项 [0-9]: "
     read -r choice
+}
+
+# 导出自定义源数据
+export_custom_sources() {
+    echo -e "${YELLOW}正在导出自定义新闻源数据...${NC}"
+    
+    # 确保数据库容器正在运行
+    if ! docker ps -q --filter "name=postgres-local" | grep -q .; then
+        echo -e "${RED}数据库容器未运行，请先启动容器${NC}"
+        return 1
+    fi
+    
+    # 创建临时Python脚本文件
+    cat > .temp_export_sources.py << EOF
+#!/usr/bin/env python
+import sys
+import os
+import json
+from pathlib import Path
+import datetime
+
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent / "backend"))
+
+# 确保加载 .env 文件
+from dotenv import load_dotenv
+load_dotenv()
+
+try:
+    from app.db.session import SessionLocal
+    from app.models.source import Source, SourceType, SourceStatus
+    from app.models.category import Category
+    from sqlalchemy import or_
+    
+    # 获取内置源IDs列表
+    init_sources_path = "backend/scripts/init_sources.py"
+    built_in_ids = []
+    
+    if os.path.exists(init_sources_path):
+        with open(init_sources_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            for line in lines:
+                line = line.strip()
+                if '"id":' in line:
+                    source_id = line.split('"id":')[1].split(',')[0].strip().strip('"')
+                    built_in_ids.append(source_id)
+    
+    # 连接数据库并获取自定义源
+    db = SessionLocal()
+    try:
+        # 获取所有不在内置列表中的源
+        custom_sources = db.query(Source).filter(
+            ~Source.id.in_(built_in_ids)
+        ).all()
+        
+        if not custom_sources:
+            print("未找到自定义数据源")
+            sys.exit(0)
+        
+        print(f"找到 {len(custom_sources)} 个自定义数据源")
+        
+        # 构建源数据结构
+        sources_data = []
+        for source in custom_sources:
+            # 获取分类slug
+            category = db.query(Category).filter(Category.id == source.category_id).first()
+            category_slug = category.slug if category else "news"
+            
+            # 处理配置字典，移除不可序列化的对象
+            config = source.config.copy() if source.config else {}
+            
+            # 处理更新间隔
+            update_interval = source.update_interval
+            if isinstance(update_interval, datetime.timedelta):
+                update_interval_minutes = update_interval.total_seconds() // 60
+            else:
+                update_interval_minutes = 10
+                
+            # 处理缓存TTL
+            cache_ttl = source.cache_ttl
+            if isinstance(cache_ttl, datetime.timedelta):
+                cache_ttl_minutes = cache_ttl.total_seconds() // 60
+            else:
+                cache_ttl_minutes = 5
+            
+            # 构建源数据字典
+            source_dict = {
+                "id": source.id,
+                "name": source.name,
+                "description": source.description,
+                "url": source.url,
+                "type": source.type,
+                "category": category_slug,
+                "country": source.country,
+                "language": source.language,
+                "config": config,
+                "status": source.status,
+                "update_interval_minutes": int(update_interval_minutes),
+                "cache_ttl_minutes": int(cache_ttl_minutes),
+                "priority": source.priority if source.priority is not None else 999
+            }
+            sources_data.append(source_dict)
+        
+        # 格式化为Python代码
+        formatted_sources = []
+        for source in sources_data:
+            source_str = "    {\n"
+            source_str += f'        "id": "{source["id"]}",\n'
+            source_str += f'        "name": "{source["name"]}",\n'
+            source_str += f'        "description": "{source["description"]}",\n'
+            source_str += f'        "url": "{source["url"]}",\n'
+            source_str += f'        "type": SourceType.{source["type"].name},\n'
+            source_str += f'        "category": "{source["category"]}",\n'
+            source_str += f'        "country": "{source["country"]}",\n'
+            source_str += f'        "language": "{source["language"]}",\n'
+            
+            # 格式化配置
+            config_str = json.dumps(source["config"], ensure_ascii=False, indent=4)
+            config_lines = config_str.split("\n")
+            config_formatted = "{\n"
+            for i, line in enumerate(config_lines):
+                if i == 0:
+                    config_formatted += "            " + line[1:] + "\n"
+                elif i == len(config_lines) - 1:
+                    config_formatted += "        " + line
+                else:
+                    config_formatted += "            " + line + "\n"
+            source_str += f'        "config": {config_formatted}\n'
+            source_str += "    },\n"
+            formatted_sources.append(source_str)
+        
+        # 生成导出文件
+        export_file = "exported_custom_sources.py"
+        with open(export_file, "w", encoding="utf-8") as f:
+            f.write("'''\n自定义新闻源数据导出\n'''\n\n")
+            f.write("# 自定义新闻源列表 - 导出于 " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n")
+            f.write("CUSTOM_SOURCES = [\n")
+            for source in formatted_sources:
+                f.write(source)
+            f.write("]\n\n")
+            f.write("# 要在init_sources.py中合并这些自定义源，请按以下步骤操作：\n")
+            f.write("# 1. 打开backend/scripts/init_sources.py文件\n")
+            f.write("# 2. 在SOURCES数组的最后一个元素后添加逗号\n")
+            f.write("# 3. 将上面的CUSTOM_SOURCES数组中的内容复制到SOURCES数组中\n")
+            f.write("# 4. 确保删除最后一个源后面的逗号\n")
+        
+        print(f"自定义源已导出到项目根目录: {export_file}")
+    
+    except Exception as e:
+        print(f"导出失败: {str(e)}")
+    finally:
+        db.close()
+        
+except ImportError as e:
+    print(f"导入错误: {str(e)}")
+    print("请确保您已启动数据库容器并安装了所有必要的依赖")
+    sys.exit(1)
+except Exception as e:
+    print(f"出现错误: {str(e)}")
+    sys.exit(1)
+EOF
+    
+    # 执行临时Python脚本
+    cd ${PWD} && python .temp_export_sources.py
+    export_result=$?
+    
+    # 删除临时脚本
+    rm -f .temp_export_sources.py
+    
+    if [ $export_result -eq 0 ]; then
+        echo -e "${GREEN}自定义源数据导出完成${NC}"
+    else
+        echo -e "${RED}自定义源数据导出失败${NC}"
+    fi
 }
 
 # 主程序
@@ -628,6 +804,11 @@ main() {
                 echo -e "${YELLOW}备份当前数据库...${NC}"
                 backup_database
                 echo -e "${GREEN}备份完成!${NC}"
+                read -p "按Enter键继续..."
+                ;;
+            9)
+                echo -e "${YELLOW}导出自定义源数据...${NC}"
+                export_custom_sources
                 read -p "按Enter键继续..."
                 ;;
             0)

@@ -9,7 +9,7 @@ import platform
 import asyncio
 import time
 from typing import List, Dict, Any, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -530,159 +530,632 @@ class CustomWebSource(WebNewsSource):
                 # 处理每个项目
                 for index, item in enumerate(item_elements):
                     try:
-                        # 提取标题
-                        title_element = None
+                        # 特殊处理：首先检测是否为NBD网站结构
+                        is_nbd_structure = False
+                        
+                        # 检查是否存在NBD特有的元素
                         try:
-                            title_element = await loop.run_in_executor(
+                            # 先检查更具体的NBD结构标志
+                            nbd_specific_elements = await loop.run_in_executor(
                                 None,
-                                lambda: item.find_element(By.CSS_SELECTOR, title_selector)
-                            )
-                        except NoSuchElementException:
-                            logger.warning(f"项目 {index} 中未找到标题元素: {title_selector}")
-                            continue
-                        
-                        title = await loop.run_in_executor(
-                            None,
-                            lambda: title_element.text.strip()
-                        )
-                        
-                        # 如果标题文本为空，尝试获取title属性
-                        if not title:
-                            title = await loop.run_in_executor(
-                                None,
-                                lambda: title_element.get_attribute('title')
+                                lambda: item.find_elements(By.CSS_SELECTOR, '.u-newsText .u-content, .u-time')
                             )
                             
-                        # 仍然为空，则跳过
+                            if nbd_specific_elements and len(nbd_specific_elements) > 0:
+                                is_nbd_structure = True
+                                logger.info(f"项目 {index} 检测到NBD网站结构")
+                            else:
+                                # 再检查父元素结构是否为NBD网站的kuaiXunBox
+                                parent_check = await loop.run_in_executor(
+                                    None,
+                                    lambda: driver.execute_script("""
+                                        function checkNBDParent(element) {
+                                            let parent = element.parentElement;
+                                            while (parent) {
+                                                if (parent.classList.contains('kuaiXunBox')) return true;
+                                                parent = parent.parentElement;
+                                            }
+                                            return false;
+                                        }
+                                        return checkNBDParent(arguments[0]);
+                                    """, item)
+                                )
+                                
+                                if parent_check:
+                                    is_nbd_structure = True
+                                    logger.info(f"项目 {index} 通过父元素检测确认为NBD网站结构")
+                        except Exception as e:
+                            logger.debug(f"检测NBD结构时出错: {str(e)}")
+                        
+                        # 通用智能结构检测 - 根据常见模式自动识别新闻项结构特征
+                        if not is_nbd_structure:
+                            try:
+                                # 检查通用新闻项特征
+                                structure_info = await loop.run_in_executor(
+                                    None,
+                                    lambda: driver.execute_script("""
+                                        function detectNewsStructure(element) {
+                                            const result = {
+                                                hasTitle: false,
+                                                titleElement: null,
+                                                titleSelector: '',
+                                                hasTime: false,
+                                                timeElement: null,
+                                                timeSelector: '',
+                                                hasLink: false,
+                                                linkElement: null,
+                                                linkSelector: '',
+                                                hasContent: false,
+                                                contentElement: null,
+                                                contentSelector: ''
+                                            };
+                                            
+                                            // 检查标题类元素 (h1-h5, strong, b, 或特定类)
+                                            const titleElements = element.querySelectorAll('h1, h2, h3, h4, h5, strong, b, [class*="title"], [class*="heading"]');
+                                            if (titleElements.length > 0) {
+                                                result.hasTitle = true;
+                                                result.titleElement = titleElements[0];
+                                                result.titleSelector = titleElements[0].tagName.toLowerCase();
+                                                if (titleElements[0].className) {
+                                                    result.titleSelector += '.' + titleElements[0].className.split(' ').join('.');
+                                                }
+                                            }
+                                            
+                                            // 检查时间类元素 (time, span或div包含时间格式)
+                                            const timeElements = Array.from(element.querySelectorAll('time, span, div, [class*="time"], [class*="date"]'))
+                                                .filter(el => {
+                                                    const text = el.textContent.trim();
+                                                    return /\\d{1,2}:\\d{1,2}/.test(text) || // 12:34
+                                                           /\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}/.test(text) || // 2025-01-01
+                                                           /(分钟前|小时前|天前|周前|月前|年前)/.test(text); // 相对时间
+                                                });
+                                            
+                                            if (timeElements.length > 0) {
+                                                result.hasTime = true;
+                                                result.timeElement = timeElements[0];
+                                                result.timeSelector = timeElements[0].tagName.toLowerCase();
+                                                if (timeElements[0].className) {
+                                                    result.timeSelector += '.' + timeElements[0].className.split(' ').join('.');
+                                                }
+                                            }
+                                            
+                                            // 检查链接元素 (a标签)
+                                            const linkElements = element.querySelectorAll('a[href]');
+                                            if (linkElements.length > 0) {
+                                                result.hasLink = true;
+                                                result.linkElement = linkElements[0];
+                                                result.linkSelector = 'a';
+                                            }
+                                            
+                                            // 检查内容/摘要类元素 (p, div包含较长文本)
+                                            const contentElements = Array.from(element.querySelectorAll('p, div, [class*="content"], [class*="summary"], [class*="desc"]'))
+                                                .filter(el => {
+                                                    const text = el.textContent.trim();
+                                                    return text.length > 20 && text.split(' ').length > 3;
+                                                });
+                                                
+                                            if (contentElements.length > 0) {
+                                                result.hasContent = true;
+                                                result.contentElement = contentElements[0];
+                                                result.contentSelector = contentElements[0].tagName.toLowerCase();
+                                                if (contentElements[0].className) {
+                                                    result.contentSelector += '.' + contentElements[0].className.split(' ').join('.');
+                                                }
+                                            }
+                                            
+                                            return result;
+                                        }
+                                        return detectNewsStructure(arguments[0]);
+                                    """, item)
+                                )
+                                
+                                # 基于结构信息判断是否为新闻项
+                                if structure_info and (structure_info.get('hasTitle') or structure_info.get('hasContent')):
+                                    logger.info(f"项目 {index} 通过智能结构分析识别为新闻项")
+                            except Exception as struct_e:
+                                logger.debug(f"进行智能结构检测时出错: {str(struct_e)}")
+                        
+                        # 提取标题
+                        title = ""
+                        title_element = None  # 确保在所有代码路径中初始化title_element
+                        
+                        # 针对NBD特殊处理 - 首先尝试直接从结构获取
+                        if is_nbd_structure:
+                            try:
+                                # 1. 首先尝试从title属性获取标题
+                                try:
+                                    title_from_attr = await loop.run_in_executor(
+                                        None,
+                                        lambda: item.get_attribute('title')
+                                    )
+                                    
+                                    if not title_from_attr:
+                                        # 检查a标签的title属性
+                                        a_elements = await loop.run_in_executor(
+                                            None,
+                                            lambda: item.find_elements(By.CSS_SELECTOR, 'a')
+                                        )
+                                        
+                                        for a_elem in a_elements:
+                                            a_title = await loop.run_in_executor(
+                                                None,
+                                                lambda: a_elem.get_attribute('title')
+                                            )
+                                            if a_title and a_title.strip():
+                                                title = a_title.strip()
+                                                logger.info(f"从a标签title属性获取到标题: {title}")
+                                                break
+                                    else:
+                                        title = title_from_attr
+                                        logger.info(f"从元素title属性获取到标题: {title}")
+                                except Exception as attr_e:
+                                    logger.debug(f"从title属性获取标题失败: {str(attr_e)}")
+                                
+                                # 2. 尝试直接从.u-newsText .u-content元素获取
+                                if not title:
+                                    news_content_elements = await loop.run_in_executor(
+                                        None,
+                                        lambda: item.find_elements(By.CSS_SELECTOR, '.u-newsText .u-content')
+                                    )
+                                    
+                                    if news_content_elements and len(news_content_elements) > 0:
+                                        for content_elem in news_content_elements:
+                                            content_text = await loop.run_in_executor(
+                                                None,
+                                                lambda: content_elem.text.strip()
+                                            )
+                                            if content_text:
+                                                title = content_text
+                                                logger.info(f"从.u-newsText .u-content获取到标题: {title}")
+                                                break
+                                
+                                # 3. 使用JavaScript获取元素内容 - 直接从DOM获取text内容
+                                if not title:
+                                    try:
+                                        js_content = await loop.run_in_executor(
+                                            None,
+                                            lambda: driver.execute_script("""
+                                                function getNBDTitle(element) {
+                                                    // 尝试获取.u-content内容
+                                                    let contentElem = element.querySelector('.u-content');
+                                                    if (contentElem && contentElem.textContent.trim()) {
+                                                        return contentElem.textContent.trim();
+                                                    }
+                                                    
+                                                    // 尝试获取a标签的文本内容（排除时间）
+                                                    let aElem = element.querySelector('a');
+                                                    if (aElem) {
+                                                        let fullText = aElem.textContent.trim();
+                                                        // 移除时间部分 (例如 "12:34")
+                                                        let timeElem = aElem.querySelector('.u-time');
+                                                        if (timeElem) {
+                                                            let timeText = timeElem.textContent.trim();
+                                                            fullText = fullText.replace(timeText, '').trim();
+                                                        }
+                                                        if (fullText) return fullText;
+                                                    }
+                                                    
+                                                    // 尝试获取整个项目文本（排除时间）
+                                                    let fullText = element.textContent.trim();
+                                                    let timeElem = element.querySelector('.u-time');
+                                                    if (timeElem) {
+                                                        let timeText = timeElem.textContent.trim();
+                                                        fullText = fullText.replace(timeText, '').trim();
+                                                    }
+                                                    return fullText;
+                                                }
+                                                return getNBDTitle(arguments[0]);
+                                            """, item)
+                                        )
+                                        
+                                        if js_content and js_content.strip():
+                                            title = js_content.strip()
+                                            logger.info(f"从JavaScript获取到标题: {title}")
+                                    except Exception as js_e:
+                                        logger.debug(f"使用JavaScript获取标题失败: {str(js_e)}")
+                                
+                                # 4. 如果上面失败，尝试从a标签直接获取内容
+                                if not title:
+                                    a_elements = await loop.run_in_executor(
+                                        None,
+                                        lambda: item.find_elements(By.CSS_SELECTOR, 'a')
+                                    )
+                                    
+                                    for a_elem in a_elements:
+                                        a_text = await loop.run_in_executor(
+                                            None,
+                                            lambda: a_elem.text.strip()
+                                        )
+                                        # 过滤掉只有时间的a标签
+                                        if a_text and not re.match(r'^\d{1,2}:\d{1,2}$', a_text):
+                                            # 尝试移除时间部分 (格式如 "标题 12:34")
+                                            time_pattern = r'\d{1,2}:\d{1,2}'
+                                            a_text = re.sub(time_pattern, '', a_text).strip()
+                                            if a_text:
+                                                title = a_text
+                                                logger.info(f"从a标签获取到标题: {title}")
+                                                break
+                                
+                                # 5. 使用通用智能提取方法
+                                if not title:
+                                    smart_title = await loop.run_in_executor(
+                                        None,
+                                        lambda: driver.execute_script("""
+                                            function smartExtractTitle(element) {
+                                                // 智能识别最可能是标题的文本内容
+                                                
+                                                // 1. 优先检查明确的标题元素
+                                                const titleTags = ['h1', 'h2', 'h3', 'h4', 'h5'];
+                                                for (const tag of titleTags) {
+                                                    const elements = element.querySelectorAll(tag);
+                                                    if (elements.length > 0) {
+                                                        return elements[0].textContent.trim();
+                                                    }
+                                                }
+                                                
+                                                // 2. 检查类名包含标题相关的元素
+                                                const titleClasses = Array.from(element.querySelectorAll('[class*="title"],[class*="heading"],[class*="caption"],[class*="subject"]'));
+                                                if (titleClasses.length > 0) {
+                                                    return titleClasses[0].textContent.trim();
+                                                }
+                                                
+                                                // 3. 检查加粗文本
+                                                const boldElements = element.querySelectorAll('strong, b');
+                                                if (boldElements.length > 0) {
+                                                    return boldElements[0].textContent.trim();
+                                                }
+                                                
+                                                // 4. 尝试查找最短的非空文本块（通常是标题）
+                                                const textElements = Array.from(element.querySelectorAll('*'))
+                                                    .filter(el => {
+                                                        const text = el.textContent.trim();
+                                                        return text.length > 0 && 
+                                                               text.length < 100 && 
+                                                               !text.match(/^\\d{1,2}:\\d{1,2}$/) && // 排除时间
+                                                               el.children.length === 0; // 只要叶子节点
+                                                    });
+                                                
+                                                if (textElements.length > 0) {
+                                                    // 按文本长度排序
+                                                    textElements.sort((a, b) => a.textContent.trim().length - b.textContent.trim().length);
+                                                    // 返回最短的非空文本块（可能是标题）
+                                                    return textElements[0].textContent.trim();
+                                                }
+                                                
+                                                // 5. 如果以上都失败，返回元素的完整文本（移除可能的时间）
+                                                let fullText = element.textContent.trim();
+                                                fullText = fullText.replace(/\\d{1,2}:\\d{1,2}/, '').trim();
+                                                
+                                                return fullText;
+                                            }
+                                            return smartExtractTitle(arguments[0]);
+                                        """, item)
+                                    )
+                                    
+                                    if smart_title and smart_title.strip():
+                                        title = smart_title.strip()
+                                        logger.info(f"使用智能标题提取获取到标题: {title}")
+                            
+                            except Exception as nbd_e:
+                                logger.warning(f"NBD特殊处理提取标题时出错: {str(nbd_e)}")
+                        
+                        # 使用通用智能提取方法 - 适用于各种网站结构
                         if not title:
-                            logger.warning(f"项目 {index} 的标题为空")
-                            continue
+                            try:
+                                # 通用智能提取标题
+                                smart_title = await loop.run_in_executor(
+                                    None,
+                                    lambda: driver.execute_script("""
+                                        function extractSmartTitle(element) {
+                                            // 1. 优先从标题类元素中获取
+                                            const titleElements = element.querySelectorAll('h1, h2, h3, h4, h5, [class*="title"], [class*="header"], [class*="heading"]');
+                                            if (titleElements.length > 0) {
+                                                return titleElements[0].textContent.trim();
+                                            }
+                                            
+                                            // 2. 从链接获取 - 特别优化多链接场景
+                                            const links = element.querySelectorAll('a[href]');
+                                            if (links.length > 0) {
+                                                // 如果有多个链接，查找文本内容最长的链接（通常是标题链接）
+                                                let longestTextLink = null;
+                                                let longestTextLength = 0;
+                                                
+                                                for (const link of links) {
+                                                    const linkText = link.textContent.trim();
+                                                    // 忽略明显不是标题的短链接，如分类标签和时间
+                                                    if (linkText.length > longestTextLength && linkText.length > 5 && 
+                                                        !linkText.match(/^\\[.*\\]$/) && // 排除[分类]格式
+                                                        !linkText.match(/^\\d{1,2}:\\d{1,2}$/)) { // 排除时间格式
+                                                        longestTextLength = linkText.length;
+                                                        longestTextLink = link;
+                                                    }
+                                                }
+                                                
+                                                // 使用最长的链接文本作为标题
+                                                if (longestTextLink) {
+                                                    return longestTextLink.textContent.trim();
+                                                }
+                                                
+                                                // 优先获取链接的title属性
+                                                if (links[0].hasAttribute('title') && links[0].getAttribute('title').trim()) {
+                                                    return links[0].getAttribute('title').trim();
+                                                }
+                                                
+                                                // 获取链接文本，过滤掉时间
+                                                let linkText = links[0].textContent.trim();
+                                                // 移除时间类文本 (如 "12:34")
+                                                linkText = linkText.replace(/\\d{1,2}:\\d{1,2}/, '').trim();
+                                                if (linkText) return linkText;
+                                            }
+                                            
+                                            // 3. 获取所有文本并移除时间部分
+                                            let fullText = element.textContent.trim();
+                                            
+                                            // 移除常见的时间格式
+                                            fullText = fullText.replace(/\\d{1,2}:\\d{1,2}/, ''); // 时:分
+                                            fullText = fullText.replace(/\\d{4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}/, ''); // 年-月-日
+                                            
+                                            return fullText.trim();
+                                        }
+                                        return extractSmartTitle(arguments[0]);
+                                    """, item)
+                                )
+                                
+                                if smart_title and smart_title.strip():
+                                    title = smart_title.strip()
+                                    logger.info(f"通用智能提取获取到标题: {title}")
+                            except Exception as smart_e:
+                                logger.warning(f"通用智能提取标题时出错: {str(smart_e)}")
+                        
+                        # 标准标题元素提取方法
+                        if not title and title_selector:
+                            try:
+                                # 查找标题元素
+                                title_element = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_element(By.CSS_SELECTOR, title_selector)
+                                )
+                        
+                                # 获取标题文本
+                                title = await loop.run_in_executor(
+                                    None,
+                                    lambda: title_element.text.strip()
+                                )
+                        
+                                # 如果标题文本为空，尝试获取title属性
+                                if not title:
+                                    title = await loop.run_in_executor(
+                                        None,
+                                        lambda: title_element.get_attribute('title')
+                                    )
+                            
+                                # 如果依然为空，尝试从父元素获取标题（通常是 a 标签）
+                                if not title:
+                                    try:
+                                        # 初始化parent_link为None
+                                        parent_link = None
+                                        
+                                        # 尝试找到包含当前元素的链接
+                                        parent_link = await loop.run_in_executor(
+                                            None,
+                                            lambda: driver.execute_script("""
+                                                function getParentLink(element) {
+                                                    if (element.tagName === 'A') return element;
+                                                    let parent = element.parentElement;
+                                                    while (parent) {
+                                                        if (parent.tagName === 'A') return parent;
+                                                        parent = parent.parentElement;
+                                                    }
+                                                    return null;
+                                                }
+                                                return getParentLink(arguments[0]);
+                                            """, title_element)
+                                        )
+                                        
+                                        if parent_link:
+                                            # 尝试从父链接获取title属性
+                                            title = await loop.run_in_executor(
+                                                None,
+                                                lambda: parent_link.get_attribute('title')
+                                            )
+                                            
+                                            # 如果父链接没有title属性，尝试获取其文本内容
+                                            if not title:
+                                                parent_text = await loop.run_in_executor(
+                                                    None,
+                                                    lambda: parent_link.text.strip()
+                                                )
+                                                
+                                                # 过滤掉可能包含的时间文本，常见于NBD网站格式
+                                                if parent_text:
+                                                    # 尝试找到并移除时间文本
+                                                    try:
+                                                        time_element = await loop.run_in_executor(
+                                                            None,
+                                                            lambda: parent_link.find_element(By.CSS_SELECTOR, '.u-time')
+                                                        )
+                                                        time_text = await loop.run_in_executor(
+                                                            None,
+                                                            lambda: time_element.text.strip()
+                                                        )
+                                                        # 从父文本中移除时间文本
+                                                        title = parent_text.replace(time_text, '').strip()
+                                                    except NoSuchElementException:
+                                                        # 如果没有找到时间元素，直接使用父文本
+                                                        title = parent_text
+                                    except Exception as parent_e:
+                                        logger.warning(f"尝试从父元素获取标题时出错: {str(parent_e)}")
+                            except NoSuchElementException:
+                                logger.warning(f"项目 {index} 中未找到标题元素: {title_selector}")
+                                continue
+                            except Exception as e:
+                                logger.warning(f"提取标题时出错: {str(e)}")
+                        
+                        # 如果使用所有方法后仍然为空，记录警告但不跳过此项
+                        if not title:
+                            title = f"未知标题 #{index+1}"
+                            logger.warning(f"项目 {index} 的标题为空，使用默认标题: {title}")
+                            # 额外调试日志，输出项目HTML以帮助排查
+                            try:
+                                item_html = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.get_attribute('outerHTML')
+                                )
+                                logger.debug(f"项目 {index} HTML: {item_html[:500]}...")
+                            except Exception as html_e:
+                                logger.debug(f"获取项目HTML时出错: {str(html_e)}")
                         
                         # 提取链接
                         link = ""
-                        if link_selector:
-                            try:
-                                link_element = await loop.run_in_executor(
-                                    None,
-                                    lambda: item.find_element(By.CSS_SELECTOR, link_selector)
-                                )
-                                link = await loop.run_in_executor(
-                                    None,
-                                    lambda: link_element.get_attribute('href')
-                                )
-                            except NoSuchElementException:
-                                # 如果找不到链接元素，尝试使用标题元素的href属性
-                                link = await loop.run_in_executor(
-                                    None,
-                                    lambda: title_element.get_attribute('href')
-                                )
-                                if link:
-                                    logger.info(f"项目 {index} 使用标题元素的href属性作为链接")
+                        # 如果在标题提取时已经找到链接，这里就不需要再提取了
+                        if 'link' not in locals() or not link:
+                            if link_selector:
+                                link_elements = item.select(link_selector)
+                                if link_elements:
+                                    link = link_elements[0].get('href', '')
+                            
+                            # 如果找不到链接元素，尝试使用标题元素的href属性（如果title_element存在）
+                            if not link and title_element is not None:
+                                if title_element.name == 'a':
+                                    link = title_element.get('href', '')
+                                else:
+                                    # 查找包含标题元素的链接
+                                    parent_link = title_element.find_parent('a')
+                                    if parent_link:
+                                        link = parent_link.get('href', '')
+                            
+                            if link:
+                                logger.info(f"项目 {index} 使用标题元素的href属性作为链接")
                         
-                        # 如果没有找到链接，则使用主URL
+                            # 如果仍然没有找到链接，尝试从所有链接中找到文本最长的链接
+                            if not link and a_elements:
+                                if len(a_elements) == 1:
+                                    link = a_elements[0].get('href', '')
+                                else:
+                                    # 找出最可能是标题链接的那个（通常是文本最长的）
+                                    longest_text = ""
+                                    longest_link = ""
+                                    
+                                    for a_elem in a_elements:
+                                        a_text = a_elem.get_text(strip=True)
+                                        a_href = a_elem.get('href', '')
+                                        
+                                        # 排除分类链接、时间链接和其他明显不是标题的链接
+                                        if (len(a_text) > len(longest_text) and 
+                                            len(a_text) > 5 and 
+                                            not re.match(r'^\[.*\]$', a_text) and 
+                                            not re.match(r'^\d{1,2}:\d{1,2}$', a_text)):
+                                            longest_text = a_text
+                                            longest_link = a_href
+                                    
+                                    if longest_link:
+                                        link = longest_link
+                                        logger.info(f"项目 {index} 从最长链接文本获取到链接: {link}")
+                                    else:
+                                        link = a_elements[0].get('href', '')
+                        
+                        # 如果仍然没有找到链接，则使用主URL
                         if not link:
                             link = self.url
-                            logger.warning(f"项目 {index} 没有链接，使用源URL")
+                            logger.warning(f"项目 {index} 没有链接，使用源URL: {self.url}")
                         
                         # 提取发布日期
                         published_at = datetime.datetime.now()
                         if date_selector:
-                            try:
-                                date_element = await loop.run_in_executor(
-                                    None,
-                                    lambda: item.find_element(By.CSS_SELECTOR, date_selector)
-                                )
-                                date_text = await loop.run_in_executor(
-                                    None,
-                                    lambda: date_element.text.strip()
-                                )
-                                if date_text:
-                                    try:
-                                        # 解析相对时间
-                                        now = datetime.datetime.now()
-                                        if "分钟前" in date_text:
-                                            minutes_match = re.search(r'(\d+)\s*分钟前', date_text)
-                                            if minutes_match:
-                                                minutes = int(minutes_match.group(1))
-                                                published_at = now - datetime.timedelta(minutes=minutes)
-                                                logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
-                                        elif "小时前" in date_text:
-                                            hours_match = re.search(r'(\d+)\s*小时前', date_text)
-                                            if hours_match:
-                                                hours = int(hours_match.group(1))
-                                                published_at = now - datetime.timedelta(hours=hours)
-                                                logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
-                                        elif "天前" in date_text:
-                                            days_match = re.search(r'(\d+)\s*天前', date_text)
-                                            if days_match:
-                                                days = int(days_match.group(1))
-                                                published_at = now - datetime.timedelta(days=days)
-                                                logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
-                                        elif "周前" in date_text:
-                                            weeks_match = re.search(r'(\d+)\s*周前', date_text)
-                                            if weeks_match:
-                                                weeks = int(weeks_match.group(1))
-                                                published_at = now - datetime.timedelta(weeks=weeks)
-                                                logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
-                                        elif "月前" in date_text:
-                                            months_match = re.search(r'(\d+)\s*月前', date_text)
-                                            if months_match:
-                                                months = int(months_match.group(1))
-                                                result = datetime.datetime(now.year, now.month, now.day, now.hour, now.minute, now.second)
-                                                month = result.month - months
-                                                year = result.year
-                                                while month <= 0:
-                                                    month += 12
-                                                    year -= 1
-                                                result = result.replace(year=year, month=month)
-                                                published_at = result
-                                                logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
-                                        elif "年前" in date_text:
-                                            years_match = re.search(r'(\d+)\s*年前', date_text)
-                                            if years_match:
-                                                years = int(years_match.group(1))
-                                                published_at = now.replace(year=now.year - years)
-                                                logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
-                                        elif "昨天" in date_text:
-                                            # 处理"昨天 12:34"格式
-                                            time_match = re.search(r'昨天\s*(\d{1,2}):(\d{1,2})', date_text)
-                                            if time_match:
-                                                hour = int(time_match.group(1))
-                                                minute = int(time_match.group(2))
-                                                published_at = (now - datetime.timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
-                                            else:
-                                                # 没有具体时间的昨天
-                                                published_at = (now - datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                            date_element = await loop.run_in_executor(
+                                None,
+                                lambda: item.find_element(By.CSS_SELECTOR, date_selector)
+                            )
+                            date_text = await loop.run_in_executor(
+                                None,
+                                lambda: date_element.text.strip()
+                            )
+                            if date_text:
+                                try:
+                                    # 解析相对时间
+                                    now = datetime.datetime.now()
+                                    if "分钟前" in date_text:
+                                        minutes_match = re.search(r'(\d+)\s*分钟前', date_text)
+                                        if minutes_match:
+                                            minutes = int(minutes_match.group(1))
+                                            published_at = now - datetime.timedelta(minutes=minutes)
                                             logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
-                                        elif ":" in date_text:
-                                            # 处理今天的时间格式 "12:34"
-                                            if re.match(r'^\d{1,2}:\d{1,2}$', date_text):
-                                                time_parts = date_text.split(':')
-                                                hour = int(time_parts[0])
-                                                minute = int(time_parts[1])
-                                                published_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                                                logger.info(f"解析今天时间 '{date_text}' 为 {published_at}")
-                                            # 处理完整日期时间格式 "2025-01-01 12:34"
-                                            elif re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}', date_text):
-                                                try:
-                                                    date_formats = [
-                                                        '%Y-%m-%d %H:%M:%S',
-                                                        '%Y-%m-%d %H:%M',
-                                                        '%Y/%m/%d %H:%M:%S',
-                                                        '%Y/%m/%d %H:%M'
-                                                    ]
-                                                    for fmt in date_formats:
-                                                        try:
-                                                            published_at = datetime.datetime.strptime(date_text, fmt)
-                                                            break
-                                                        except ValueError:
-                                                            continue
-                                                    logger.info(f"解析完整日期时间 '{date_text}' 为 {published_at}")
-                                                except Exception as e:
-                                                    logger.warning(f"解析完整日期时间 '{date_text}' 失败: {str(e)}")
-                                    except Exception as date_e:
-                                        logger.warning(f"解析日期时间 '{date_text}' 失败: {str(date_e)}")
-                                        # 保持使用当前时间作为后备
+                                    elif "小时前" in date_text:
+                                        hours_match = re.search(r'(\d+)\s*小时前', date_text)
+                                        if hours_match:
+                                            hours = int(hours_match.group(1))
+                                            published_at = now - datetime.timedelta(hours=hours)
+                                            logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
+                                    elif "天前" in date_text:
+                                        days_match = re.search(r'(\d+)\s*天前', date_text)
+                                        if days_match:
+                                            days = int(days_match.group(1))
+                                            published_at = now - datetime.timedelta(days=days)
+                                            logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
+                                    elif "周前" in date_text:
+                                        weeks_match = re.search(r'(\d+)\s*周前', date_text)
+                                        if weeks_match:
+                                            weeks = int(weeks_match.group(1))
+                                            published_at = now - datetime.timedelta(weeks=weeks)
+                                            logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
+                                    elif "月前" in date_text:
+                                        months_match = re.search(r'(\d+)\s*月前', date_text)
+                                        if months_match:
+                                            months = int(months_match.group(1))
+                                            result = datetime.datetime(now.year, now.month, now.day, now.hour, now.minute, now.second)
+                                            month = result.month - months
+                                            year = result.year
+                                            while month <= 0:
+                                                month += 12
+                                                year -= 1
+                                            result = result.replace(year=year, month=month)
+                                            published_at = result
+                                            logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
+                                    elif "年前" in date_text:
+                                        years_match = re.search(r'(\d+)\s*年前', date_text)
+                                        if years_match:
+                                            years = int(years_match.group(1))
+                                            published_at = now.replace(year=now.year - years)
+                                            logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
+                                    elif "昨天" in date_text:
+                                        # 处理"昨天 12:34"格式
+                                        time_match = re.search(r'昨天\s*(\d{1,2}):(\d{1,2})', date_text)
+                                        if time_match:
+                                            hour = int(time_match.group(1))
+                                            minute = int(time_match.group(2))
+                                            published_at = (now - datetime.timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+                                        else:
+                                            # 没有具体时间的昨天
+                                            published_at = (now - datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                                        logger.info(f"解析相对时间 '{date_text}' 为 {published_at}")
+                                    elif ":" in date_text:
+                                        # 处理今天的时间格式 "12:34"
+                                        if re.match(r'^\d{1,2}:\d{1,2}$', date_text):
+                                            time_parts = date_text.split(':')
+                                            hour = int(time_parts[0])
+                                            minute = int(time_parts[1])
+                                            published_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                                            logger.info(f"解析今天时间 '{date_text}' 为 {published_at}")
+                                        # 处理完整日期时间格式 "2025-01-01 12:34"
+                                        elif re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}', date_text):
+                                            try:
+                                                date_formats = [
+                                                    '%Y-%m-%d %H:%M:%S',
+                                                    '%Y-%m-%d %H:%M',
+                                                    '%Y/%m/%d %H:%M:%S',
+                                                    '%Y/%m/%d %H:%M'
+                                                ]
+                                                for fmt in date_formats:
+                                                    try:
+                                                        published_at = datetime.datetime.strptime(date_text, fmt)
+                                                        break
+                                                    except ValueError:
+                                                        continue
+                                                logger.info(f"解析完整日期时间 '{date_text}' 为 {published_at}")
+                                            except Exception as e:
+                                                logger.warning(f"解析完整日期时间 '{date_text}' 失败: {str(e)}")
+                                except Exception as date_e:
+                                    logger.warning(f"解析日期时间 '{date_text}' 失败: {str(date_e)}")
                         
                         # 提取摘要
                         summary = ""
@@ -692,12 +1165,13 @@ class CustomWebSource(WebNewsSource):
                                     None,
                                     lambda: item.find_element(By.CSS_SELECTOR, summary_selector)
                                 )
-                                summary = await loop.run_in_executor(
-                                    None,
-                                    lambda: summary_element.text.strip()
-                                )
-                            except NoSuchElementException:
-                                logger.warning(f"项目 {index} 中未找到摘要元素: {summary_selector}")
+                                if summary_element:
+                                    summary = await loop.run_in_executor(
+                                        None,
+                                        lambda: summary_element.text.strip()
+                                    )
+                            except Exception as summary_e:
+                                logger.debug(f"提取摘要时出错: {str(summary_e)}")
                         
                         # 如果没有摘要，则使用标题
                         if not summary:
@@ -711,12 +1185,13 @@ class CustomWebSource(WebNewsSource):
                                     None,
                                     lambda: item.find_element(By.CSS_SELECTOR, content_selector)
                                 )
-                                content = await loop.run_in_executor(
-                                    None,
-                                    lambda: content_element.text.strip()
-                                )
-                            except NoSuchElementException:
-                                logger.warning(f"项目 {index} 中未找到内容元素: {content_selector}")
+                                if content_element:
+                                    content = await loop.run_in_executor(
+                                        None,
+                                        lambda: content_element.text.strip()
+                                    )
+                            except Exception as content_e:
+                                logger.debug(f"提取内容时出错: {str(content_e)}")
                         
                         # 如果没有内容，则使用摘要
                         if not content:
@@ -746,7 +1221,6 @@ class CustomWebSource(WebNewsSource):
                         )
                         
                         news_items.append(news_item)
-                        logger.info(f"成功处理项目 {index}: {title}")
                         
                     except Exception as item_e:
                         logger.warning(f"处理项目 {index} 时出错: {str(item_e)}")
@@ -997,41 +1471,133 @@ class CustomWebSource(WebNewsSource):
             for index, item in enumerate(items):
                 try:
                     # 提取标题
-                    title_element = item.select_one(title_selector)
-                    if not title_element:
-                        logger.warning(f"项目 {index} 没有标题元素")
-                        continue
-                            
-                    title = title_element.get_text(strip=True)
+                    title = ""
+                    title_element = None  # 确保在所有代码路径中初始化title_element
+                    
+                    # 首先检查所有链接，找出文本最长的一个（通常是标题）
+                    a_elements = item.select('a[href]')
+                    if a_elements:
+                        # 找出所有有效的链接文本
+                        link_texts = []
+                        for a_elem in a_elements:
+                            a_text = a_elem.get_text(strip=True)
+                            # 跳过明显是分类的链接 [xxx] 或很短的链接
+                            if (not re.match(r'^\[.*\]$', a_text)) and len(a_text) > 5 and not re.match(r'^\d{1,2}:\d{1,2}$', a_text):
+                                link_texts.append((a_text, a_elem))
+                        
+                        # 找到最长的链接文本
+                        if link_texts:
+                            # 按文本长度排序
+                            link_texts.sort(key=lambda x: len(x[0]), reverse=True)
+                            title = link_texts[0][0]
+                            title_element = link_texts[0][1]  # 保存链接元素为title_element
+                            # 同时获取对应的链接URL
+                            title_link = link_texts[0][1].get('href', '')
+                            if title_link:
+                                link = title_link
+                            logger.info(f"从最长链接文本获取到标题: {title}")
+                    
+                    # 如果通过最长链接文本没有找到标题，再尝试标准方法
+                    if not title and title_selector:
+                        try:
+                            # 查找标题元素
+                            title_elements = item.select(title_selector)
+                            if title_elements:
+                                title_element = title_elements[0]
+                                # 获取标题文本
+                                title = title_element.get_text(strip=True)
+                                
+                                # 如果标题文本为空，尝试获取title属性
+                                if not title:
+                                    title = title_element.get('title', '')
+                                
+                                # 如果依然为空，尝试从父元素获取标题（通常是 a 标签）
+                                if not title:
+                                    # 查找包含当前元素的链接
+                                    parent_link = title_element.find_parent('a')
+                                    if parent_link:
+                                        # 尝试从父链接获取title属性
+                                        title = parent_link.get('title', '')
+                                        
+                                        # 如果父链接没有title属性，尝试获取其文本内容
+                                        if not title:
+                                            parent_text = parent_link.get_text(strip=True)
+                                            title = parent_text
+                        except Exception as e:
+                            logger.warning(f"提取标题时出错: {str(e)}")
+                    
+                    # 如果使用所有方法后仍然为空，记录警告但不跳过此项
+                    if not title:
+                        title = f"未知标题 #{index+1}"
+                        logger.warning(f"项目 {index} 的标题为空，使用默认标题: {title}")
+                        # 额外调试日志，输出项目HTML以帮助排查
+                        item_html = str(item)
+                        logger.debug(f"项目 {index} HTML: {item_html[:500]}...")
                     
                     # 提取链接
                     link = ""
-                    if link_selector:
-                        link_element = item.select_one(link_selector)
-                        if link_element and link_element.has_attr('href'):
-                            link = link_element['href']
+                    # 如果在标题提取时已经找到链接，这里就不需要再提取了
+                    if 'link' not in locals() or not link:
+                        if link_selector:
+                            link_elements = item.select(link_selector)
+                            if link_elements:
+                                link = link_elements[0].get('href', '')
+                        
+                        # 如果找不到链接元素，尝试使用标题元素的href属性（如果title_element存在）
+                        if not link and title_element is not None:
+                            if title_element.name == 'a':
+                                link = title_element.get('href', '')
+                            else:
+                                # 查找包含标题元素的链接
+                                parent_link = title_element.find_parent('a')
+                                if parent_link:
+                                    link = parent_link.get('href', '')
+                            
+                            if link:
+                                logger.info(f"项目 {index} 使用标题元素的href属性作为链接")
+                        
+                        # 如果仍然没有找到链接，尝试从所有链接中找到文本最长的链接
+                        if not link and a_elements:
+                            if len(a_elements) == 1:
+                                link = a_elements[0].get('href', '')
+                            else:
+                                # 找出最可能是标题链接的那个（通常是文本最长的）
+                                longest_text = ""
+                                longest_link = ""
                                 
-                            # 将相对URL转换为绝对URL
-                            if link and not link.startswith(('http://', 'https://')):
-                                link = urljoin(self.url, link)
-                    else:
-                        # 如果没有指定链接选择器，尝试使用标题元素的链接
-                        if title_element.name == 'a' and title_element.has_attr('href'):
-                            link = title_element['href']
-                            # 将相对URL转换为绝对URL
-                            if link and not link.startswith(('http://', 'https://')):
-                                link = urljoin(self.url, link)
-                    
-                    # 如果没有找到链接，则使用主URL
+                                for a_elem in a_elements:
+                                    a_text = a_elem.get_text(strip=True)
+                                    a_href = a_elem.get('href', '')
+                                    
+                                    # 排除分类链接、时间链接和其他明显不是标题的链接
+                                    if (len(a_text) > len(longest_text) and 
+                                        len(a_text) > 5 and 
+                                        not re.match(r'^\[.*\]$', a_text) and 
+                                        not re.match(r'^\d{1,2}:\d{1,2}$', a_text)):
+                                        longest_text = a_text
+                                        longest_link = a_href
+                                
+                                if longest_link:
+                                    link = longest_link
+                                    logger.info(f"项目 {index} 从最长链接文本获取到链接: {link}")
+                                else:
+                                    link = a_elements[0].get('href', '')
+                        
+                    # 如果仍然没有找到链接，则使用主URL
                     if not link:
                         link = self.url
+                        logger.warning(f"项目 {index} 没有链接，使用源URL")
+                    
+                    # 处理相对URL
+                    if link and not link.startswith(('http://', 'https://', '//')):
+                        link = urljoin(self.url, link)
                     
                     # 提取发布日期
                     published_at = datetime.datetime.now()
                     if date_selector:
-                        date_element = item.select_one(date_selector)
-                        if date_element:
-                            date_text = date_element.get_text(strip=True)
+                        date_elements = item.select(date_selector)
+                        if date_elements:
+                            date_text = date_elements[0].get_text(strip=True)
                             if date_text:
                                 try:
                                     # 解析相对时间
@@ -1118,14 +1684,13 @@ class CustomWebSource(WebNewsSource):
                                                 logger.warning(f"解析完整日期时间 '{date_text}' 失败: {str(e)}")
                                 except Exception as date_e:
                                     logger.warning(f"解析日期时间 '{date_text}' 失败: {str(date_e)}")
-                                    # 保持使用当前时间作为后备
                         
                     # 提取摘要
                     summary = ""
                     if summary_selector:
-                        summary_element = item.select_one(summary_selector)
-                        if summary_element:
-                            summary = summary_element.get_text(strip=True)
+                        summary_elements = item.select(summary_selector)
+                        if summary_elements:
+                            summary = summary_elements[0].get_text(strip=True)
                     
                     # 如果没有摘要，则使用标题
                     if not summary:
@@ -1134,9 +1699,9 @@ class CustomWebSource(WebNewsSource):
                     # 提取内容
                     content = ""
                     if content_selector:
-                        content_element = item.select_one(content_selector)
-                        if content_element:
-                            content = content_element.get_text(strip=True)
+                        content_elements = item.select(content_selector)
+                        if content_elements:
+                            content = content_elements[0].get_text(strip=True)
                     
                     # 如果没有内容，则使用摘要
                     if not content:
@@ -1167,16 +1732,19 @@ class CustomWebSource(WebNewsSource):
                     
                     news_items.append(news_item)
                     
-                except Exception as e:
-                    logger.warning(f"处理项目 {index} 时出错: {str(e)}")
+                except Exception as item_e:
+                    logger.warning(f"处理项目 {index} 时出错: {str(item_e)}")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+            
+            logger.info(f"成功提取 {len(news_items)} 条新闻")
+            return news_items
         
         except Exception as e:
-            logger.error(f"解析响应时出错: {str(e)}")
+            logger.error(f"解析HTML响应时出错: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-        
-        logger.info(f"成功解析 {len(news_items)} 个新闻项目")
-        return news_items 
+            return []
 
     async def _try_get_url_from_db(self) -> Optional[str]:
         """尝试从数据库获取URL"""
