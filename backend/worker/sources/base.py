@@ -69,7 +69,7 @@ class NewsItemModel:
         """
         转换为字典
         """
-        return {
+        data = {
             "id": self.id,
             "title": self.title,
             "url": self.url,
@@ -87,6 +87,27 @@ class NewsItemModel:
             "country": self.country,
             "extra": self.extra
         }
+        
+        # 确保所有字符串值都是有效的UTF-8
+        for key, value in data.items():
+            if isinstance(value, str):
+                # 确保字符串是有效的UTF-8
+                try:
+                    # 尝试编码再解码，检测是否有非法字符
+                    value.encode('utf-8').decode('utf-8')
+                except UnicodeError:
+                    # 如果有编码问题，使用替换策略
+                    data[key] = value.encode('utf-8', errors='replace').decode('utf-8')
+            elif isinstance(value, dict):
+                # 处理嵌套字典(如extra)中的字符串值
+                for k, v in value.items():
+                    if isinstance(v, str):
+                        try:
+                            v.encode('utf-8').decode('utf-8')
+                        except UnicodeError:
+                            value[k] = v.encode('utf-8', errors='replace').decode('utf-8')
+        
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'NewsItemModel':
@@ -649,10 +670,27 @@ class NewsSource(ABC):
         if not title:
             return ""
         
+        # 确保标题是有效的UTF-8字符串
+        try:
+            # 先尝试使用UTF-8编解码来验证
+            title = title.encode('utf-8').decode('utf-8')
+        except UnicodeError:
+            # 如果失败，尝试用GB18030解码（包含GB2312和GBK）
+            try:
+                # 假设字符串可能是GB2312/GBK/GB18030编码的字节
+                if isinstance(title, bytes):
+                    title = title.decode('gb18030', errors='replace')
+                else:
+                    # 如果是字符串，先假设它包含非法UTF-8字符，转换成UTF-8
+                    title = title.encode('utf-8', errors='replace').decode('utf-8')
+            except Exception:
+                # 如果所有尝试都失败，使用最保守的替换策略
+                title = str(title).encode('utf-8', errors='replace').decode('utf-8')
+        
         # 移除多余空白字符
         title = re.sub(r'\s+', ' ', title).strip()
         
-        # 移除特殊字符
+        # 移除控制字符，但保留中文字符
         title = re.sub(r'[\x00-\x1F\x7F]', '', title)
         
         # 移除广告标记

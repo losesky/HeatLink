@@ -32,7 +32,9 @@ class ZaoBaoNewsSource(WebNewsSource):
         config = config or {}
         config.update({
             "headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Accept-Charset": "gb2312,utf-8;q=0.7,*;q=0.3",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
             },
             "encoding": "gb2312"  # 早报网站使用GB2312编码
         })
@@ -67,15 +69,49 @@ class ZaoBaoNewsSource(WebNewsSource):
                 # 使用GB2312解码
                 encoding = self.config.get("encoding", "utf-8")
                 try:
+                    # 首先尝试指定的编码
                     decoded_content = response_bytes.decode(encoding)
                 except UnicodeDecodeError:
-                    logger.warning(f"Failed to decode with {encoding}, falling back to utf-8")
-                    decoded_content = response_bytes.decode("utf-8", errors="replace")
+                    # 如果失败，尝试检测编码
+                    logger.warning(f"Failed to decode with {encoding}, attempting to detect encoding")
+                    
+                    # 尝试使用utf-8
+                    try:
+                        decoded_content = response_bytes.decode("utf-8")
+                        logger.info("Successfully decoded with utf-8")
+                    except UnicodeDecodeError:
+                        # 尝试使用gb18030（GB2312的超集）
+                        try:
+                            decoded_content = response_bytes.decode("gb18030")
+                            logger.info("Successfully decoded with gb18030")
+                        except UnicodeDecodeError:
+                            # 最后的尝试，使用替换错误处理
+                            logger.warning("All decoding attempts failed, using utf-8 with replacement")
+                            decoded_content = response_bytes.decode("utf-8", errors="replace")
                 
                 return decoded_content
         except Exception as e:
             logger.error(f"Error fetching content from {self.url}: {str(e)}")
             return ""
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        重写to_dict方法，确保JSON序列化时使用UTF-8编码
+        """
+        data = super().to_dict()
+        
+        # 确保所有字符串值都是有效的UTF-8
+        for key, value in data.items():
+            if isinstance(value, str):
+                # 确保字符串是有效的UTF-8
+                try:
+                    # 尝试将字符串编码然后解码，如果有非法字符会触发异常
+                    value.encode('utf-8').decode('utf-8')
+                except UnicodeError:
+                    # 如果存在编码问题，使用替换策略
+                    data[key] = value.encode('utf-8', errors='replace').decode('utf-8')
+        
+        return data
     
     async def parse_response(self, response: str) -> List[NewsItemModel]:
         """
@@ -103,6 +139,12 @@ class ZaoBaoNewsSource(WebNewsSource):
                     if not title_element:
                         continue
                     title = title_element.text.strip()
+                    
+                    # 确保标题是有效的UTF-8
+                    try:
+                        title = title.encode('utf-8').decode('utf-8')
+                    except UnicodeError:
+                        title = title.encode('utf-8', errors='replace').decode('utf-8')
                     
                     # 获取日期
                     date_element = item.select_one(".pdt10")
@@ -170,16 +212,12 @@ class ZaoBaoNewsSource(WebNewsSource):
                     news_item = self.create_news_item(
                         id=item_id,
                         title=title,
-                        url=url,  # 早报的移动版URL与PC版相同
+                        url=url,
                         content=None,
                         summary=None,
                         image_url=None,
                         published_at=published_at,
-                        extra={"is_top": False, "mobile_url": url, 
-                            
-                            
-                            "date_text": date_text
-                        }
+                        extra={"is_top": False, "mobile_url": url, "date_text": date_text}
                     )
                     
                     news_items.append(news_item)

@@ -56,8 +56,37 @@ class ZhihuHotNewsSource(NewsSource):
                         if not title and "question" in target:
                             title = target.get("question", {}).get("title", "")
                         
-                        # 获取URL
-                        url = f"https://www.zhihu.com/question/{target.get('question', {}).get('id', '')}"
+                        # 获取URL - 修复URL构建逻辑
+                        url = ""
+                        if "url" in target:
+                            # API返回的URL通常是API格式，需要转换为网页可访问格式
+                            api_url = target.get("url", "")
+                            # 检查是否是API URL格式
+                            if "api.zhihu.com/questions/" in api_url:
+                                # 从API URL中提取问题ID
+                                question_id = api_url.split("questions/")[-1].split("?")[0].split("/")[0]
+                                url = f"https://www.zhihu.com/question/{question_id}"
+                            else:
+                                # 其他类型的URL，可能需要进一步处理
+                                url = api_url.replace("api.zhihu.com", "www.zhihu.com")
+                                url = url.replace("questions/", "question/")
+                        elif "question" in target and target.get("question", {}).get("id"):
+                            # 针对问题类型的内容
+                            question_id = target.get("question", {}).get("id")
+                            url = f"https://www.zhihu.com/question/{question_id}"
+                        elif "id" in target and target.get("type") == "answer":
+                            # 针对回答类型的内容
+                            answer_id = target.get("id")
+                            question_id = target.get("question", {}).get("id", "")
+                            url = f"https://www.zhihu.com/question/{question_id}/answer/{answer_id}"
+                        elif "id" in target and target.get("type") in ["article", "zvideo"]:
+                            # 针对文章或视频
+                            content_id = target.get("id")
+                            content_type = target.get("type")
+                            url = f"https://www.zhihu.com/{content_type}/{content_id}"
+                        else:
+                            # 如果都无法匹配，构建一个基本URL
+                            url = "https://www.zhihu.com"
                         
                         # 获取摘要
                         excerpt = target.get("excerpt", "")
