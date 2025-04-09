@@ -29,6 +29,7 @@ HOST="0.0.0.0"
 PORT=8000
 NO_CACHE=false
 SYNC_ONLY=false
+PUBLIC_ACCESS=false
 
 # 函数: 显示帮助信息
 show_help() {
@@ -43,9 +44,11 @@ show_help() {
     echo -e "  --sync-only          仅同步数据库和源适配器，不启动服务"
     echo -e "  --clean-ports        启动前清理使用的端口"
     echo -e "  --no-chromedriver    禁用Chrome驱动清理"
+    echo -e "  --public             启用外部访问（配置CORS允许所有来源）"
     echo
     echo -e "${GREEN}示例:${NC}"
     echo -e "  $0 --reload --port 8080        使用热重载启动服务在8080端口"
+    echo -e "  $0 --public --port 8888        启用外部访问并使用8888端口"
     echo -e "  $0 --sync-only                 仅同步数据库不启动服务"
     exit 0
 }
@@ -87,6 +90,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-chromedriver)
             ARGS="$ARGS --no-chromedriver"
+            shift
+            ;;
+        --public)
+            PUBLIC_ACCESS=true
+            ARGS="$ARGS --public"
             shift
             ;;
         *)
@@ -182,6 +190,27 @@ check_env() {
     else
         echo -e "${GREEN}[√] 找到.env文件${NC}"
     fi
+    
+    # 如果开启了外部访问，提示将添加CORS配置
+    if [ "$PUBLIC_ACCESS" = true ]; then
+        echo -e "${YELLOW}[!] 已启用外部访问模式，将配置CORS允许所有来源${NC}"
+        
+        # 检查是否有公网IP，获取当前机器的IP地址
+        if command -v ip &> /dev/null; then
+            # Linux系统
+            PUBLIC_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1" | head -n 1)
+        elif command -v ifconfig &> /dev/null; then
+            # macOS或其他Unix系统
+            PUBLIC_IP=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | head -n 1)
+        else
+            PUBLIC_IP="<无法获取IP>"
+        fi
+        
+        echo -e "${GREEN}[+] 检测到本机IP地址: $PUBLIC_IP${NC}"
+        echo -e "${GREEN}[+] API将可通过以下地址访问:${NC}"
+        echo -e "${GREEN}   - http://$PUBLIC_IP:$PORT/api/docs${NC}"
+        echo -e "${GREEN}   - http://$PUBLIC_IP:$PORT/docs${NC}"
+    fi
 }
 
 # 函数: 检查服务器是否已在运行
@@ -252,6 +281,13 @@ main() {
     if [ "$SYNC_ONLY" = false ]; then
         echo -e "${BLUE}[+] 健康检查URL: http://$HOST:$PORT/health${NC}"
         echo -e "${BLUE}[+] API文档URL: http://$HOST:$PORT/docs${NC}"
+        
+        if [ "$PUBLIC_ACCESS" = true ]; then
+            echo -e "${YELLOW}[!] 外部访问提示:${NC}"
+            echo -e "${YELLOW}   - 确保端口 $PORT 在防火墙中已开放${NC}"
+            echo -e "${YELLOW}   - 如使用云服务器，请在安全组中允许该端口${NC}"
+            echo -e "${YELLOW}   - 如连接不成功，请检查防火墙和网络设置${NC}"
+        fi
     fi
     
     echo -e "${GREEN}[√] 启动流程完成${NC}"

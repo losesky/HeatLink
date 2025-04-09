@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     
     # CORS settings
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    ALLOW_ALL_ORIGINS: bool = False  # 新增：外部访问模式开关
     
     # News source settings
     DEFAULT_UPDATE_INTERVAL: int = 600  # 10 minutes
@@ -74,6 +75,14 @@ class Settings(BaseSettings):
             return [domain.strip() for domain in domains_str.split(",") if domain.strip()]
         except:
             return []
+    
+    @property
+    def cors_origins(self) -> List[str]:
+        """获取实际应用的CORS来源配置"""
+        # 如果允许所有来源，返回["*"]
+        if self.ALLOW_ALL_ORIGINS or os.environ.get("ALLOW_ALL_ORIGINS", "").lower() == "true":
+            return ["*"]
+        return self.CORS_ORIGINS
     
     model_config = ConfigDict(
         env_file=".env",

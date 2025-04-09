@@ -10,7 +10,7 @@ HeatLink 后端服务启动脚本
 3. 启动API服务
 
 使用方法:
-python start_server.py [--sync-only] [--no-cache] [--host HOST] [--port PORT] [--reload] [--fallback-mode] [--verbose-logging]
+python start_server.py [--sync-only] [--no-cache] [--host HOST] [--port PORT] [--reload] [--fallback-mode] [--verbose-logging] [--public]
 
 参数:
 --sync-only: 只同步数据库和适配器，不启动服务
@@ -20,6 +20,7 @@ python start_server.py [--sync-only] [--no-cache] [--host HOST] [--port PORT] [-
 --reload: 启用热重载，开发环境下有用
 --fallback-mode: 强制使用本地源适配器数据，不连接数据库和缓存
 --verbose-logging: 启用详细日志输出，包括缓存操作
+--public: 启用外部访问，配置CORS允许所有来源
 
 外部接口将通过Redis缓存获取数据，提高响应速度和性能。
 当数据库或缓存连接失败时，系统将自动切换到本地源适配器模式运行。
@@ -1133,11 +1134,30 @@ async def main():
     parser.add_argument("--reload", action="store_true", help="启用热重载，开发环境下有用")
     parser.add_argument("--fallback-mode", action="store_true", help="强制使用本地源适配器数据，不连接数据库和缓存")
     parser.add_argument("--verbose-logging", action="store_true", help="启用详细日志输出，包括缓存操作")
+    parser.add_argument("--public", action="store_true", help="启用外部访问，配置CORS允许所有来源")
     args = parser.parse_args()
     
     # 打印启动信息
     logger.info("正在启动HeatLink后端API服务...")
     logger.info(f"使用配置: {'本地开发环境' if settings.DEBUG else '生产环境'}")
+    
+    # 如果开启了public选项，自动设置环境变量以允许所有CORS来源
+    if args.public:
+        logger.info("检测到外部访问模式，正在配置CORS允许所有来源...")
+        # 在FastAPI应用启动前修改CORS设置
+        os.environ["ALLOW_ALL_ORIGINS"] = "true"
+        
+        # 获取本机IP地址，用于显示
+        import socket
+        try:
+            # 获取主机名
+            hostname = socket.gethostname()
+            # 获取IP地址
+            ip_address = socket.gethostbyname(hostname)
+            logger.info(f"本机IP地址: {ip_address}")
+            logger.info(f"API将可通过以下地址访问: http://{ip_address}:{args.port}/docs")
+        except Exception as e:
+            logger.warning(f"无法获取本机IP地址: {str(e)}")
     
     # 设置缓存日志选项
     from app.core.logging_config import get_cache_logger
