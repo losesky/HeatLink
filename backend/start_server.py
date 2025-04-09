@@ -1164,13 +1164,32 @@ async def main():
     cache_logger = get_cache_logger()
     
     # 定义退出处理函数
+    async def async_cleanup():
+        """异步清理资源"""
+        logger.info("正在清理资源...")
+        if cache_manager:
+            logger.info("正在关闭缓存连接...")
+            await cache_manager.close()
+            logger.info("缓存连接已关闭")
+        logger.info("清理完成，程序退出")
+
     def handle_exit(signum, frame):
         """处理退出信号"""
         logger.info(f"接收到信号 {signum}，正在关闭服务...")
-        if cache_manager:
-            asyncio.create_task(cache_manager.close())
-        # 给异步任务一些时间完成
-        time.sleep(1)
+        
+        # 创建一个新的事件循环来运行异步清理
+        cleanup_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(cleanup_loop)
+        
+        try:
+            # 运行异步清理函数
+            cleanup_loop.run_until_complete(async_cleanup())
+        finally:
+            # 关闭事件循环
+            cleanup_loop.close()
+            
+        # 给异步任务一些时间完成后退出
+        logger.info("正常退出程序")
         sys.exit(0)
     
     # 处理信号
@@ -1267,11 +1286,19 @@ async def main():
         reload_dirs=["app", "worker"] if args.reload else None
     )
     server = uvicorn.Server(config)
-    await server.serve()
     
-    # 关闭缓存管理器
-    if cache_manager:
-        await cache_manager.close()
+    try:
+        await server.serve()
+    except Exception as e:
+        logger.error(f"服务运行出错: {str(e)}")
+    finally:
+        # 程序结束时，确保资源被清理
+        logger.info("服务结束，正在清理资源...")
+        if cache_manager:
+            await cache_manager.close()
+            logger.info("缓存连接已关闭")
+            
+    logger.info("程序退出")
 
 
 if __name__ == "__main__":

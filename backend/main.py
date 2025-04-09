@@ -428,12 +428,25 @@ async def shutdown_event():
         stats_updater.enabled = False
         logger.info("已禁用源统计信息自动更新器")
         
+        # 关闭可能的Redis连接
+        try:
+            from worker.cache import cache_manager
+            if hasattr(cache_manager, 'close') and callable(cache_manager.close):
+                await cache_manager.close()
+                logger.info("缓存连接已关闭")
+        except Exception as e:
+            logger.error(f"关闭缓存连接时出错: {str(e)}")
+        
         # 清理所有Chrome进程
         chrome_count = find_and_kill_chrome_processes()
         if chrome_count > 0:
             logger.info(f"已清理 {chrome_count} 个Chrome进程")
+        
+        logger.info("所有资源已清理完毕")
     except Exception as e:
         logger.error(f"清理资源时出错: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 # 注册退出处理函数
 atexit.register(lambda: find_and_kill_chrome_processes())
@@ -442,8 +455,20 @@ atexit.register(lambda: find_and_kill_chrome_processes())
 def signal_handler(signum, frame):
     """信号处理器，用于捕获终止信号并执行清理操作"""
     logger.info(f"收到信号 {signum}，开始清理资源...")
-    find_and_kill_chrome_processes()
-    sys.exit(0)
+    
+    # 清理Chrome进程
+    try:
+        find_and_kill_chrome_processes()
+        logger.info("已清理Chrome进程")
+    except Exception as e:
+        logger.error(f"清理Chrome进程时出错: {str(e)}")
+    
+    # 正常退出，不使用sys.exit(0)引发额外的异常
+    logger.info("准备退出...")
+    
+    # 使用os._exit替代sys.exit，避免引发额外的异常
+    import os
+    os._exit(0)
 
 # 注册信号处理器
 signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
