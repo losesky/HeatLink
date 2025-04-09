@@ -101,7 +101,6 @@ class CustomWebSource(WebNewsSource):
             name=name,
             url=url,
             update_interval=update_interval,
-            cache_ttl=cache_ttl,
             category=category,
             country=country,
             language=language,
@@ -116,6 +115,8 @@ class CustomWebSource(WebNewsSource):
         # 缓存相关
         self._cache_ttl = cache_ttl
         self._cache_lock = asyncio.Lock()
+        self._news_cache = []  # 初始化缓存
+        self._cache_time = 0   # 初始化缓存时间
         
         # 只在URL不为空时记录完整信息
         if self.url:
@@ -515,6 +516,60 @@ class CustomWebSource(WebNewsSource):
         except Exception as e:
             logger.error(f"清理Chrome进程时出错: {str(e)}")
 
+    # 添加缓存相关方法
+    async def get_cached_news(self) -> List[NewsItemModel]:
+        """
+        从内存缓存获取新闻数据
+        
+        Returns:
+            List[NewsItemModel]: 缓存的新闻项目列表，如果没有缓存则返回空列表
+        """
+        # 检查是否启用缓存
+        if not self.config.get("use_cache", True):
+            return []
+            
+        # 检查是否有_news_cache属性
+        if not hasattr(self, '_news_cache') or not self._news_cache:
+            return []
+            
+        # 检查缓存时间是否过期
+        if not hasattr(self, '_cache_time') or not self._cache_time:
+            return []
+            
+        # 计算缓存是否过期
+        cache_ttl = self.config.get("cache_ttl", self._cache_ttl)
+        if time.time() - self._cache_time > cache_ttl:
+            logger.info(f"缓存已过期，将重新获取数据")
+            return []
+            
+        # 返回缓存的新闻
+        logger.info(f"使用缓存，缓存时间: {datetime.datetime.fromtimestamp(self._cache_time).strftime('%Y-%m-%d %H:%M:%S')}")
+        return self._news_cache
+
+    async def update_cache(self, news_items: List[NewsItemModel]):
+        """
+        更新内存缓存
+        
+        Args:
+            news_items: 要缓存的新闻项目列表
+        """
+        # 检查是否启用缓存
+        if not self.config.get("use_cache", True):
+            return
+            
+        # 更新缓存
+        async with self._cache_lock:
+            self._news_cache = news_items
+            self._cache_time = time.time()
+            logger.info(f"已更新缓存，共 {len(news_items)} 条新闻，缓存时间: {datetime.datetime.fromtimestamp(self._cache_time).strftime('%Y-%m-%d %H:%M:%S')}")
+            
+    async def clear_cache(self):
+        """清除缓存"""
+        async with self._cache_lock:
+            self._news_cache = []
+            self._cache_time = 0
+            logger.debug("已清除缓存")
+
     async def fetch(self) -> List[NewsItemModel]:
         """
         获取新闻数据
@@ -534,26 +589,50 @@ class CustomWebSource(WebNewsSource):
             if self.config.get("use_cache", True):
                 # 尝试获取缓存
                 cached_news = await self.get_cached_news()
-                if cached_news:
+                if cached_news and len(cached_news) > 0:
                     logger.info(f"使用缓存的 {self.name} 数据，共 {len(cached_news)} 条")
                     return cached_news
             
             # 实际获取新闻的实现
-            news_items = await self._fetch_impl()
-            
-            # 记录获取成功及耗时
-            elapsed = time.time() - start_time
-            logger.info(f"成功获取 {len(news_items)} 条 {self.name} 数据，耗时 {elapsed:.2f} 秒")
-            
-            # 更新缓存
-            if self.config.get("use_cache", True) and news_items:
-                await self.update_cache(news_items)
-            
-            return news_items
+            try:
+                news_items = await self._fetch_impl()
+                
+                # 如果成功获取到新闻，更新缓存
+                if news_items and len(news_items) > 0:
+                    if self.config.get("use_cache", True):
+                        await self.update_cache(news_items)
+                    
+                    # 记录获取成功及耗时
+                    elapsed = time.time() - start_time
+                    logger.info(f"成功获取 {len(news_items)} 条 {self.name} 数据，耗时 {elapsed:.2f} 秒")
+                    return news_items
+                else:
+                    elapsed = time.time() - start_time
+                    logger.info(f"没有获取到 {self.name} 数据，耗时 {elapsed:.2f} 秒")
+                    return []
+                    
+            except Exception as impl_e:
+                # _fetch_impl方法抛出异常时的处理
+                elapsed = time.time() - start_time
+                logger.error(f"获取 {self.name} 数据失败: {str(impl_e)}，耗时 {elapsed:.2f} 秒")
+                import traceback
+                logger.error(traceback.format_exc())
+                
+                # 如果有缓存，尝试使用缓存作为后备
+                if self.config.get("use_cache", True) and hasattr(self, '_news_cache') and self._news_cache:
+                    logger.info(f"使用缓存作为后备，共 {len(self._news_cache)} 条")
+                    return self._news_cache
+                    
+                return []
+                
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"获取 {self.name} 数据失败: {str(e)}，耗时 {elapsed:.2f} 秒")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
+        finally:
+            await self._close_driver()
     
     async def _fetch_impl(self) -> List[NewsItemModel]:
         """
@@ -1611,6 +1690,12 @@ class CustomWebSource(WebNewsSource):
                 return []
                 
             # 使用BeautifulSoup解析HTML
+            try:
+                from bs4 import BeautifulSoup
+            except ImportError:
+                logger.error("无法导入BeautifulSoup模块，解析失败")
+                return []
+                
             soup = BeautifulSoup(html, 'html.parser')
             
             # 从配置中获取选择器
