@@ -111,6 +111,7 @@ class CustomWebSource(WebNewsSource):
         # Selenium WebDriver 相关
         self._driver = None
         self._driver_pid = None
+        self._chrome_user_data_dir = None
         
         # 缓存相关
         self._cache_ttl = cache_ttl
@@ -128,6 +129,60 @@ class CustomWebSource(WebNewsSource):
         """
         try:
             logger.debug("开始创建Chrome WebDriver实例")
+            
+            # 首先尝试使用psutil清理残留的Chrome进程
+            try:
+                import psutil
+                import signal
+                
+                chrome_process_count = 0
+                for proc in psutil.process_iter(['pid', 'name']):
+                    try:
+                        # 查找Chrome或ChromeDriver进程
+                        pname = proc.info['name']
+                        if pname and ('chrome' in pname.lower() or 'chromedriver' in pname.lower()):
+                            try:
+                                proc.terminate()  # 优雅地终止
+                                chrome_process_count += 1
+                            except:
+                                try:
+                                    proc.kill()  # 如果优雅终止失败，强制终止
+                                    chrome_process_count += 1
+                                except:
+                                    pass
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        pass
+                
+                if chrome_process_count > 0:
+                    logger.info(f"在创建WebDriver前终止了 {chrome_process_count} 个Chrome相关进程")
+                    
+                    # 等待进程完全退出
+                    time.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"清理Chrome进程时出错: {str(e)}")
+            
+            # 清理旧的Chrome用户数据目录
+            try:
+                import glob
+                import shutil
+                
+                # 查找/tmp目录下的所有Chrome用户数据目录
+                chrome_dirs = glob.glob("/tmp/chrome_data_dir_*")
+                removed_count = 0
+                
+                for dir_path in chrome_dirs:
+                    try:
+                        if os.path.isdir(dir_path):
+                            shutil.rmtree(dir_path, ignore_errors=True)
+                            removed_count += 1
+                    except Exception:
+                        pass
+                
+                if removed_count > 0:
+                    logger.info(f"清理了 {removed_count} 个旧的Chrome用户数据目录")
+            except Exception as clean_e:
+                logger.warning(f"清理旧的Chrome用户数据目录时出错: {str(clean_e)}")
+            
             chrome_options = Options()
             
             # 设置无头模式
@@ -148,14 +203,15 @@ class CustomWebSource(WebNewsSource):
             chrome_options.add_argument(f"--user-data-dir={unique_dir}")
             logger.debug(f"设置唯一用户数据目录: {unique_dir}")
             
-            # 检测WSL环境 - 使用统一的配置
-            if "microsoft" in platform.uname().release.lower() or os.name == 'nt':
-                logger.info("检测到WSL/Windows环境，应用特殊配置")
-                # WSL必须的参数
-                chrome_options.add_argument("--no-sandbox")
-                chrome_options.add_argument("--disable-dev-shm-usage")
+            # 设置唯一的远程调试端口，避免端口冲突
+            unique_port = random.randint(9000, 9999)
+            chrome_options.add_argument(f"--remote-debugging-port={unique_port}")
+            logger.debug(f"设置唯一远程调试端口: {unique_port}")
             
-            # 禁用GPU加速
+            # 存储用户数据目录路径以便后续清理
+            self._chrome_user_data_dir = unique_dir
+            
+            # 强制禁用GPU
             chrome_options.add_argument("--disable-gpu")
             
             # 禁用扩展
@@ -163,6 +219,9 @@ class CustomWebSource(WebNewsSource):
             
             # 禁用开发者工具
             chrome_options.add_argument("--disable-dev-shm-usage")
+            
+            # 禁用沙盒
+            chrome_options.add_argument("--no-sandbox")
             
             # 禁用自动化控制提示
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -173,6 +232,13 @@ class CustomWebSource(WebNewsSource):
             
             # 设置语言
             chrome_options.add_argument(f"--lang={self.language}")
+            
+            # 检测WSL环境 - 使用统一的配置
+            if "microsoft" in platform.uname().release.lower() or os.name == 'nt':
+                logger.info("检测到WSL/Windows环境，应用特殊配置")
+                # WSL必须的参数
+                chrome_options.add_argument("--no-sandbox")
+                chrome_options.add_argument("--disable-dev-shm-usage")
             
             # 尝试不同的ChromeDriver路径
             system = platform.system()
@@ -299,6 +365,17 @@ class CustomWebSource(WebNewsSource):
                                 logger.warning(f"终止WebDriver进程失败: {str(term_e)}")
                     except Exception:
                         pass
+                    
+                # 清理用户数据目录
+                if hasattr(self, '_chrome_user_data_dir') and self._chrome_user_data_dir:
+                    try:
+                        import shutil
+                        if os.path.exists(self._chrome_user_data_dir):
+                            shutil.rmtree(self._chrome_user_data_dir, ignore_errors=True)
+                            logger.debug(f"已清理用户数据目录: {self._chrome_user_data_dir}")
+                    except Exception as rm_e:
+                        logger.warning(f"清理用户数据目录失败: {str(rm_e)}")
+                    self._chrome_user_data_dir = None
             finally:
                 self._driver = None
                 self._driver_pid = None
@@ -359,35 +436,123 @@ class CustomWebSource(WebNewsSource):
         
         await super().close()
         
+    async def clean_chrome_processes(self):
+        """
+        清理可能导致"user data directory is already in use"错误的Chrome进程
+        """
+        try:
+            import psutil
+            chrome_count = 0
+            chromedriver_count = 0
+            
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    # 检查是否为Chrome相关进程
+                    proc_name = proc.info['name'] if proc.info['name'] else ""
+                    proc_cmdline = proc.info['cmdline'] if proc.info['cmdline'] else []
+                    
+                    # 转换为字符串进行检查
+                    cmdline_str = ' '.join(proc_cmdline).lower() if proc_cmdline else ""
+                    
+                    # 识别Chrome浏览器进程
+                    is_chrome = ("chrome" in proc_name.lower() or "chromium" in proc_name.lower()) and "chromedriver" not in proc_name.lower()
+                    
+                    # 识别ChromeDriver进程
+                    is_chromedriver = "chromedriver" in proc_name.lower()
+                    
+                    # 检查是否是我们之前启动的，使用相同的用户数据目录
+                    if hasattr(self, '_chrome_user_data_dir') and self._chrome_user_data_dir:
+                        is_our_chrome = self._chrome_user_data_dir in cmdline_str
+                    else:
+                        is_our_chrome = False
+                    
+                    # 处理Chrome浏览器进程
+                    if is_chrome and is_our_chrome:
+                        try:
+                            proc.terminate()
+                            logger.info(f"终止Chrome进程 (PID: {proc.pid})")
+                            chrome_count += 1
+                        except:
+                            try:
+                                proc.kill()
+                                logger.info(f"强制终止Chrome进程 (PID: {proc.pid})")
+                                chrome_count += 1
+                            except Exception as e:
+                                logger.warning(f"无法终止Chrome进程 (PID: {proc.pid}): {str(e)}")
+                    
+                    # 处理ChromeDriver进程
+                    if is_chromedriver:
+                        try:
+                            proc.terminate()
+                            logger.info(f"终止ChromeDriver进程 (PID: {proc.pid})")
+                            chromedriver_count += 1
+                        except:
+                            try:
+                                proc.kill()
+                                logger.info(f"强制终止ChromeDriver进程 (PID: {proc.pid})")
+                                chromedriver_count += 1
+                            except Exception as e:
+                                logger.warning(f"无法终止ChromeDriver进程 (PID: {proc.pid}): {str(e)}")
+                
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+                except Exception as e:
+                    logger.warning(f"检查进程时出错: {str(e)}")
+            
+            if chrome_count > 0 or chromedriver_count > 0:
+                logger.info(f"清理了 {chrome_count} 个Chrome进程和 {chromedriver_count} 个ChromeDriver进程")
+            
+            # 确保用户数据目录被清理
+            if hasattr(self, '_chrome_user_data_dir') and self._chrome_user_data_dir and os.path.exists(self._chrome_user_data_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(self._chrome_user_data_dir, ignore_errors=True)
+                    logger.info(f"清理用户数据目录: {self._chrome_user_data_dir}")
+                    self._chrome_user_data_dir = None
+                except Exception as e:
+                    logger.warning(f"清理用户数据目录失败: {str(e)}")
+        
+        except Exception as e:
+            logger.error(f"清理Chrome进程时出错: {str(e)}")
+
     async def fetch(self) -> List[NewsItemModel]:
         """
-        获取新闻
-        
-        使用Selenium WebDriver获取页面内容并解析新闻数据
+        获取新闻数据
         
         Returns:
-            新闻项列表
+            List[NewsItemModel]: 新闻项目列表
         """
-        logger.info(f"开始获取 {self.name} 数据")
+        start_time = time.time()
+        
         try:
-            start_time = time.time()
+            # 清理可能存在的旧进程，避免"user data directory is already in use"错误
+            await self.clean_chrome_processes()
             
-            try:
-                # 实际获取新闻的实现
-                news_items = await self._fetch_impl()
-                logger.info(f"成功获取 {len(news_items) if news_items else 0} 条 {self.name} 数据，耗时 {time.time() - start_time:.2f} 秒")
-                return news_items
-                
-            except Exception as e:
-                logger.error(f"获取 {self.name} 数据失败: {str(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
-                return []
-                
+            logger.info(f"开始获取 {self.name} 数据")
+            
+            # 检查是否使用缓存及是否有缓存
+            if self.config.get("use_cache", True):
+                # 尝试获取缓存
+                cached_news = await self.get_cached_news()
+                if cached_news:
+                    logger.info(f"使用缓存的 {self.name} 数据，共 {len(cached_news)} 条")
+                    return cached_news
+            
+            # 实际获取新闻的实现
+            news_items = await self._fetch_impl()
+            
+            # 记录获取成功及耗时
+            elapsed = time.time() - start_time
+            logger.info(f"成功获取 {len(news_items)} 条 {self.name} 数据，耗时 {elapsed:.2f} 秒")
+            
+            # 更新缓存
+            if self.config.get("use_cache", True) and news_items:
+                await self.update_cache(news_items)
+            
+            return news_items
         except Exception as e:
-            logger.error(f"执行 fetch 时出错: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
+            elapsed = time.time() - start_time
+            logger.error(f"获取 {self.name} 数据失败: {str(e)}，耗时 {elapsed:.2f} 秒")
             return []
     
     async def _fetch_impl(self) -> List[NewsItemModel]:
