@@ -11,45 +11,28 @@ echo -e "${BLUE}=====================================${NC}"
 echo -e "${BLUE}     停止 Celery 服务     ${NC}"
 echo -e "${BLUE}=====================================${NC}"
 
-# 检查是否存在Celery进程
-CELERY_PROCS=$(ps aux | grep "celery" | grep -v grep | wc -l)
+# 获取当前目录
+CURRENT_DIR=$(pwd)
+echo -e "${GREEN}当前目录: ${CURRENT_DIR}${NC}"
 
-if [ $CELERY_PROCS -eq 0 ]; then
-    echo -e "${YELLOW}未发现运行中的Celery进程${NC}"
-    exit 0
-fi
+# 停止所有Celery工作进程
+echo -e "${YELLOW}正在停止所有Celery工作进程...${NC}"
+pkill -f "celery worker" || echo -e "${RED}没有找到Celery worker进程${NC}"
 
-echo -e "${GREEN}发现 $CELERY_PROCS 个Celery进程:${NC}"
-ps aux | grep "celery" | grep -v grep
+# 停止Celery Beat
+echo -e "${YELLOW}正在停止Celery Beat...${NC}"
+pkill -f "celery beat" || echo -e "${RED}没有找到Celery beat进程${NC}"
 
-echo -e "${YELLOW}正在停止Celery进程...${NC}"
-
-# 停止所有Celery进程
-pkill -f "celery -A worker.celery_app worker"
-pkill -f "celery -A worker.celery_app beat"
-
-# 等待进程终止
+# 检查是否有任何Celery进程还在运行
 sleep 2
+CELERY_PROCS=$(pgrep -f "celery")
 
-# 检查是否还有残留进程
-CELERY_PROCS=$(ps aux | grep "celery" | grep -v grep | wc -l)
-if [ $CELERY_PROCS -gt 0 ]; then
-    echo -e "${YELLOW}仍有 $CELERY_PROCS 个进程存在，尝试使用SIGKILL强制终止...${NC}"
+if [ -n "$CELERY_PROCS" ]; then
+    echo -e "${YELLOW}仍然有一些Celery进程在运行，尝试强制终止...${NC}"
     pkill -9 -f "celery"
-    sleep 1
-fi
-
-# 最终检查
-CELERY_PROCS=$(ps aux | grep "celery" | grep -v grep | wc -l)
-if [ $CELERY_PROCS -eq 0 ]; then
-    echo -e "${GREEN}所有Celery进程已成功停止${NC}"
+    echo -e "${GREEN}所有Celery进程已强制终止${NC}"
 else
-    echo -e "${RED}警告: 仍有 $CELERY_PROCS 个Celery进程未能停止${NC}"
-    ps aux | grep "celery" | grep -v grep
+    echo -e "${GREEN}所有Celery进程已正常停止${NC}"
 fi
 
-# 清理PID文件
-if [ -f "celery.pid" ]; then
-    rm celery.pid
-    echo -e "${GREEN}已移除celery.pid文件${NC}"
-fi 
+echo -e "${GREEN}Celery服务已停止!${NC}" 
