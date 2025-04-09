@@ -1316,6 +1316,11 @@ class CLSNewsSource(RESTNewsSource):
             # 设置默认语言
             options.add_argument("--lang=zh-CN")
             
+            # 设置唯一的用户数据目录，避免"user data directory is already in use"错误
+            unique_dir = f"/tmp/chrome_data_dir_{time.time()}_{random.randint(1, 10000)}"
+            options.add_argument(f"--user-data-dir={unique_dir}")
+            logger.debug(f"设置唯一用户数据目录: {unique_dir}")
+            
             # 使用指定的Chrome可执行文件（如果提供）
             chrome_executable = self.config.get("chrome_executable")
             if chrome_executable and os.path.exists(chrome_executable):

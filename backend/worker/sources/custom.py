@@ -143,6 +143,11 @@ class CustomWebSource(WebNewsSource):
             # 设置窗口大小
             chrome_options.add_argument("--window-size=1920,1080")
             
+            # 设置唯一的用户数据目录，避免"user data directory is already in use"错误
+            unique_dir = f"/tmp/chrome_data_dir_{time.time()}_{random.randint(1, 10000)}"
+            chrome_options.add_argument(f"--user-data-dir={unique_dir}")
+            logger.debug(f"设置唯一用户数据目录: {unique_dir}")
+            
             # 检测WSL环境 - 使用统一的配置
             if "microsoft" in platform.uname().release.lower() or os.name == 'nt':
                 logger.info("检测到WSL/Windows环境，应用特殊配置")

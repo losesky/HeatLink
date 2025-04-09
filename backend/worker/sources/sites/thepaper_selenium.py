@@ -201,6 +201,11 @@ class ThePaperSeleniumSource(WebNewsSource):
             # 设置桌面级别的窗口大小，确保网站认为这是桌面浏览器
             chrome_options.add_argument("--window-size=1920,1080")
             
+            # 设置唯一的用户数据目录，避免"user data directory is already in use"错误
+            unique_dir = f"/tmp/chrome_data_dir_{time.time()}_{random.randint(1, 10000)}"
+            chrome_options.add_argument(f"--user-data-dir={unique_dir}")
+            logger.debug(f"设置唯一用户数据目录: {unique_dir}")
+            
             # 禁用移动仿真
             chrome_options.add_experimental_option("mobileEmulation", {})
             
