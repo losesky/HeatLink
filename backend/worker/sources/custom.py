@@ -137,28 +137,47 @@ class CustomWebSource(WebNewsSource):
                 import signal
                 
                 chrome_process_count = 0
-                for proc in psutil.process_iter(['pid', 'name']):
+                # 创建一个列表存储所有Chrome相关进程
+                chrome_processes = []
+                
+                # 先识别所有Chrome相关进程
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                     try:
                         # 查找Chrome或ChromeDriver进程
                         pname = proc.info['name']
-                        if pname and ('chrome' in pname.lower() or 'chromedriver' in pname.lower()):
-                            try:
-                                proc.terminate()  # 优雅地终止
-                                chrome_process_count += 1
-                            except:
-                                try:
-                                    proc.kill()  # 如果优雅终止失败，强制终止
-                                    chrome_process_count += 1
-                                except:
-                                    pass
+                        pcmd = proc.info.get('cmdline', [])
+                        
+                        # 过滤掉本脚本的Python进程或可能导致自我终止的进程
+                        is_self_process = False
+                        if pcmd:
+                            # 避免终止当前Python进程
+                            for cmd_part in pcmd:
+                                if cmd_part and ('python' in cmd_part.lower() or 'sources' in cmd_part.lower()):
+                                    is_self_process = True
+                                    break
+                        
+                        if not is_self_process and pname and ('chrome' in pname.lower() or 'chromedriver' in pname.lower()):
+                            chrome_processes.append(proc)
                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         pass
+                
+                # 然后安全地终止这些进程
+                for proc in chrome_processes:
+                    try:
+                        proc.terminate()  # 优雅地终止
+                        chrome_process_count += 1
+                    except:
+                        try:
+                            proc.kill()  # 如果优雅终止失败，强制终止
+                            chrome_process_count += 1
+                        except:
+                            pass
                 
                 if chrome_process_count > 0:
                     logger.info(f"在创建WebDriver前终止了 {chrome_process_count} 个Chrome相关进程")
                     
                     # 等待进程完全退出
-                    time.sleep(0.5)
+                    time.sleep(1.0)  # 增加等待时间确保进程完全退出
             except Exception as e:
                 logger.warning(f"清理Chrome进程时出错: {str(e)}")
             
@@ -171,11 +190,15 @@ class CustomWebSource(WebNewsSource):
                 chrome_dirs = glob.glob("/tmp/chrome_data_dir_*")
                 removed_count = 0
                 
+                current_time = time.time()
                 for dir_path in chrome_dirs:
                     try:
+                        # 只删除超过1小时的目录，避免删除正在使用的
                         if os.path.isdir(dir_path):
-                            shutil.rmtree(dir_path, ignore_errors=True)
-                            removed_count += 1
+                            dir_mtime = os.path.getmtime(dir_path)
+                            if current_time - dir_mtime > 3600:  # 1小时 = 3600秒
+                                shutil.rmtree(dir_path, ignore_errors=True)
+                                removed_count += 1
                     except Exception:
                         pass
                 
@@ -241,10 +264,13 @@ class CustomWebSource(WebNewsSource):
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
             
-            # 尝试不同的ChromeDriver路径
+            # 第一优先级：始终尝试使用系统安装的ChromeDriver
             system = platform.system()
+            logger.info(f"当前系统平台: {system}")
+            
             if system == "Windows":
                 chromedriver_paths = [
+                    '/usr/local/bin/chromedriver',  # 首先尝试WSL中的路径
                     './chromedriver.exe',
                     'C:\\Program Files\\Google\\Chrome\\Application\\chromedriver.exe',
                     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chromedriver.exe'
@@ -271,29 +297,65 @@ class CustomWebSource(WebNewsSource):
                     break
             
             if not chromedriver_path:
-                chromedriver_path = "chromedriver"  # 使用 PATH 中的 ChromeDriver
-                logger.info("使用系统PATH中的ChromeDriver")
+                # 如果未找到，尝试使用PATH中的ChromeDriver
+                try:
+                    import shutil
+                    path_chromedriver = shutil.which('chromedriver')
+                    if path_chromedriver:
+                        chromedriver_path = path_chromedriver
+                        logger.info(f"在PATH中找到ChromeDriver: {path_chromedriver}")
+                    else:
+                        chromedriver_path = "chromedriver"  # 最后尝试直接使用command
+                        logger.info("未找到具体路径，使用默认命令: chromedriver")
+                except Exception as e:
+                    logger.warning(f"查找PATH中的ChromeDriver失败: {e}")
+                    chromedriver_path = "chromedriver"
                 
             # 创建服务和驱动
-            try:
-                service = Service(executable_path=chromedriver_path)
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-                logger.info("成功创建Chrome WebDriver实例")
-            except Exception as driver_e:
-                logger.error(f"使用系统ChromeDriver失败: {str(driver_e)}")
-                
-                # 尝试使用webdriver_manager
-                logger.info("尝试使用webdriver_manager...")
-                
-                service = Service(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-                logger.info("成功使用webdriver_manager创建WebDriver实例")
+            driver = None
+            max_attempts = 2  # 最多尝试次数
+            retry_interval = 2  # 重试间隔（秒）
+            
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    logger.info(f"第 {attempt}/{max_attempts} 次尝试创建WebDriver, 使用路径: {chromedriver_path}")
+                    service = Service(executable_path=chromedriver_path)
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                    logger.info("成功创建Chrome WebDriver实例")
+                    break
+                except Exception as driver_e:
+                    logger.warning(f"尝试 {attempt} 使用系统ChromeDriver失败: {str(driver_e)}")
+                    
+                    if attempt == max_attempts:
+                        # 最后一次尝试，使用webdriver_manager
+                        try:
+                            logger.info("尝试使用webdriver_manager...")
+                            from webdriver_manager.chrome import ChromeDriverManager
+                            
+                            service = Service(ChromeDriverManager().install())
+                            driver = webdriver.Chrome(service=service, options=chrome_options)
+                            logger.info("成功使用webdriver_manager创建WebDriver实例")
+                        except Exception as wdm_e:
+                            logger.error(f"webdriver_manager创建失败: {str(wdm_e)}")
+                            # 最终失败
+                            return None
+                    else:
+                        # 不是最后尝试，等待一段时间后重试
+                        logger.info(f"等待 {retry_interval} 秒后重试...")
+                        time.sleep(retry_interval)
+            
+            if not driver:
+                logger.error("所有尝试创建WebDriver都失败了")
+                return None
                 
             # 设置页面加载超时
-            driver.set_page_load_timeout(self.config.get("selenium_timeout", 30))
+            timeout = self.config.get("selenium_timeout", 30)
+            driver.set_page_load_timeout(timeout)
+            logger.debug(f"设置页面加载超时: {timeout}秒")
             
             # 设置脚本执行超时
-            driver.set_script_timeout(self.config.get("selenium_timeout", 30))
+            driver.set_script_timeout(timeout)
+            logger.debug(f"设置脚本执行超时: {timeout}秒")
             
             # 记录进程ID
             try:
