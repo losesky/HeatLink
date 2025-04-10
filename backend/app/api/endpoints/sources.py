@@ -244,11 +244,17 @@ async def get_source_news(
         
         # 添加日志以检查返回的类型和数量
         if not news_items:
-            logger.warning(f"从 source.get_news 获取到的新闻为空: {news_items}")
+            # 降级为warning，减少错误日志
+            logger.warning(f"首次尝试: 从 {source_id} 的get_news获取到的新闻为空，尝试直接调用fetch")
             # 尝试直接调用fetch方法获取数据
-            logger.info(f"尝试直接调用 fetch 方法获取数据")
-            news_items = await source.fetch()
-            logger.info(f"直接调用 fetch 获取到 {len(news_items)} 条数据")
+            try:
+                news_items = await source.fetch()
+                logger.info(f"直接调用 fetch 成功，获取到 {len(news_items)} 条数据")
+            except Exception as fetch_e:
+                # 捕获第二次fetch的异常，此时才记录为错误
+                logger.error(f"直接调用 {source_id} 的fetch方法失败: {str(fetch_e)}")
+                # 重新抛出以便外层捕获
+                raise
             
         logger.info(f"获取 {source_id} 新闻完成，获取到 {len(news_items)} 条数据，耗时 {elapsed_time:.2f}秒")
         
@@ -259,7 +265,7 @@ async def get_source_news(
         if not news_items:
             logger.warning(f"从 {source_id} 获取到的新闻为空列表")
             return []
-        
+            
         # 格式化返回数据 - 使用更安全的方法转换成字典
         logger.info(f"开始处理 {len(news_items)} 条新闻数据")
         result = []
