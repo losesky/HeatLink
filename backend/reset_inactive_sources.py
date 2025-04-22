@@ -10,10 +10,20 @@ import sys
 import os
 from datetime import datetime
 import logging
+from pathlib import Path
+from dotenv import load_dotenv
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
+
+# 加载环境变量
+env_path = Path(current_dir) / '.env'
+if env_path.exists():
+    print(f"Loading environment from {env_path}")
+    load_dotenv(dotenv_path=env_path)
+else:
+    print(f"Warning: .env file not found at {env_path}")
 
 from sqlalchemy import text
 from app.db.session import SessionLocal
