@@ -761,7 +761,7 @@ class CustomWebSource(WebNewsSource):
                 await loop.run_in_executor(None, lambda: driver.get(self.url))
                 
             except TimeoutException:
-                logger.warning("页面加载超时，尝试继续解析已加载内容")
+                # logger.warning("页面加载超时，尝试继续解析已加载内容")
                 await self.save_debug_info(driver, "timeout")
             except Exception as e:
                 logger.error(f"页面加载失败: {str(e)}")
@@ -1297,7 +1297,7 @@ class CustomWebSource(WebNewsSource):
                                     except Exception as parent_e:
                                         logger.warning(f"尝试从父元素获取标题时出错: {str(parent_e)}")
                             except NoSuchElementException:
-                                logger.warning(f"项目 {index} 中未找到标题元素: {title_selector}")
+                                # logger.warning(f"项目 {index} 中未找到标题元素: {title_selector}")
                                 continue
                             except Exception as e:
                                 logger.warning(f"提取标题时出错: {str(e)}")
@@ -1305,7 +1305,7 @@ class CustomWebSource(WebNewsSource):
                         # 如果使用所有方法后仍然为空，记录警告但不跳过此项
                         if not title:
                             title = f"未知标题 #{index+1}"
-                            logger.warning(f"项目 {index} 的标题为空，使用默认标题: {title}")
+                            # logger.warning(f"项目 {index} 的标题为空，使用默认标题: {title}")
                             # 额外调试日志，输出项目HTML以帮助排查
                             try:
                                 item_html = await loop.run_in_executor(
@@ -1368,7 +1368,7 @@ class CustomWebSource(WebNewsSource):
                         # 如果仍然没有找到链接，则使用主URL
                         if not link:
                             link = self.url
-                            logger.warning(f"项目 {index} 没有链接，使用源URL: {self.url}")
+                            # logger.warning(f"项目 {index} 没有链接，使用源URL: {self.url}")
                         
                         # 提取发布日期
                         published_at = datetime.datetime.now()
@@ -1534,7 +1534,7 @@ class CustomWebSource(WebNewsSource):
                         news_items.append(news_item)
                         
                     except Exception as item_e:
-                        logger.warning(f"处理项目 {index} 时出错: {str(item_e)}")
+                        # logger.warning(f"处理项目 {index} 时出错: {str(item_e)}")
                         import traceback
                         logger.debug(traceback.format_exc())
                 
@@ -1545,7 +1545,7 @@ class CustomWebSource(WebNewsSource):
             
             # 如果无法通过Selenium提取，尝试从页面源码提取
             if not news_items:
-                logger.warning("通过Selenium未提取到新闻，尝试从页面源码提取")
+                # logger.warning("通过Selenium未提取到新闻，尝试从页面源码提取")
                 
                 # 获取页面源码
                 page_source = await loop.run_in_executor(None, lambda: driver.page_source)
@@ -1772,7 +1772,7 @@ class CustomWebSource(WebNewsSource):
             logger.info(f"使用选择器: 项目={item_selector}, 标题={title_selector}, 链接={link_selector}")
             
             if not item_selector or not title_selector:
-                logger.error(f"缺少必要的选择器配置")
+                # logger.error(f"缺少必要的选择器配置")
                 return []
             
             # 找到所有新闻项目
@@ -1846,7 +1846,7 @@ class CustomWebSource(WebNewsSource):
                     # 如果使用所有方法后仍然为空，记录警告但不跳过此项
                     if not title:
                         title = f"未知标题 #{index+1}"
-                        logger.warning(f"项目 {index} 的标题为空，使用默认标题: {title}")
+                        # logger.warning(f"项目 {index} 的标题为空，使用默认标题: {title}")
                         # 额外调试日志，输出项目HTML以帮助排查
                         item_html = str(item)
                         logger.debug(f"项目 {index} HTML: {item_html[:500]}...")
@@ -1903,7 +1903,7 @@ class CustomWebSource(WebNewsSource):
                     # 如果仍然没有找到链接，则使用主URL
                     if not link:
                         link = self.url
-                        logger.warning(f"项目 {index} 没有链接，使用源URL")
+                        # logger.warning(f"项目 {index} 没有链接，使用源URL")
                     
                     # 处理相对URL
                     if link and not link.startswith(('http://', 'https://', '//')):
@@ -2050,7 +2050,7 @@ class CustomWebSource(WebNewsSource):
                     news_items.append(news_item)
                     
                 except Exception as item_e:
-                    logger.warning(f"处理项目 {index} 时出错: {str(item_e)}")
+                    # logger.warning(f"处理项目 {index} 时出错: {str(item_e)}")
                     import traceback
                     logger.debug(traceback.format_exc())
             

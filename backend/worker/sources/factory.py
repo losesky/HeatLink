@@ -90,7 +90,7 @@ class NewsSourceFactory:
                         config = {}
                 
                 if not config or "selectors" not in config:
-                    logger.warning(f"自定义源 {source_type} 缺少必要的选择器配置")
+                    # logger.warning(f"自定义源 {source_type} 缺少必要的选择器配置")
                     config["selectors"] = {}
                 
                 # 从参数中提取URL和其他必要信息

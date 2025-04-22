@@ -33,6 +33,35 @@ def get_or_create_eventloop():
         raise
 
 
+def ensure_event_loop(func):
+    """
+    装饰器：确保在有效的事件循环中执行异步函数
+    
+    Args:
+        func: 需要装饰的异步函数
+        
+    Returns:
+        装饰后的函数，确保在有效的事件循环中执行
+    """
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        # 确保有有效的事件循环
+        loop = get_or_create_eventloop()
+        
+        try:
+            return await func(*args, **kwargs)
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                # 如果事件循环已关闭，创建新的循环并重试
+                logger.warning("检测到事件循环已关闭，创建新循环并重试函数调用")
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                return await func(*args, **kwargs)
+            raise
+    
+    return wrapper
+
+
 def run_async(coro):
     """
     安全地运行异步协程，确保事件循环的正确创建和清理

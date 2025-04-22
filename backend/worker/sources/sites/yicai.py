@@ -12,7 +12,6 @@ import platform
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
 import aiohttp
-from datetime import timedelta
 
 # Selenium相关导入
 from selenium import webdriver
@@ -744,47 +743,11 @@ class YiCaiBaseSource(WebNewsSource):
                       "YiCai适配器使用专用的Selenium方法获取新闻。")
         return []
 
-    def _find_chromedriver_path(self):
-        """
-        查找ChromeDriver路径
-        """
-        # 定义可能的ChromeDriver路径
-        system = platform.system()
-        if system == "Windows":
-            chromedriver_paths = [
-                './resource/chromedriver.exe',
-                'C:\\Program Files\\Google\\Chrome\\Application\\chromedriver.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chromedriver.exe'
-            ]
-        elif system == "Linux":
-            chromedriver_paths = [
-                '/usr/local/bin/chromedriver',
-                '/usr/bin/chromedriver',
-                '/snap/bin/chromedriver',
-                '/home/losesky/HeatLink/chromedriver'
-            ]
-        else:  # macOS or other
-            chromedriver_paths = [
-                '/usr/local/bin/chromedriver',
-                '/usr/bin/chromedriver'
-            ]
-        
-        # 查找第一个存在的ChromeDriver路径
-        chromedriver_path = None
-        for path in chromedriver_paths:
-            if os.path.exists(path):
-                chromedriver_path = path
-                break
-        
-        if not chromedriver_path:
-            # 如果没有找到，尝试直接使用默认的 'chromedriver'
-            chromedriver_path = "chromedriver"
-        
-        return chromedriver_path
-
 # 快讯适配器类
 class YiCaiBriefSource(YiCaiBaseSource):
-    """第一财经快讯数据源"""
+    """
+    第一财经快讯适配器 - 专门用于获取第一财经快讯内容
+    """
     
     def __init__(
         self,
@@ -799,13 +762,10 @@ class YiCaiBriefSource(YiCaiBaseSource):
         config: Optional[Dict[str, Any]] = None
     ):
         # 强制统一source_id
-        config = config or {}
-        # 设置快讯专用配置
-        config.update({
-            "list_url": "https://www.yicai.com/brief/",
-            "max_items": 30  # 快讯通常获取更多条目
-        })
-        
+        if source_id != "yicai-brief":
+            logger.warning(f"源ID '{source_id}' 被统一为标准ID 'yicai-brief'")
+            source_id = "yicai-brief"
+            
         super().__init__(
             source_id=source_id,
             name=name,
@@ -819,302 +779,569 @@ class YiCaiBriefSource(YiCaiBaseSource):
         )
     
     async def _fetch_impl(self) -> List[NewsItemModel]:
-        """实现快讯获取方法"""
-        logger.info("尝试获取第一财经快讯")
+        """实际获取快讯数据的内部方法"""
+        # 重置HTTP备用标志
+        self._tried_http_fallback = False
+        
         try:
-            return await self._fetch_brief()
+            # 获取快讯
+            brief_items = await self._fetch_brief()
+            
+            # 如果获取失败且有HTTP备用方法
+            if not brief_items and self.config.get("use_http_fallback", True):
+                logger.info("尝试使用HTTP备用方法获取快讯数据")
+                fallback_news = await self._fetch_with_http_fallback()
+                if fallback_news:
+                    # 过滤出快讯类型的项目
+                    brief_items = [item for item in fallback_news if item.extra.get("type") == "brief"]
+            
+            # 按时间排序（如果有发布时间）
+            brief_items.sort(
+                key=lambda x: x.published_at if x.published_at else datetime.datetime.now(),
+                reverse=True  # 最新的在前面
+            )
+            
+            logger.info(f"成功获取 {len(brief_items)} 条第一财经快讯数据")
+            return brief_items
         except Exception as e:
-            logger.warning(f"获取第一财经快讯失败: {str(e)}")
-            # 尝试使用HTTP备用方法
-            return await self._fetch_brief_http()
-    
+            logger.error(f"获取第一财经快讯数据失败: {str(e)}")
+            raise
+
     async def _fetch_brief(self) -> List[NewsItemModel]:
-        """获取第一财经快讯"""
-        logger.info("开始从第一财经获取快讯")
+        """
+        获取第一财经快讯数据
+        """
+        logger.info("开始获取第一财经快讯数据")
+        driver = await self._get_driver()
+        if driver is None:
+            logger.error("WebDriver创建失败")
+            raise RuntimeError("无法获取第一财经快讯：WebDriver创建失败")
         
-        driver = None
+        brief_items = []
         try:
-            # 判断是否已有WebDriver实例
-            if not self.driver:
-                logger.info("创建新的WebDriver实例")
-                self.driver = self._create_driver()
+            # 访问快讯页面
+            logger.info(f"访问快讯URL: {self.BRIEF_URL}")
+            loop = asyncio.get_event_loop()
             
-            # 检查WebDriver实例是否创建成功
-            if not self.driver:
-                logger.warning("WebDriver创建失败，尝试使用HTTP方式获取快讯")
-                return await self._fetch_brief_http()
-            
-            driver = self.driver
-            
-            # 记录当前系统和ChromeDriver信息（用于调试）
-            logger.info(f"当前系统平台: {platform.system()}")
-            logger.info(f"使用的ChromeDriver: {driver.capabilities.get('chrome', {}).get('chromedriverVersion', '未知')}")
-            
-            # 新闻列表URL
-            url = self.config.get("list_url", "https://www.yicai.com/brief/")
-            logger.info(f"访问第一财经快讯列表页: {url}")
-            
-            # 使用异步超时控制防止页面加载过长时间
             try:
-                # 使用asyncio.wait_for来设置异步超时
-                await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(
-                        None, lambda: driver.get(url)
-                    ),
-                    timeout=self.config.get("selenium_timeout", 30)
+                # 设置超时
+                page_load_timeout = self.config.get("selenium_timeout", 30)
+                await loop.run_in_executor(
+                    None, 
+                    lambda: driver.set_page_load_timeout(page_load_timeout)
                 )
-            except asyncio.TimeoutError:
-                logger.warning("访问第一财经快讯页面超时，尝试使用HTTP方式获取")
-                return await self._fetch_brief_http()
+                
+                # 访问URL
+                await loop.run_in_executor(None, lambda: driver.get(self.BRIEF_URL))
+                
             except Exception as e:
-                logger.warning(f"访问第一财经快讯页面异常: {str(e)}")
-                return await self._fetch_brief_http()
+                logger.warning(f"页面加载异常: {str(e)}")
+                raise RuntimeError(f"无法获取第一财经快讯：页面加载失败")
             
-            # 等待新闻列表元素加载
+            # 等待页面加载完成
+            await asyncio.sleep(3)
+            
+            # 等待快讯容器元素加载 - 等待新的容器结构 #onlist
             try:
-                # 使用显式等待等待新闻列表元素
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".b-list"))
+                await loop.run_in_executor(
+                    None,
+                    lambda: WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "#onlist, .brief-list, .m-brief-list"))
+                    )
                 )
-                logger.info("快讯列表元素加载完成")
-            except Exception as e:
-                logger.warning(f"等待快讯列表元素超时: {str(e)}")
-                # 尝试检查页面状态
+            except Exception as wait_e:
+                logger.warning(f"等待快讯容器加载超时: {str(wait_e)}")
+            
+            # 获取所有快讯项
+            logger.info("提取快讯数据")
+            try:
+                # 首先尝试查找新结构中的快讯容器 #onlist
+                onlist_container = None
                 try:
-                    page_source = driver.page_source
-                    if len(page_source) < 1000:
-                        logger.warning(f"页面内容异常短，可能未正确加载，内容长度: {len(page_source)}")
-                    elif "forbidden" in page_source.lower() or "请求被拒绝" in page_source:
-                        logger.warning("访问被拒绝，可能触发了网站防爬虫机制")
-                    elif "404" in page_source or "找不到页面" in page_source:
-                        logger.warning("页面返回404错误")
+                    onlist_container = await loop.run_in_executor(
+                        None,
+                        lambda: driver.find_element(By.CSS_SELECTOR, "#onlist")
+                    )
+                    logger.info("找到新结构快讯容器 #onlist")
                 except Exception:
-                    pass
+                    logger.info("未找到新结构快讯容器 #onlist，将尝试其他选择器")
                 
-                return await self._fetch_brief_http()
-            
-            # 获取快讯列表
-            news_items = []
-            try:
-                elements = driver.find_elements(By.CSS_SELECTOR, ".b-list li")
-                logger.info(f"找到 {len(elements)} 个快讯项")
+                date_group = None
+                brief_items_elements = []
                 
-                if not elements:
-                    logger.warning("未找到任何快讯项，尝试使用HTTP方式获取")
-                    return await self._fetch_brief_http()
-                
-                for element in elements[:self.config.get("max_items", 30)]:
-                    try:
-                        # 提取快讯信息
-                        title_element = element.find_element(By.CSS_SELECTOR, ".f-title")
-                        title = title_element.text.strip()
-                        
-                        # 提取链接
-                        url = ""
-                        try:
-                            url_element = element.find_element(By.CSS_SELECTOR, "a")
-                            url = url_element.get_attribute("href")
-                        except Exception:
-                            # 如果没有链接，使用当前页面URL加上锚点
-                            url = f"{self.config.get('list_url')}#{hashlib.md5(title.encode()).hexdigest()[:8]}"
-                        
-                        if not title:
-                            logger.debug("跳过标题为空的快讯项")
-                            continue
-                        
-                        # 提取摘要（对于快讯，摘要通常就是标题）
-                        summary = title
-                        
-                        # 提取发布时间（如果有）
-                        published_at = datetime.now()
-                        try:
-                            time_element = element.find_element(By.CSS_SELECTOR, ".time")
-                            time_text = time_element.text.strip()
-                            
-                            # 解析时间字符串
-                            if "今天" in time_text:
-                                # 今天的快讯，使用当前日期
-                                today = datetime.now().date()
-                                time_part = time_text.replace("今天", "").strip()
-                                if ":" in time_part:
-                                    hour, minute = map(int, time_part.split(":"))
-                                    published_at = datetime.combine(today, time(hour, minute))
-                            elif "分钟前" in time_text:
-                                # 几分钟前的快讯
-                                try:
-                                    minutes = int(time_text.replace("分钟前", "").strip())
-                                    published_at = datetime.now() - timedelta(minutes=minutes)
-                                except ValueError:
-                                    pass
-                            elif "小时前" in time_text:
-                                # 几小时前的快讯
-                                try:
-                                    hours = int(time_text.replace("小时前", "").strip())
-                                    published_at = datetime.now() - timedelta(hours=hours)
-                                except ValueError:
-                                    pass
-                            elif ":" in time_text:
-                                # 只有时间的格式 (如 "14:30")
-                                today = datetime.now().date()
-                                hour, minute = map(int, time_text.split(":"))
-                                published_at = datetime.combine(today, time(hour, minute))
-                        except Exception as e:
-                            logger.debug(f"解析发布时间失败: {str(e)}")
-                        
-                        # 创建快讯项
-                        # 生成唯一ID
-                        news_id = hashlib.md5(f"yicai-brief-{title}-{url}".encode()).hexdigest()
-                        
-                        news_item = self.create_news_item(
-                            id=news_id,
-                            title=title,
-                            url=url,
-                            summary=summary,
-                            image_url="",  # 快讯通常没有图片
-                            published_at=published_at,
-                            extra={
-                                "type": "brief",
-                                "source_from": "selenium"
-                            }
+                # 如果找到了新的容器，则获取日期和快讯项
+                if onlist_container:
+                    # 查找日期标题
+                    date_headers = await loop.run_in_executor(
+                        None,
+                        lambda: onlist_container.find_elements(By.CSS_SELECTOR, "h3")
+                    )
+                    
+                    if date_headers:
+                        date_text = await loop.run_in_executor(
+                            None,
+                            lambda: date_headers[0].text.strip()
                         )
-                        news_items.append(news_item)
-                        
-                    except Exception as item_e:
-                        logger.warning(f"处理单个快讯项时出错: {str(item_e)}")
-                        continue
-                
-                logger.info(f"成功解析 {len(news_items)} 个快讯项")
-                
-                if not news_items:
-                    logger.warning("未能成功解析任何快讯项，尝试使用HTTP方式获取")
-                    return await self._fetch_brief_http()
-                
-                return news_items
-                
-            except Exception as e:
-                logger.warning(f"解析快讯列表时出错: {str(e)}")
-                return await self._fetch_brief_http()
-            
-        except Exception as e:
-            logger.warning(f"使用Selenium获取第一财经快讯失败: {str(e)}")
-            # 尝试使用HTTP方式获取
-            return await self._fetch_brief_http()
-            
-        finally:
-            # 不关闭driver，留给后续使用
-            pass
-    
-    async def _fetch_brief_http(self) -> List[NewsItemModel]:
-        """使用HTTP方式获取快讯（备用方法）"""
-        logger.info("尝试使用HTTP方式获取第一财经快讯")
-        
-        try:
-            url = self.config.get("list_url", "https://www.yicai.com/brief/")
-            
-            # 使用aiohttp进行异步HTTP请求
-            timeout = aiohttp.ClientTimeout(total=20)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                headers = {
-                    "User-Agent": random.choice(self.USER_AGENTS),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
-                }
-                
-                async with session.get(url, headers=headers) as response:
-                    if response.status != 200:
-                        logger.warning(f"HTTP请求返回状态码 {response.status}")
-                        return []
+                        date_group = date_text
+                        logger.info(f"找到日期分组: {date_group}")
                     
-                    html = await response.text()
+                    # 查找新结构中的快讯项
+                    brief_items_elements = await loop.run_in_executor(
+                        None,
+                        lambda: onlist_container.find_elements(By.CSS_SELECTOR, "li.m-brief, li.m-brief.m-notimportant")
+                    )
+                    logger.info(f"在#onlist容器中找到 {len(brief_items_elements)} 个快讯项")
+                
+                # 如果没有在新结构中找到快讯项，尝试使用旧的选择器
+                if not brief_items_elements:
+                    logger.warning("未找到新结构快讯项，尝试其他选择器")
+                    brief_items_elements = await loop.run_in_executor(
+                        None,
+                        lambda: driver.find_elements(By.CSS_SELECTOR, ".brief-item, .m-brief-item")
+                    )
                     
-                    # 使用BeautifulSoup解析HTML
-                    soup = BeautifulSoup(html, "html.parser")
+                    if not brief_items_elements:
+                        logger.warning("未找到快讯项元素，继续尝试其他选择器")
+                        brief_items_elements = await loop.run_in_executor(
+                            None,
+                            lambda: driver.find_elements(By.CSS_SELECTOR, ".news-item, .brief-list>div")
+                        )
+                
+                if brief_items_elements:
+                    logger.info(f"总共找到 {len(brief_items_elements)} 个快讯项")
                     
-                    # 查找快讯列表
-                    brief_list = soup.select(".b-list li")
-                    logger.info(f"HTTP方式找到 {len(brief_list)} 个快讯项")
-                    
-                    if not brief_list:
-                        logger.warning("HTTP方式未找到任何快讯项")
-                        return []
-                    
-                    news_items = []
-                    for item in brief_list[:self.config.get("max_items", 30)]:
+                    for index, item in enumerate(brief_items_elements[:50]):  # 最多提取50条
                         try:
-                            # 提取标题
-                            title_element = item.select_one(".f-title")
-                            if not title_element:
-                                continue
+                            # 提取时间和内容 - 根据页面结构的不同尝试不同的选择器
+                            
+                            # 尝试新结构的时间选择器
+                            time_text = ""
+                            try:
+                                # 新结构中时间是第一个span
+                                time_element = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_elements(By.CSS_SELECTOR, "p > span:first-child")
+                                )
+                                if time_element:
+                                    time_text = await loop.run_in_executor(
+                                        None,
+                                        lambda: time_element[0].text.strip()
+                                    )
+                            except Exception:
+                                logger.debug("使用新选择器提取时间失败，尝试旧选择器")
+                            
+                            # 如果新选择器失败，尝试旧选择器
+                            if not time_text:
+                                time_element = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_elements(By.CSS_SELECTOR, ".time, .m-time, .brief-time")
+                                )
+                                if time_element:
+                                    time_text = await loop.run_in_executor(
+                                        None,
+                                        lambda: time_element[0].text.strip()
+                                    )
+                            
+                            # 提取标题和内容
+                            title_text = ""
+                            content_text = ""
+                            
+                            # 尝试提取加粗的标题
+                            try:
+                                bold_element = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_elements(By.CSS_SELECTOR, "p span b")
+                                )
+                                if bold_element:
+                                    title_text = await loop.run_in_executor(
+                                        None,
+                                        lambda: bold_element[0].text.strip()
+                                    )
+                            except Exception:
+                                logger.debug("提取加粗标题失败")
+                            
+                            # 尝试提取内容 - 新结构
+                            try:
+                                # 获取整个p元素的文本
+                                p_element = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_elements(By.CSS_SELECTOR, "p")
+                                )
+                                if p_element:
+                                    full_text = await loop.run_in_executor(
+                                        None,
+                                        lambda: p_element[0].text.strip()
+                                    )
+                                    
+                                    # 如果有时间和标题，从全文中去除
+                                    if time_text and title_text:
+                                        content_part = full_text.replace(time_text, "", 1)
+                                        if title_text in content_part:
+                                            content_part = content_part.replace(title_text, "", 1)
+                                        # 如果内容以分隔符开始，去除分隔符
+                                        if content_part.strip().startswith("|"):
+                                            content_part = content_part.strip()[1:].strip()
+                                        content_text = content_part
+                                    elif time_text:
+                                        # 只有时间，没有标题
+                                        content_text = full_text.replace(time_text, "", 1).strip()
+                                    else:
+                                        # 没有时间也没有标题
+                                        content_text = full_text
+                            except Exception as e:
+                                logger.debug(f"提取内容失败: {str(e)}")
+                            
+                            # 如果新结构提取失败，尝试旧结构
+                            if not content_text:
+                                content_element = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_elements(By.CSS_SELECTOR, ".content, .m-content, .brief-content")
+                                )
                                 
-                            title = title_element.get_text(strip=True)
+                                if content_element:
+                                    content_text = await loop.run_in_executor(
+                                        None,
+                                        lambda: content_element[0].text.strip()
+                                    )
                             
                             # 提取链接
-                            url_element = item.select_one("a")
-                            url = url_element.get("href", "") if url_element else ""
+                            url = ""
                             
+                            # 检查是否有股票信息区域，可能包含链接
+                            try:
+                                stock_div = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_elements(By.CSS_SELECTOR, ".m-gp1, .m-stock")
+                                )
+                                if stock_div:
+                                    stock_link = await loop.run_in_executor(
+                                        None,
+                                        lambda: stock_div[0].find_elements(By.TAG_NAME, "a")
+                                    )
+                                    if stock_link:
+                                        url = await loop.run_in_executor(
+                                            None,
+                                            lambda: stock_link[0].get_attribute("href")
+                                        )
+                            except Exception:
+                                logger.debug("提取股票链接失败")
+                            
+                            # 如果没有从股票区域获取到链接，尝试从整个元素获取
                             if not url:
-                                # 如果没有链接，使用当前页面URL加上锚点
-                                url = f"{self.config.get('list_url')}#{hashlib.md5(title.encode()).hexdigest()[:8]}"
-                            elif not url.startswith("http"):
-                                # 修正相对URL
-                                url = f"https://www.yicai.com{url}"
+                                try:
+                                    url_element = await loop.run_in_executor(
+                                        None,
+                                        lambda: item.find_element(By.TAG_NAME, "a")
+                                    )
+                                    
+                                    url = await loop.run_in_executor(
+                                        None,
+                                        lambda: url_element.get_attribute("href")
+                                    )
+                                except:
+                                    # 如果没有链接，使用当前页面URL
+                                    url = self.BRIEF_URL
                             
-                            # 对于快讯，摘要通常就是标题
-                            summary = title
+                            # 解析时间
+                            published_at = datetime.datetime.now()
+                            try:
+                                # 处理时间格式，格式可能是 "14:49" 或 "MM-DD HH:MM"
+                                if re.match(r'\d{2}:\d{2}', time_text):
+                                    # 只有时分，使用当前日期
+                                    today = datetime.datetime.now().date()
+                                    time_parts = time_text.split(':')
+                                    published_at = datetime.datetime.combine(
+                                        today,
+                                        datetime.time(int(time_parts[0]), int(time_parts[1]))
+                                    )
+                                    
+                                    # 如果有日期分组，使用日期分组的日期
+                                    if date_group:
+                                        try:
+                                            # 尝试解析日期组（格式如"2025.03.31"）
+                                            date_match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', date_group)
+                                            if date_match:
+                                                year, month, day = map(int, date_match.groups())
+                                                group_date = datetime.date(year, month, day)
+                                                published_at = datetime.datetime.combine(
+                                                    group_date, 
+                                                    datetime.time(int(time_parts[0]), int(time_parts[1]))
+                                                )
+                                        except Exception as date_e:
+                                            logger.warning(f"解析日期分组失败: {date_group}, 错误: {str(date_e)}")
+                                elif re.match(r'\d{2}-\d{2} \d{2}:\d{2}', time_text):
+                                    # 月-日 时:分
+                                    current_year = datetime.datetime.now().year
+                                    date_part, time_part = time_text.split(' ')
+                                    month, day = date_part.split('-')
+                                    hour, minute = time_part.split(':')
+                                    published_at = datetime.datetime(
+                                        current_year, int(month), int(day), 
+                                        int(hour), int(minute)
+                                    )
+                            except Exception as time_e:
+                                logger.warning(f"解析时间失败: {str(time_e)}")
                             
-                            # 提取发布时间
-                            published_at = datetime.now()
-                            time_element = item.select_one(".time")
-                            if time_element:
-                                time_text = time_element.get_text(strip=True)
-                                # 应用与上面相同的时间解析逻辑
-                                if "今天" in time_text:
-                                    today = datetime.now().date()
-                                    time_part = time_text.replace("今天", "").strip()
-                                    if ":" in time_part:
-                                        hour, minute = map(int, time_part.split(":"))
-                                        published_at = datetime.combine(today, time(hour, minute))
-                                elif "分钟前" in time_text:
-                                    try:
-                                        minutes = int(time_text.replace("分钟前", "").strip())
-                                        published_at = datetime.now() - timedelta(minutes=minutes)
-                                    except ValueError:
-                                        pass
-                                elif "小时前" in time_text:
-                                    try:
-                                        hours = int(time_text.replace("小时前", "").strip())
-                                        published_at = datetime.now() - timedelta(hours=hours)
-                                    except ValueError:
-                                        pass
+                            # 检查是否有内容
+                            if not (title_text or content_text):
+                                logger.warning(f"跳过没有标题和内容的快讯项 {index}")
+                                continue
+                            
+                            # 生成最终内容
+                            final_content = title_text
+                            if content_text:
+                                if final_content:
+                                    final_content += " | " + content_text
+                                else:
+                                    final_content = content_text
+                            
+                            # 检查是否为重要快讯
+                            is_important = False
+                            try:
+                                item_class = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.get_attribute("class")
+                                )
+                                # 如果没有m-notimportant类，则为重要快讯
+                                is_important = "m-notimportant" not in (item_class or "")
+                            except Exception:
+                                logger.debug("检查快讯重要性失败")
                             
                             # 生成唯一ID
-                            news_id = hashlib.md5(f"yicai-brief-{title}-{url}".encode()).hexdigest()
+                            brief_id = hashlib.md5(f"yicai-brief-{final_content}-{time_text}".encode()).hexdigest()
                             
-                            # 创建快讯项
-                            news_item = self.create_news_item(
-                                id=news_id,
-                                title=title,
+                            # 创建新闻项
+                            brief_item = self.create_news_item(
+                                id=brief_id,
+                                title=title_text or (content_text[:100] if content_text else "第一财经快讯"),
                                 url=url,
-                                summary=summary,
-                                image_url="",  # 快讯通常没有图片
+                                content=final_content,
+                                summary=final_content,
                                 published_at=published_at,
                                 extra={
+                                    "time_text": time_text,
                                     "type": "brief",
-                                    "source_from": "http"
+                                    "rank": index + 1,
+                                    "source_from": "selenium",
+                                    "important": is_important
                                 }
                             )
-                            news_items.append(news_item)
+                            
+                            brief_items.append(brief_item)
                             
                         except Exception as item_e:
-                            logger.warning(f"HTTP方式处理单个快讯项时出错: {str(item_e)}")
-                            continue
+                            logger.error(f"处理快讯项 {index} 失败: {str(item_e)}")
+                else:
+                    logger.warning("未找到任何快讯项，尝试从页面源代码提取数据")
                     
-                    logger.info(f"HTTP方式成功解析 {len(news_items)} 个快讯项")
-                    return news_items
+                    # 尝试从页面源代码提取数据
+                    page_source = await loop.run_in_executor(None, lambda: driver.page_source)
                     
+                    soup = BeautifulSoup(page_source, 'html.parser')
+                    
+                    # 首先尝试找到#onlist容器
+                    onlist_container = soup.select_one("#onlist")
+                    if onlist_container:
+                        logger.info("从页面源代码中找到#onlist容器")
+                        
+                        # 获取日期
+                        date_headers = onlist_container.select("h3")
+                        date_group = date_headers[0].text.strip() if date_headers else None
+                        
+                        # 获取所有快讯项
+                        brief_items_bs = onlist_container.select("li.m-brief, li.m-brief.m-notimportant")
+                        logger.info(f"从#onlist容器中找到 {len(brief_items_bs)} 条快讯")
+                        
+                        # 处理每条快讯
+                        for index, item in enumerate(brief_items_bs[:50]):  # 最多处理50条
+                            try:
+                                # 提取时间
+                                time_element = item.select_one("p > span:first-child")
+                                time_text = time_element.text.strip() if time_element else ""
+                                
+                                # 提取标题和内容
+                                title_element = item.select_one("p span b")
+                                title_text = title_element.text.strip() if title_element else ""
+                                
+                                # 提取完整内容
+                                p_element = item.select_one("p")
+                                full_text = p_element.text.strip() if p_element else ""
+                                
+                                # 处理内容
+                                content_text = ""
+                                if full_text:
+                                    # 如果有时间和标题，从全文中去除
+                                    if time_text and title_text:
+                                        content_part = full_text.replace(time_text, "", 1)
+                                        if title_text in content_part:
+                                            content_part = content_part.replace(title_text, "", 1)
+                                        # 如果内容以分隔符开始，去除分隔符
+                                        if content_part.strip().startswith("|"):
+                                            content_part = content_part.strip()[1:].strip()
+                                        content_text = content_part
+                                    elif time_text:
+                                        # 只有时间，没有标题
+                                        content_text = full_text.replace(time_text, "", 1).strip()
+                                    else:
+                                        # 没有时间也没有标题
+                                        content_text = full_text
+                                
+                                # 提取链接
+                                url = ""
+                                stock_div = item.select_one(".m-gp1, .m-stock")
+                                if stock_div:
+                                    stock_link = stock_div.select_one("a")
+                                    if stock_link and stock_link.get("href"):
+                                        url = stock_link.get("href")
+                                
+                                if not url:
+                                    link_elem = item.find("a")
+                                    if link_elem and link_elem.get("href"):
+                                        url = link_elem.get("href")
+                                
+                                # 如果链接不是完整URL，添加域名
+                                if url and not url.startswith("http"):
+                                    url = f"https://www.yicai.com{url}" if url.startswith("/") else f"https://www.yicai.com/{url}"
+                                
+                                # 解析时间
+                                published_at = datetime.datetime.now()
+                                if time_text:
+                                    try:
+                                        # 处理时间格式
+                                        if re.match(r'\d{2}:\d{2}', time_text):
+                                            # 今天的时间
+                                            today = datetime.datetime.now().date()
+                                            hour, minute = time_text.split(':')
+                                            published_at = datetime.datetime.combine(
+                                                today, 
+                                                datetime.time(int(hour), int(minute))
+                                            )
+                                            
+                                            # 如果有日期标题，使用日期标题的日期
+                                            if date_group:
+                                                date_match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', date_group)
+                                                if date_match:
+                                                    year, month, day = map(int, date_match.groups())
+                                                    group_date = datetime.date(year, month, day)
+                                                    published_at = datetime.datetime.combine(
+                                                        group_date, 
+                                                        datetime.time(int(hour), int(minute))
+                                                    )
+                                    except Exception as bs_date_e:
+                                        logger.warning(f"解析BeautifulSoup时间失败: {str(bs_date_e)}")
+                                
+                                # 生成最终内容
+                                final_content = title_text
+                                if content_text:
+                                    if final_content:
+                                        final_content += " | " + content_text
+                                    else:
+                                        final_content = content_text
+                                
+                                # 检查是否为重要快讯
+                                is_important = 'm-notimportant' not in (item.get('class') or [])
+                                
+                                # 生成唯一ID
+                                brief_id = hashlib.md5(f"yicai-brief-{final_content}-{time_text}".encode()).hexdigest()
+                                
+                                # 创建新闻项
+                                brief_item = self.create_news_item(
+                                    id=brief_id,
+                                    title=title_text or (content_text[:100] if content_text else "第一财经快讯"),
+                                    url=url or self.BRIEF_URL,
+                                    content=final_content,
+                                    summary=final_content,
+                                    published_at=published_at,
+                                    extra={
+                                        "time_text": time_text,
+                                        "type": "brief",
+                                        "rank": index + 1,
+                                        "source_from": "beautifulsoup",
+                                        "important": is_important
+                                    }
+                                )
+                                
+                                brief_items.append(brief_item)
+                                
+                            except Exception as bs_e:
+                                logger.error(f"使用BeautifulSoup处理快讯项 {index} 失败: {str(bs_e)}")
+                    else:
+                        # 尝试使用旧的选择器
+                        brief_containers = soup.select(".brief-list, .m-brief-list, .news-list")
+                        if brief_containers:
+                            logger.info("从页面源代码中找到旧版快讯容器")
+                            # 使用旧版处理逻辑
+                            for container in brief_containers:
+                                brief_items_elements = container.select(".brief-item, .m-brief-item, .news-item")
+                                
+                                for index, item in enumerate(brief_items_elements[:50]):
+                                    try:
+                                        # 提取时间
+                                        time_element = item.select_one(".time, .m-time, .brief-time")
+                                        time_text = time_element.text.strip() if time_element else ""
+                                        
+                                        # 提取内容
+                                        content_element = item.select_one(".content, .m-content, .brief-content")
+                                        content_text = content_element.text.strip() if content_element else ""
+                                        
+                                        # 提取链接
+                                        url_element = item.select_one("a")
+                                        url = url_element.get("href") if url_element else self.BRIEF_URL
+                                        
+                                        # 解析时间
+                                        published_at = datetime.datetime.now()
+                                        if time_text:
+                                            try:
+                                                # 处理时间格式
+                                                if re.match(r'\d{2}:\d{2}', time_text):
+                                                    # 今天的时间
+                                                    today = datetime.datetime.now().date()
+                                                    hour, minute = time_text.split(':')
+                                                    published_at = datetime.datetime.combine(
+                                                        today, 
+                                                        datetime.time(int(hour), int(minute))
+                                                    )
+                                            except Exception as time_e:
+                                                logger.warning(f"解析时间失败: {str(time_e)}")
+                                        
+                                        # 生成唯一ID
+                                        brief_id = hashlib.md5(f"yicai-brief-{content_text}-{time_text}".encode()).hexdigest()
+                                        
+                                        # 创建新闻项
+                                        brief_item = self.create_news_item(
+                                            id=brief_id,
+                                            title=content_text[:100],  # 使用内容前100字作为标题
+                                            url=url,
+                                            content=content_text,
+                                            summary=content_text,
+                                            published_at=published_at,
+                                            extra={
+                                                "time_text": time_text,
+                                                "type": "brief",
+                                                "rank": index + 1,
+                                                "source_from": "beautifulsoup_old"
+                                            }
+                                        )
+                                        
+                                        brief_items.append(brief_item)
+                                    except Exception as item_e:
+                                        logger.error(f"处理旧版快讯项 {index} 失败: {str(item_e)}")
+            except Exception as extract_e:
+                logger.error(f"提取快讯失败: {str(extract_e)}")
+                raise RuntimeError(f"提取快讯失败: {str(extract_e)}")
+                
         except Exception as e:
-            logger.warning(f"HTTP方式获取第一财经快讯失败: {str(e)}")
-            return []
+            logger.error(f"获取第一财经快讯失败: {str(e)}")
+            raise
+        finally:
+            # 关闭WebDriver
+            try:
+                await self._close_driver()
+            except Exception as close_e:
+                logger.error(f"关闭WebDriver失败: {str(close_e)}")
+        
+        logger.info(f"成功获取 {len(brief_items)} 条第一财经快讯")
+        return brief_items
 
 # 新闻适配器类
 class YiCaiNewsSource(YiCaiBaseSource):
@@ -1180,258 +1407,292 @@ class YiCaiNewsSource(YiCaiBaseSource):
             logger.error(f"获取第一财经新闻数据失败: {str(e)}")
             raise
             
-    async def _fetch_news(self):
-        """获取并解析新闻列表"""
-        logger.info("开始从第一财经获取新闻")
+    async def _fetch_news(self) -> List[NewsItemModel]:
+        """
+        获取第一财经新闻数据
+        针对最新的DOM结构进行优化，更准确地获取新闻列表
+        """
+        logger.info("开始获取第一财经新闻数据")
+        driver = await self._get_driver()
+        if driver is None:
+            logger.error("WebDriver创建失败")
+            raise RuntimeError("无法获取第一财经新闻：WebDriver创建失败")
         
-        driver = None
+        news_items = []
         try:
-            # 判断是否已有WebDriver实例
-            if not self.driver:
-                logger.info("创建新的WebDriver实例")
-                self.driver = self._create_driver()
+            # 访问新闻页面
+            logger.info(f"访问新闻URL: {self.NEWS_URL}")
+            loop = asyncio.get_event_loop()
             
-            # 检查WebDriver实例是否创建成功
-            if not self.driver:
-                logger.warning("WebDriver创建失败，尝试使用HTTP方式获取新闻")
-                return await self._fetch_news_http()
-            
-            driver = self.driver
-            
-            # 记录当前系统和ChromeDriver信息（用于调试）
-            logger.info(f"当前系统平台: {platform.system()}")
-            logger.info(f"使用的ChromeDriver: {driver.capabilities.get('chrome', {}).get('chromedriverVersion', '未知')}")
-            
-            # 新闻列表URL
-            url = self.config.get("list_url", "https://www.yicai.com/news/")
-            logger.info(f"访问第一财经新闻列表页: {url}")
-            
-            # 使用异步超时控制防止页面加载过长时间
             try:
-                # 使用asyncio.wait_for来设置异步超时
-                await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(
-                        None, lambda: driver.get(url)
-                    ),
-                    timeout=self.config.get("selenium_timeout", 30)
+                # 设置超时
+                page_load_timeout = self.config.get("selenium_timeout", 30)
+                await loop.run_in_executor(
+                    None, 
+                    lambda: driver.set_page_load_timeout(page_load_timeout)
                 )
-            except asyncio.TimeoutError:
-                logger.warning("访问第一财经页面超时，尝试使用HTTP方式获取")
-                return await self._fetch_news_http()
+                
+                # 访问URL
+                await loop.run_in_executor(None, lambda: driver.get(self.NEWS_URL))
+                
             except Exception as e:
-                logger.warning(f"访问第一财经页面异常: {str(e)}")
-                return await self._fetch_news_http()
+                logger.warning(f"页面加载异常: {str(e)}")
+                raise RuntimeError(f"无法获取第一财经新闻：页面加载失败")
             
-            # 等待新闻列表元素加载
+            # 等待页面加载完成
+            await asyncio.sleep(3)
+            
+            # 等待新闻列表元素加载 - 使用最新的DOM selector
             try:
-                # 使用显式等待等待新闻列表元素
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".m-list"))
+                await loop.run_in_executor(
+                    None,
+                    lambda: WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "#newslist"))
+                    )
                 )
-                logger.info("新闻列表元素加载完成")
-            except Exception as e:
-                logger.warning(f"等待新闻列表元素超时: {str(e)}")
-                # 尝试检查页面状态
-                try:
-                    page_source = driver.page_source
-                    if len(page_source) < 1000:
-                        logger.warning(f"页面内容异常短，可能未正确加载，内容长度: {len(page_source)}")
-                    elif "forbidden" in page_source.lower() or "请求被拒绝" in page_source:
-                        logger.warning("访问被拒绝，可能触发了网站防爬虫机制")
-                    elif "404" in page_source or "找不到页面" in page_source:
-                        logger.warning("页面返回404错误")
-                except Exception:
-                    pass
-                
-                return await self._fetch_news_http()
+            except Exception as wait_e:
+                logger.warning(f"等待新闻列表加载超时: {str(wait_e)}")
             
-            # 获取新闻列表
-            news_items = []
+            # 获取所有新闻项
+            logger.info("提取新闻数据")
             try:
-                elements = driver.find_elements(By.CSS_SELECTOR, ".m-list li")
-                logger.info(f"找到 {len(elements)} 个新闻项")
+                # 查找新闻项元素 - 使用最新的DOM结构
+                news_items_elements = await loop.run_in_executor(
+                    None,
+                    lambda: driver.find_elements(By.CSS_SELECTOR, "#newslist a.f-db")
+                )
                 
-                if not elements:
-                    logger.warning("未找到任何新闻项，尝试使用HTTP方式获取")
-                    return await self._fetch_news_http()
+                if not news_items_elements:
+                    logger.warning("未找到新闻项元素，尝试其他选择器")
+                    # 尝试其他可能的选择器
+                    news_items_elements = await loop.run_in_executor(
+                        None,
+                        lambda: driver.find_elements(By.CSS_SELECTOR, ".m-list, .news-list, .news-items")
+                    )
                 
-                for element in elements[:self.config.get("max_items", 20)]:
-                    try:
-                        # 提取新闻信息
-                        title_element = element.find_element(By.CSS_SELECTOR, "a")
-                        title = title_element.text.strip()
-                        url = title_element.get_attribute("href")
-                        
-                        if not title or not url:
-                            logger.debug("跳过标题或URL为空的新闻项")
-                            continue
-                        
-                        # 提取摘要（如果有）
-                        summary = ""
+                if news_items_elements:
+                    logger.info(f"找到 {len(news_items_elements)} 个新闻项")
+                    
+                    for index, item in enumerate(news_items_elements[:50]):  # 最多提取50条
                         try:
-                            summary_element = element.find_element(By.CSS_SELECTOR, ".text")
-                            summary = summary_element.text.strip()
-                        except Exception:
-                            # 如果无法获取摘要，尝试使用标题作为摘要
-                            summary = title
-                        
-                        # 提取图片URL（如果有）
-                        image_element = element.find_element(By.CSS_SELECTOR, "img")
-                        image_url = image_element.get_attribute("src", "") if image_element else ""
-                        
-                        # 提取发布时间（如果有）
-                        published_at = datetime.now()
-                        try:
-                            time_element = element.find_element(By.CSS_SELECTOR, ".time")
-                            time_text = time_element.text.strip()
+                            # 提取标题 - 优化选择器
+                            title_element = await loop.run_in_executor(
+                                None,
+                                lambda: item.find_elements(By.CSS_SELECTOR, "h2")
+                            )
                             
-                            # 解析时间字符串
-                            if "今天" in time_text:
-                                # 今天的新闻，使用当前日期
-                                today = datetime.now().date()
-                                time_part = time_text.replace("今天", "").strip()
-                                if ":" in time_part:
-                                    hour, minute = map(int, time_part.split(":"))
-                                    published_at = datetime.combine(today, time(hour, minute))
-                            elif "月" in time_text and "日" in time_text:
-                                # 格式如 "5月20日 14:30"
-                                match = re.search(r"(\d+)月(\d+)日\s*(\d+):(\d+)", time_text)
-                                if match:
-                                    month, day, hour, minute = map(int, match.groups())
-                                    year = datetime.now().year
-                                    published_at = datetime(year, month, day, hour, minute)
+                            title = ""
+                            if title_element:
+                                title = await loop.run_in_executor(
+                                    None,
+                                    lambda: title_element[0].text.strip()
+                                )
                             
-                            # 创建新闻项
-                            news_item = {
-                                "title": title,
-                                "url": url,
-                                "summary": summary,
-                                "image_url": image_url,
-                                "published_at": published_at.isoformat()
-                            }
-                            news_items.append(news_item)
+                            # 提取链接
+                            url = ""
+                            try:
+                                url = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.get_attribute("href")
+                                )
+                            except:
+                                # 如果没有链接，使用当前页面URL
+                                url = self.NEWS_URL
                             
-                        except Exception as e:
-                            logger.debug(f"解析发布时间失败: {str(e)}")
-                        
-                    except Exception as item_e:
-                        logger.warning(f"处理单个新闻项时出错: {str(item_e)}")
-                        continue
-                
-                logger.info(f"成功解析 {len(news_items)} 个新闻项")
-                
-                if not news_items:
-                    logger.warning("未能成功解析任何新闻项，尝试使用HTTP方式获取")
-                    return await self._fetch_news_http()
-                
-                return news_items
-                
-            except Exception as e:
-                logger.warning(f"解析新闻列表时出错: {str(e)}")
-                return await self._fetch_news_http()
-            
-        except Exception as e:
-            logger.warning(f"使用Selenium获取第一财经新闻失败: {str(e)}")
-            # 尝试使用HTTP方式获取
-            return await self._fetch_news_http()
-            
-        finally:
-            # 不关闭driver，留给后续使用
-            pass
-            
-    async def _fetch_news_http(self):
-        """使用HTTP方式获取新闻（备用方法）"""
-        logger.info("尝试使用HTTP方式获取第一财经新闻")
-        
-        try:
-            url = self.config.get("list_url", "https://www.yicai.com/news/")
-            
-            # 使用aiohttp进行异步HTTP请求
-            timeout = aiohttp.ClientTimeout(total=20)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                headers = {
-                    "User-Agent": random.choice(self.USER_AGENTS),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
-                }
-                
-                async with session.get(url, headers=headers) as response:
-                    if response.status != 200:
-                        logger.warning(f"HTTP请求返回状态码 {response.status}")
-                        return []
-                    
-                    html = await response.text()
-                    
-                    # 使用BeautifulSoup解析HTML
-                    soup = BeautifulSoup(html, "html.parser")
-                    
-                    # 查找新闻列表
-                    news_list = soup.select(".m-list li")
-                    logger.info(f"HTTP方式找到 {len(news_list)} 个新闻项")
-                    
-                    if not news_list:
-                        logger.warning("HTTP方式未找到任何新闻项")
-                        return []
-                    
-                    news_items = []
-                    for item in news_list[:self.config.get("max_items", 20)]:
-                        try:
-                            # 提取标题和URL
-                            title_element = item.select_one("a")
-                            if not title_element:
-                                continue
-                                
-                            title = title_element.get_text(strip=True)
-                            url = title_element.get("href", "")
+                            # 提取摘要 - 优化选择器
+                            summary_element = await loop.run_in_executor(
+                                None,
+                                lambda: item.find_elements(By.CSS_SELECTOR, "p")
+                            )
                             
-                            if not url.startswith("http"):
-                                # 修正相对URL
-                                url = f"https://www.yicai.com{url}"
-                                
-                            # 提取摘要
-                            summary_element = item.select_one(".text")
-                            summary = summary_element.get_text(strip=True) if summary_element else title
+                            summary = ""
+                            if summary_element:
+                                summary = await loop.run_in_executor(
+                                    None,
+                                    lambda: summary_element[0].text.strip()
+                                )
                             
-                            # 提取图片URL
-                            image_element = item.select_one("img")
-                            image_url = image_element.get("src", "") if image_element else ""
+                            # 提取时间 - 优化选择器
+                            time_element = await loop.run_in_executor(
+                                None,
+                                lambda: item.find_elements(By.CSS_SELECTOR, ".rightspan span:last-child")
+                            )
                             
-                            # 提取发布时间
-                            published_at = datetime.now()
-                            time_element = item.select_one(".time")
+                            time_text = ""
                             if time_element:
-                                time_text = time_element.get_text(strip=True)
-                                # 与上面相同的时间解析逻辑
-                                if "今天" in time_text:
-                                    today = datetime.now().date()
-                                    time_part = time_text.replace("今天", "").strip()
-                                    if ":" in time_part:
-                                        hour, minute = map(int, time_part.split(":"))
-                                        published_at = datetime.combine(today, time(hour, minute))
-                                elif "月" in time_text and "日" in time_text:
-                                    match = re.search(r"(\d+)月(\d+)日\s*(\d+):(\d+)", time_text)
-                                    if match:
-                                        month, day, hour, minute = map(int, match.groups())
-                                        year = datetime.now().year
-                                        published_at = datetime(year, month, day, hour, minute)
+                                time_text = await loop.run_in_executor(
+                                    None,
+                                    lambda: time_element[0].text.strip()
+                                )
+                            
+                            # 提取图片URL - 优化选择器
+                            image_url = ""
+                            try:
+                                img_element = await loop.run_in_executor(
+                                    None,
+                                    lambda: item.find_element(By.CSS_SELECTOR, "img.u-img")
+                                )
+                                
+                                if img_element:
+                                    image_url = await loop.run_in_executor(
+                                        None,
+                                        lambda: img_element.get_attribute("src")
+                                    )
+                            except:
+                                pass
+                            
+                            # 解析时间
+                            published_at = None
+                            if time_text:
+                                try:
+                                    # 处理"5分钟前"，"1小时前"等格式
+                                    if "分钟前" in time_text:
+                                        minutes = int(time_text.replace("分钟前", "").strip())
+                                        published_at = datetime.datetime.now() - datetime.timedelta(minutes=minutes)
+                                    elif "小时前" in time_text:
+                                        hours = int(time_text.replace("小时前", "").strip())
+                                        published_at = datetime.datetime.now() - datetime.timedelta(hours=hours)
+                                    elif "天前" in time_text:
+                                        days = int(time_text.replace("天前", "").strip())
+                                        published_at = datetime.datetime.now() - datetime.timedelta(days=days)
+                                    else:
+                                        # 使用当前时间
+                                        published_at = datetime.datetime.now()
+                                except Exception as time_e:
+                                    logger.warning(f"解析时间失败: {str(time_e)}")
+                                    published_at = datetime.datetime.now()
+                            else:
+                                published_at = datetime.datetime.now()
+                            
+                            # 如果没有标题则跳过
+                            if not title:
+                                continue
+                            
+                            # 构建完整URL
+                            if url and not url.startswith("http"):
+                                if url.startswith("/"):
+                                    url = f"https://www.yicai.com{url}"
+                                else:
+                                    url = f"https://www.yicai.com/{url}"
+                            
+                            # 生成唯一ID
+                            news_id = hashlib.md5(f"yicai-news-{title}-{url}".encode()).hexdigest()
                             
                             # 创建新闻项
-                            news_item = {
-                                "title": title,
-                                "url": url,
-                                "summary": summary,
-                                "image_url": image_url,
-                                "published_at": published_at.isoformat()
-                            }
+                            news_item = self.create_news_item(
+                                id=news_id,
+                                title=title,
+                                url=url,
+                                summary=summary,
+                                image_url=image_url,
+                                published_at=published_at,
+                                extra={
+                                    "time_text": time_text,
+                                    "type": "news",
+                                    "rank": index + 1,
+                                    "source_from": "selenium"
+                                }
+                            )
+                            
                             news_items.append(news_item)
                             
                         except Exception as item_e:
-                            logger.warning(f"HTTP方式处理单个新闻项时出错: {str(item_e)}")
-                            continue
+                            logger.error(f"处理新闻项 {index} 失败: {str(item_e)}")
+                else:
+                    logger.warning("未找到任何新闻项")
                     
-                    logger.info(f"HTTP方式成功解析 {len(news_items)} 个新闻项")
-                    return news_items
+                    # 尝试从页面源代码提取数据
+                    logger.info("尝试从页面源代码提取数据")
+                    page_source = await loop.run_in_executor(None, lambda: driver.page_source)
                     
+                    soup = BeautifulSoup(page_source, 'html.parser')
+                    
+                    # 使用优化的选择器
+                    news_container = soup.select_one("#newslist")
+                    
+                    if news_container:
+                        news_items_elements = news_container.select("a.f-db")
+                        
+                        for index, item in enumerate(news_items_elements[:50]):
+                            try:
+                                # 提取标题
+                                title_element = item.select_one("h2")
+                                title = title_element.text.strip() if title_element else ""
+                                
+                                # 提取链接
+                                href = item.get("href", "")
+                                url = f"https://www.yicai.com{href}" if href.startswith("/") else href
+                                
+                                # 提取摘要
+                                summary_element = item.select_one("p")
+                                summary = summary_element.text.strip() if summary_element else ""
+                                
+                                # 提取时间
+                                time_element = item.select_one(".rightspan span:last-child")
+                                time_text = time_element.text.strip() if time_element else ""
+                                
+                                # 提取图片URL
+                                img_element = item.select_one("img.u-img")
+                                image_url = img_element.get("src") if img_element else ""
+                                
+                                # 解析时间
+                                published_at = datetime.datetime.now()
+                                if time_text:
+                                    try:
+                                        # 处理"5分钟前"，"1小时前"等格式
+                                        if "分钟前" in time_text:
+                                            minutes = int(time_text.replace("分钟前", "").strip())
+                                            published_at = datetime.datetime.now() - datetime.timedelta(minutes=minutes)
+                                        elif "小时前" in time_text:
+                                            hours = int(time_text.replace("小时前", "").strip())
+                                            published_at = datetime.datetime.now() - datetime.timedelta(hours=hours)
+                                        elif "天前" in time_text:
+                                            days = int(time_text.replace("天前", "").strip())
+                                            published_at = datetime.datetime.now() - datetime.timedelta(days=days)
+                                    except:
+                                        pass
+                                
+                                # 如果标题为空则跳过
+                                if not title:
+                                    continue
+                                
+                                # 生成唯一ID
+                                news_id = hashlib.md5(f"yicai-news-{title}-{url}".encode()).hexdigest()
+                                
+                                # 创建新闻项
+                                news_item = self.create_news_item(
+                                    id=news_id,
+                                    title=title,
+                                    url=url,
+                                    summary=summary,
+                                    image_url=image_url,
+                                    published_at=published_at,
+                                    extra={
+                                        "time_text": time_text,
+                                        "type": "news",
+                                        "rank": index + 1,
+                                        "source_from": "beautifulsoup"
+                                    }
+                                )
+                                
+                                news_items.append(news_item)
+                                
+                            except Exception as bs_e:
+                                logger.error(f"使用BeautifulSoup处理新闻项 {index} 失败: {str(bs_e)}")
+                    
+            except Exception as extract_e:
+                logger.error(f"提取新闻失败: {str(extract_e)}")
+                raise RuntimeError(f"提取新闻失败: {str(extract_e)}")
+                
         except Exception as e:
-            logger.warning(f"HTTP方式获取第一财经新闻失败: {str(e)}")
-            return []
+            logger.error(f"获取第一财经新闻失败: {str(e)}")
+            raise
+        finally:
+            # 关闭WebDriver
+            try:
+                await self._close_driver()
+            except Exception as close_e:
+                logger.error(f"关闭WebDriver失败: {str(close_e)}")
+        
+        logger.info(f"成功获取 {len(news_items)} 条第一财经新闻")
+        return news_items

@@ -24,32 +24,31 @@ except ImportError:
     HAVE_AIOHTTP = False
     logger.warning("未安装aiohttp库，HTTP请求功能将不可用")
 
-# 导入事件循环修复模块
+# 导入事件循环修复模块，使用相对导入来避免循环导入
 try:
-    from backend.worker.asyncio_fix.auto_fix import get_or_create_eventloop, run_async, ensure_event_loop
-except ImportError:
-    try:
-        from worker.asyncio_fix.auto_fix import get_or_create_eventloop, run_async, ensure_event_loop
-    except ImportError:
-        logger.error("无法导入事件循环修复模块，HTTP请求可能不稳定")
-        # 提供简单的后备实现
-        def get_or_create_eventloop():
-            try:
-                return asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                return loop
-        
-        def run_async(coro):
-            loop = get_or_create_eventloop()
-            return loop.run_until_complete(coro)
-        
-        def ensure_event_loop(func):
-            @functools.wraps(func)
-            async def wrapper(*args, **kwargs):
-                return await func(*args, **kwargs)
-            return wrapper
+    # 使用正确的相对导入 - 因为在同一目录
+    from .auto_fix import get_or_create_eventloop, run_async, ensure_event_loop
+    logger.debug("成功导入事件循环修复模块")
+except ImportError as e:
+    logger.error(f"无法导入事件循环修复模块，HTTP请求可能不稳定: {str(e)}")
+    # 提供简单的后备实现
+    def get_or_create_eventloop():
+        try:
+            return asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+    
+    def run_async(coro):
+        loop = get_or_create_eventloop()
+        return loop.run_until_complete(coro)
+    
+    def ensure_event_loop(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            return await func(*args, **kwargs)
+        return wrapper
 
 # 安全的HTTP请求函数
 @ensure_event_loop

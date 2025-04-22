@@ -1282,7 +1282,7 @@ async def main():
         host=args.host,
         port=args.port,
         reload=args.reload,
-        log_level="info",
+        log_level="warning",
         reload_dirs=["app", "worker"] if args.reload else None
     )
     server = uvicorn.Server(config)

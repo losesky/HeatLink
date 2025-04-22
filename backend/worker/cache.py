@@ -296,3 +296,6 @@ class CacheManager:
                 cache_logger.error(f"[CACHE-ERROR] {error_msg}")
         
         return stats 
+
+# 创建一个全局的缓存管理器实例供其他模块导入使用
+cache_manager = CacheManager() 

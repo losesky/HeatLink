@@ -819,7 +819,7 @@ class IfengStudioSource(IfengBaseSource):
                 await loop.run_in_executor(None, lambda: driver.get(self.url))
                 
             except TimeoutException:
-                logger.warning("页面加载超时，尝试继续解析已加载内容")
+                # logger.warning("页面加载超时，尝试继续解析已加载内容")
                 await self.save_debug_info(driver, "timeout")
             except Exception as e:
                 logger.error(f"页面加载失败: {str(e)}")
@@ -1258,7 +1258,7 @@ class IfengTechSource(IfengBaseSource):
                 await loop.run_in_executor(None, lambda: driver.get(self.url))
                 
             except TimeoutException:
-                logger.warning("页面加载超时，尝试继续解析已加载内容")
+                # logger.warning("页面加载超时，尝试继续解析已加载内容")
                 await self.save_debug_info(driver, "timeout")
             except Exception as e:
                 logger.error(f"页面加载失败: {str(e)}")

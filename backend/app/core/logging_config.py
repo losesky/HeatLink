@@ -10,6 +10,32 @@ import logging.config
 import logging.handlers
 from app.core.config import settings
 
+# 添加ANSI颜色代码
+class ColorFormatter(logging.Formatter):
+    """为日志添加颜色的格式化器"""
+    
+    # 颜色代码
+    COLORS = {
+        'DEBUG': '\033[36m',  # 青色
+        'INFO': '\033[32m',   # 绿色
+        'WARNING': '\033[33m', # 黄色
+        'ERROR': '\033[31m',   # 红色
+        'CRITICAL': '\033[41m\033[37m', # 白字红底
+        'RESET': '\033[0m'     # 重置颜色
+    }
+    
+    def __init__(self, fmt):
+        super().__init__(fmt)
+    
+    def format(self, record):
+        # 保存原始的levelname
+        levelname = record.levelname
+        # 如果是终端输出，添加颜色
+        if levelname in self.COLORS:
+            record.levelname = f"{self.COLORS[levelname]}{levelname}{self.COLORS['RESET']}"
+            record.msg = f"{self.COLORS[levelname]}{record.msg}{self.COLORS['RESET']}"
+        return super().format(record)
+
 def configure_logging():
     """配置应用程序日志"""
     
@@ -19,11 +45,19 @@ def configure_logging():
     # 日志格式
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
-    # 基础配置
-    logging.basicConfig(
-        level=log_level,
-        format=log_format
-    )
+    # 配置根日志器，使用彩色格式化器
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # 清除已有的处理器
+    if root_logger.handlers:
+        for handler in root_logger.handlers:
+            root_logger.removeHandler(handler)
+    
+    # 创建控制台处理器并设置彩色格式化器
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(ColorFormatter(log_format))
+    root_logger.addHandler(console_handler)
     
     # 设置特定模块的日志级别
     # 级别说明:
@@ -55,9 +89,9 @@ def configure_logging():
         # 数据库日志 - 可选根据需要调整
         "sqlalchemy": logging.WARNING,
         
-        # Web服务器日志 - 调整为INFO以便查看API请求
+        # Web服务器日志 - 调整为WARNING以便过滤掉一般HTTP请求
         "uvicorn": logging.INFO,  # 保留服务器运行信息
-        "uvicorn.access": logging.INFO,  # 记录API访问
+        "uvicorn.access": logging.WARNING,  # 只记录警告及以上级别的访问日志，过滤掉307等常规请求
         
         # 其他库日志
         "aiocache": logging.WARNING,
